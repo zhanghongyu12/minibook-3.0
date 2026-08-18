@@ -84,7 +84,7 @@
     | JDK | `21`（jvmTarget 21 + compileOptions） |
     | Room（KSP） | `2.8.4` |
     | SQLCipher | `net.zetetic:sqlcipher-android:4.6.1` |
-    | Hilt（KSP） | `2.60.1` |
+    | Hilt（KSP） | `2.58` |
     | Biometric | `androidx.biometric:biometric:1.1.0` |
   - **其余库版本（Architect 在 DEC-001 栈内选定，含依据）**：
     | 库 | 版本 | 选择依据 |

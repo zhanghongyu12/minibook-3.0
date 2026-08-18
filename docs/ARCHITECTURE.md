@@ -54,7 +54,7 @@ MiniBook 是纯 Android 原生个人记账应用，本地优先、隐私优先�
 | 本地存储 | Room + SQLCipher | Room 2.8.4（KSP）；`net.zetetic:sqlcipher-android` 4.6.1（AndroidX SQLite 兼容线） |
 | 密钥 | Android Keystore | AES-256 / GCM，auth-gated key 保护 SQLCipher 密码 |
 | 生物识别 | `androidx.biometric` | BiometricPrompt 1.1.0，支持设备凭据回退 |
-| DI | Hilt | Hilt 2.60.1（KSP 编译） |
+| DI | Hilt | Hilt 2.58（KSP 编译） |
 | 异步 | 协程 + Flow | Dispatcher 注入，Room Flow 观察 |
 | 架构 | MVVM + Repository + UseCase + DataSource | 单模块、按包分层 |
 | 构建 | Gradle 8.14.3 / AGP 8.13.0 | JDK 21，compileSdk 36，KSP 2.2.0-2.0.2 |
