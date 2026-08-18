@@ -1,0 +1,797 @@
+# MiniBook Android 重构版 - UI 设计（05_ui）
+
+> 状态：**草稿**（内容对齐 PRD.md（已确认）与 API.md（已确认）；待 Architect 对 §6 接口假设做双向确认后，由协调者转「已确认」）
+> 最后更新：2026-08-18
+> 维护者：Designer
+> 依据：`docs/PRD.md`（已确认，需求事实来源）；`docs/API.md`（= 04_api，已确认，UI 契约对齐）；`docs/ARCHITECTURE.md`（§11 暗色模式、§12 导航结构，仅供参考，不归本角色修改）；`docs/DATABASE.md`（§8 内置分类种子、§9 金额/日期格式口径）；`docs/07_decisions.md`（DEC-001~DEC-009）
+> 说明：本项目有完整用户界面（Android 原生 + Compose + Material 3），不走「无界面项目」分支。
+
+---
+
+## 目录
+
+- [1. 设计风格](#1-设计风格)
+  - [1.1 主题装配与动态配色](#11-主题装配与动态配色)
+  - [1.2 色彩 Token（亮 / 暗双色）](#12-色彩-token亮--暗双色)
+  - [1.3 字体字号](#13-字体字号)
+  - [1.4 间距网格](#14-间距网格)
+  - [1.5 圆角与阴影](#15-圆角与阴影)
+  - [1.6 图标与插画](#16-图标与插画)
+- [2. 页面列表](#2-页面列表)
+- [3. 页面设计](#3-页面设计)
+  - [P-01 解锁门 LockScreen](#p-01-解锁门-lockscreen)
+  - [P-02 首页仪表板](#p-02-首页仪表板)
+  - [P-03 收支记录](#p-03-收支记录)
+  - [P-04 债务管理](#p-04-债务管理)
+  - [P-05 分类管理](#p-05-分类管理)
+  - [P-06 设置](#p-06-设置)
+  - [P-07 记一笔 Sheet](#p-07-记一笔-sheet)
+  - [P-08 债务录入 Sheet](#p-08-债务录入-sheet)
+  - [P-09 还款 Sheet](#p-09-还款-sheet)
+  - [P-10 分类选择 Sheet](#p-10-分类选择-sheet)
+  - [P-11 账本管理](#p-11-账本管理)
+  - [P-12 / P-13 / P-14 Phase 2 占位页](#p-12--p-13--p-14-phase-2-占位页)
+- [4. 组件库](#4-组件库)
+- [5. 响应式设计](#5-响应式设计)
+- [6. 本设计假设以下接口存在（UI 接口依赖清单）](#6-本设计假设以下接口存在ui-接口依赖清单)
+- [7. 与 PRD / API 合规性说明](#7-与-prd--api-合规性说明)
+
+---
+
+## 1. 设计风格
+
+本章定义全局视觉规范，与 `ARCHITECTURE §11`（暗色模式）完全对齐：颜色一律引用 `MaterialTheme.colorScheme.*` token 与语义 token，页面不散落硬编码色值，token 集中 `ui/theme/Color.kt`。
+
+### 1.1 主题装配与动态配色
+
+- 主题模式三态：`跟随系统 / 手动亮 / 手动暗`（`DarkModeSetting { SYSTEM, LIGHT, DARK }`，存 SettingsDataStore，软切换）。
+- `resolvedDark = when(setting) { SYSTEM -> isSystemInDarkTheme(); else -> setting == DARK }`。
+- 动态配色：
+  - **API 31+**：`dynamicLightColorScheme(context)` / `dynamicDarkColorScheme(context)`（壁纸主题色）。
+  - **API 26~30**：内置 `LightColorScheme` / `DarkColorScheme`（M3 默认基线）降级。
+- 语义色（收入绿 / 支出红 / 两清灰）不走动态取色，用**静态语义 token**（M3 动态色无法保证收支语义色可区分），亮/暗双值定义见 §1.2。
+- 装配点：`MiniBookTheme(darkTheme = resolvedDark, dynamicColor = ...)`，随 DataStore 流 `collectAsState` 软切换，全页面即时生效。
+- 系统栏：`enableEdgeToEdge()` + `SystemBarStyle`，状态栏/导航栏自动随 colorScheme 背景与图标对比度切换（沉浸式）。
+- 兼容 API 26：低版本动态配色缺省时仅用基线主题，行为仍完整（功能不降级，仅外观不跟壁纸）。
+
+### 1.2 色彩 Token（亮 / 暗双色）
+
+#### M3 角色 Token（基线，API 26~30 降级用；API 31+ 由动态主题覆盖）
+
+| Token | 亮色 baseline | 暗色 baseline | 典型用途 |
+|-------|---------------|---------------|---------|
+| `primary` | `#6750A4` | `#D0BCFF` | 主按钮、FAB、选中态、链接 |
+| `onPrimary` | `#FFFFFF` | `#381E72` | primary 上文字/图标 |
+| `primaryContainer` | `#EADDFF` | `#4F378B` | 选中 Chip、品牌背景块 |
+| `onPrimaryContainer` | `#21005D` | `#EADDFF` | 容器上文字 |
+| `secondaryContainer` | `#E8DEF8` | `#4A4458` | 次级容器、Tab 项 |
+| `surface` | `#FEF7FF` | `#141218` | 页面/卡片背景 |
+| `onSurface` | `#1D1B20` | `#E6E0E9` | 主文字 |
+| `surfaceVariant` | `#E7E0EC` | `#49454F` | 输入框、列表分隔底 |
+| `onSurfaceVariant` | `#49454F` | `#CAC4D0` | 次级文字 |
+| `outline` / `outlineVariant` | `#79747E` / `#CAC4D0` | `#938F99` / `#49454F` | 边框、未选中态 |
+| `error` | `#B3261E` | `#F2B8B5` | 错误提示、删除按钮 |
+| `errorContainer` | `#F9DEDC` | `#8C1D18` | 危险操作确认底色 |
+| `background` / `onBackground` | `#FEF7FF` / `#1D1B20` | `#141218` / `#E6E0E9` | 全局底 |
+
+#### 语义 Token（静态，亮/暗双值，不随动态色改变）
+
+| Token | 亮色 | 暗色 | 用途 |
+|-------|------|------|------|
+| `semanticIncome` | `#1B7F3B` | `#4ADE80` | 收入金额、收入净额正数、借出/我还款（资产增加方向） |
+| `semanticExpense` | `#C62828` | `#FF8A94` | 支出金额、支出合计、借入/收到还款（负债增加方向） |
+| `semanticNetZero` | `#79747E` | `#938F99` | 净额为零（两清） |
+| `categoryColor` | — | — | 分类自有 `color`（DATABASE §8 种子色值），按原值渲染，不映射 token |
+
+#### 色彩使用铁律
+
+- 页面/组件颜色一律取 `colorScheme` 或语义 token，禁止硬编码色值进 `src/ui/**`（「其他」兜底分类的种子色有唯一例外，读自 DB 数据）。
+- 收支符号色统一走语义 token，保证亮/暗双主题下红绿语义不混淆、不依赖动态壁纸。
+
+### 1.3 字体字号
+
+- 字体：系统默认字体（`FontFamily.Default`，Android 原生 Roboto），不引第三方字体（DEC-001 技术栈无字体依赖）。
+- 重点：**金额大字使用 tabular figures（`FontFeatureSettings("tnum")`）保证数字等宽对齐**，避免累计金额跳动错位。
+- 字号轨（M3 Type 已有 scale + 本项目约定）：
+
+| 应用场景 | Type 风格 | 规格 | 备注 |
+|---------|-----------|------|------|
+| 首页本月结余（金额大字） | `displaySmall` | 36sp / SemiBold | tabular figures，行首简币符 |
+| 页面标题 | `headlineSmall` | 24sp | TopBar 标题 |
+| 净额卡片主数字 | `headlineMedium` | 28sp | 债务/收支汇总 |
+| 列表主文本 | `bodyLarge` | 16sp（Regular） | 交易 item、分类名 |
+| 列表次文本 / 日期分组头 | `bodyMedium` | 14sp | 备注、日期头 |
+| 标签 / Chip / 辅助 | `labelMedium` | 12sp | 筛选 Tab、Tab 项、口径说明 |
+| 金额行内文本（含符号） | `titleMedium` | 16sp / Medium | 交易行 +/- 金额 |
+
+- 可缩放：随系统 fontScale（保留非等宽字体尺寸变量），结余大字在超大字体下换行不截断（圆角卡片高度自适应，测试覆盖 fontScale ≤ 2.0）。
+
+### 1.4 间距网格
+
+- 基准 4dp 网格，标准 8dp 倍数：
+
+| 层级 | 值 | 用途 |
+|------|-----|------|
+| `Space 4` | 4dp | 图标内边距、行内紧凑空隙 |
+| `Space 8` | 8dp | 列表行间、组件内文本与图标间隙 |
+| `Space 12` | 12dp | 卡片内部次级间距、表单字段间距 |
+| `Space 16` | 16dp | **页面默认边距**、卡片内容 padding |
+| `Space 24` | 24dp | 章节间隔、卡片间主间隔 |
+| `Space 32` | 32dp | TopBar 下主区块与内容区距离 |
+
+- 底部导航栏高度 80dp；FAB 距边缘 `16dp`；TopBar 默认 64dp（紧凑高度 56dp 可用于详情头）。
+- 触达目标：任意可点区域最小 48dp（被间距与组件高度保证）。
+
+### 1.5 圆角与阴影
+
+- 圆角（M3 `Shapes`）：
+
+| Shape | 值 | 用途 |
+|-------|-----|------|
+| `small` | 8dp | 输入框、Chip、IconTile、Tab 项 |
+| `medium` | 12dp | 卡片、按钮、SegmentedButton |
+| `large` | 16dp | 净额卡片、表单单卡、Dialog |
+| `extraLarge` | 28dp | BottomSheet 顶部圆角（modal sheet 弹起时顶缘） |
+| `full`（圆形） | 24dp | FAB、头像、圆形分类图标 |
+
+- 阴影：主要用 M3 `Elevation` 默认档位——`0`（无阴影，扁平）、`1`（表单浮起）、`3`（FAB / 卡片 hover）、`6`（Sheet / Dialog / Modal）。避免自造多层投影；暗色下阴影不显，靠 `surface` 色阶差表达层级。Ripple 统一 `Material ripple（无边界内）`。
+
+### 1.6 图标与插画
+
+- 图标：Material Icons（vector），跟随 `contentColor/colorScheme` 主题色（不内置彩色图标包）。
+- 分类图标：**emoji**（DATABASE §8 种子为 emoji，如 🍜），渲染为彩色圆底 `IconTile`，圆底底色取分类 `color` 的柔和化变体（`color.copy(alpha=0.15)` on 感知背景），emoji 本体原色显示。
+- 空态插画：无彩色插画资产，用「大号半透明 icon（`surfaceVariant`）+ 文案」，避免引入图片资源与主题跟随成本。
+
+---
+
+## 2. 页面列表
+
+导航结构以 `ARCHITECTURE §12` 为准：单 Activity + `navigation-compose`；未解锁态顶层 `isLocked` 门控只可达 `app-locked`；解锁后 5 个主页面走底部 `NavigationBar`；表单用全屏/弹层（BottomSheet）。
+
+| 编号 | 名称 | route | 说明 | PRD 映射 |
+|------|------|-------|------|---------|
+| P-01 | 解锁门 | `app-locked` | 冷启动恒锁 / 离开超时重锁；生物识别 + 系统凭据回退；DB 打开前置（真解密门，未解锁无可达数据） | F-05 / F-10 |
+| P-02 | 首页仪表板 | `home` | 本月结余 / 收支合计 / 最近交易；FAB「记一笔」 | F-01 |
+| P-03 | 收支记录 | `transactions` | 全部/支出/收入筛选 + 按日期分组列表 | F-01 |
+| P-04 | 债务管理 | `debts` | 双视图：明细（时间排序）+ 按对象（净额汇总） | F-02 |
+| P-05 | 分类管理 | `categories` | 内置分类（禁删）+ 自定义分类增删改 | F-03 |
+| P-06 | 设置 | `settings` | 安全（锁/超时/加密态）、外观（暗色）、数据（导出/导入）、账本管理入口 | F-04/05/09/11 |
+| P-07 | 记一笔 Sheet | `sheet-transaction` | 新增/编辑收支（Modal BottomSheet 内嵌表单，含删除） | F-01 |
+| P-08 | 债务录入 Sheet | `sheet-debt` | 新增/编辑借还条目（kind × direction 四态） | F-02 |
+| P-09 | 还款 Sheet | `sheet-repay` | 快捷记还款（借出→收到还款 / 借入→我还款），预填对方姓名 | F-02 |
+| P-10 | 分类选择 Sheet | `sheet-category-picker` | 按收支类型过滤的分类网格选择器（记一笔、分类迁移共用） | F-01 / F-03 |
+| P-11 | 账本管理 | `ledger-manage` | 账本列表/创建/切换/删除非默认；新建联动克隆内置分类 | F-11 |
+| P-12 | 搜索（占位） | `search` | Phase 2 注册，本期占位页（不可达或「敬请期待」） | F-06 |
+| P-13 | 报表统计（占位） | `reports` | Phase 2 注册，本期占位页 | F-07 |
+| P-14 | 预算管理（占位） | `budgets` | Phase 2 注册，本期占位页 | F-08 |
+
+补充说明：
+
+- 页面集内的次级子界面：分类编辑（`sheet-category-editor`）、新建/编辑账本（`sheet-ledger`）归入「sheets 家族」，在 P-05 / P-11 内联弹起，不再单列编号。
+- 标签切换用 `saveState + restoreState` 保留各 Tab 状态；页面间参数只传 `id`（UUID）类，账本/主题等共享态走 DataStore/LedgerProvider（ARCHITECTURE §8.2）。
+- P-12~P-14 在导航图中注册但默认不可达（底部栏不展示图标，避免对 MVP 用户造成困惑）；可在「设置→关于」给出 Phase 2 预告文案。
+
+---
+
+## 3. 页面设计
+
+> 通用状态约定（各页复用）：
+> - **Loading**：首帧骨架屏（色彩块用 `surfaceVariant` 淡化闪烁），不用全局菊花拦截整页。
+> - **Empty**：`EmptyState` 组件（图标 + 主文案 + 副文案 + 可选动作按钮）。
+> - **Error**：列表 Flow 无数据流错误通道时仅处理两类——账本不存在（`LedgerNotFound` → 引导回账本管理）与解锁/解密异常（全局锁态）；表单类错误就地显示。
+> - **边界场景**：金额超限、分类被引用不可删、内置分类禁删、默认账本禁删等，见各页「边界」。
+> - 数据源：列表/汇总直接订阅 ViewModel 聚合的 `StateFlow`（`stateIn(WhileSubscribed(5000))`），UI 不直接 collect Room 流（ARCHITECTURE §5.3）。
+
+---
+
+### P-01 解锁门 LockScreen
+
+**概述**：真解密门。DB 未打开前本页为唯一可达路由，页面不触达任何数据（ARCHITECTURE §7.4 / §9）。
+
+```
+┌──────────────────────────────┐
+│                              │
+│         [App 图标 96dp]        │
+│           MiniBook            │
+│        「账本已加密锁定」        │
+│                              │
+│   ┌────────────────────────┐ │
+│   │     生物识别解锁          │ │
+│   └────────────────────────┘ │
+│   [ 使用系统凭据（PIN/密码）]  │
+│                              │
+└──────────────────────────────┘
+```
+
+**交互**：
+
+- 冷启动分诊后若锁开启：直接到达本页（无数据可达）。
+- 「生物识别解锁」→ `BiometricPrompt`（`BIOMETRIC_STRONG or DEVICE_CREDENTIAL`），成功回调中 `cryptoObject.cipher` 解出 master key → `DatabaseGate.open` → 进入 home（ARCHITECTURE §7.4 时序）。
+- 「使用系统凭据」→ 同一 BiometricPrompt 改用 `DEVICE_CREDENTIAL` 通道。
+- 失败/取消：留在本页可重试；多次失败停留锁屏（不降级、不显示任何数据）。
+- 设备无系统锁屏且锁开启：冷启动分诊 B 命中 → 本页顶部展示引导卡「为保护数据，请先设置设备锁屏」，跳系统设置并回检 `isDeviceSecure`（DEC-003，不降级明文）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 冷启动分诊中：纯品牌页背景 + 顶部小 spinner（首帧 ≤ 必要耗时，ARCHITECTURE §13 冷启动 ≤ 2s） |
+| Empty | 不适用（无数据概念） |
+| Error | 「无法解锁」提示（密钥解密失败/Keystore 失效）+ 引导重试；若为设备不支持认证 → `error` 色文案「此设备无可用解锁方式」（PRD F-05 异常处理） |
+| 边界 | 锁状态切换（开→关）后下次冷启动静默开库直达 home，本页不可达；解锁成功后本页不保留于返回栈 |
+
+**组件**：`LogoLockScreen`、`BioAuthButton`、`GuidanceCard`（引导设锁屏）、`SnackbarHost`。
+
+---
+
+### P-02 首页仪表板
+
+**概述**：解锁后主入口。以「当前账本 + 本月」为视角汇总，数据来自 `monthlySummary` 与最近交易流。
+
+```
+┌────────────────────────────────┐
+│ 首页              [账本 ▾]      │ ← LedgerSelector
+│ ┌────────────────────────────┐ │
+│ │ 本月结余                    │ │
+│ │       ¥ 1,234.56           │ │ ← displaySmall + tnum
+│ │  收入 ¥ 2,000.00  支出 ¥765.44│ │ ← 语义色
+│ └────────────────────────────┘ │
+│ ┌────────────────────────────┐ │
+│ │ 最近交易          [查看全部 >]│ │
+│ │ 🍜 餐饮      -¥25.00  08-18  │ │
+│ │ 💰 工资      +¥6,000.00 08-01│ │
+│ │ ─ 空态引导（无交易时）─      │ │
+│ └────────────────────────────┘ │
+│                    [＋]          │ ← FAB「记一笔」
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 顶部 `LedgerSelector`：显示当前账本名称/图标；点击 → 账本管理页（P-11），切换后 `flatMapLatest` 全页重订阅（ARCHITECTURE §8.3）。
+- 结余卡片：大字显示 `MonthSummary.balanceFen`；「收入 ¥ X / 支出 ¥ Y」横排；点击「收入/支出」跳 `transactions` 并按类型预筛。
+- 最近交易：`observeByLedger(currentLedger, filter=null)` 前 10 条（UI 截断部分），行内显示分类 emoji、名称、±金额（语义色）、日期 MM-dd；点「查看全部」→ transactions 页。
+- FAB「＋」→ 记一笔 Sheet（P-07，默认支出描述态，弹起前选中当前账本）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 结余卡片骨架块 + 最近交易 skeleton 行 |
+| Empty | 本月无交易：结余显示 `¥0.00`（不隐藏卡片）；最近交易区显示空态「还没有记录，点右下角 ＋ 记第一笔」 |
+| Error | 当前账本 id 在库中不存在（异常导入/删除造成）→ `LedgerNotFound` → 一屏提示并引导账本管理 |
+| 边界 | 金额超长用 `MoneyFormatter` 千分位（≥ 分上限 99_999_999_99 时正常截显示但输入侧已拦截）；切账本后整卡瞬时刷新，需保留 5s 订阅窗口防闪烁；结余为 0 与负债（支出>收入）正常显示负值红 |
+
+**组件**：`NetBalanceCard`、`TransactionListItem`、`EmptyState`、`PrimaryFAB`、`LedgerSelector`、`LoadingState`。
+
+---
+
+### P-03 收支记录
+
+**概述**：全部交易按日期分组，类型筛选。筛选类型与分组对齐 `TransactionFilter.type` 与 `observeByLedger`。
+
+```
+┌────────────────────────────────┐
+│ 收支记录                          │
+│ [全部] [支出] [收入]              │ ← SegmentedButton
+│ ─── 08-18 ─────────────────── ───│
+│ 🍜 餐饮   -¥25.00               │
+│   备注：午饭                      │
+│ ─── 08-01 ─────────────────── ───│
+│ 💰 工资   +¥6,000.00            │
+│ ...                             │
+│                    [＋]          │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 顶部类型筛选：全部/支出/收入 → 切换 `TransactionFilter(type=...)` 重订阅。
+- 列表 `LazyColumn` + `key=id` + `animateItem`；按 `date` 分组（组头 `DateSectionHeader`），组内按 `createdAt DESC`。
+- 点击条目 → 记一笔 Sheet 编辑模式（预填，可改/删）。
+- 底部「＋」→ 记一笔 Sheet 新增。
+- Phase 2 预留：顶部扩展下拉筛（分类/日期范围/金额）复用同一参数化 `TransactionFilter`（API §3 说明），本期不展示多余控件。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 骨架列表行 |
+| Empty | 无条件空态「还没有交易」+ 引导按钮；筛选后无结果 → 「当前筛选下没有记录」+「清除筛选」按钮 |
+| Error | 与 P-02 相同的账本不存在错误；列表本身无错误通道 |
+| 边界 | 千条级滚动流畅（`LazyColumn`+`key`，聚合不再页面内算，汇总已走 DB 端 SQL）；`description` ≤200 字展示省略尾「…」；金额不出现 `-¥0.00` 条目（<0 拒绝保存是校验层保证） |
+
+**组件**：`TransactionTypeTab`、`DateSectionHeader`、`TransactionListItem`、`EmptyState`、`LoadingState`、`PrimaryFAB`。
+
+---
+
+### P-04 债务管理
+
+**概述**：借/还平级模型双视图四态。明细按时间倒序；按对象按人汇总净额（口径：借出+、借入−、收到还款−、我还款+，与 API §4 / DATABASE §4.2 完全一致）。
+
+```
+┌────────────────────────────────┐
+│ 债务          [明细|按对象]     │ ← DebtViewTab
+│ ┌────────────────────────────┐ │
+│ │ 净额                        │ │
+│ │ 对方欠我 ¥ 1,345.00   (绿)  │ │
+│ │ 我欠对方 ¥   200.00   (红)  │ │
+│ └────────────────────────────┘ │
+│ 张三     对方欠我 ¥300.00   (绿)│
+│ 李四     我欠对方 ¥200.00   (红)│
+│ 王五     已两清         ¥0.00  │
+│                    [＋]        │
+└────────────────────────────────┘
+```
+
+明细视图（同页 Tab 切换）：
+
+```
+│ ─── 08-10 ─────────────  │
+│ 借出   张三     +¥500.00 │ │ ← 对方欠我（绿+）
+│ 收到还款 张三   -¥200.00 │ │ ← 对方欠我减少（红−）
+│ ─── 07-01 ─────────────  │
+│ 借入   李四     -¥1,000.00│ │ ← 我欠对方（红−）
+│ 我还款 李四     +¥800.00 │ │ ← 我欠对方减少（绿+）
+```
+
+**交互**：
+
+- 顶部双 Tab：明细 / 按对象。
+- 按对象视图：`netByParty` Map 渲染行——`net>0 → 对方欠我（绿）`；`net<0 → 我欠对方（红，绝对值）`；`net==0 → 已两清（灰）`。每行尾部「＋还款」快捷按钮 → 还款 Sheet（P-09）预填该 partyName，默认方向由当前净额推导（对方欠我 → 记「收到还款」；我欠对方 → 记「我还款」）。
+- 顶部净额卡片：汇总正净额合计（对方总欠我）与负净额合计（我总欠对方）；点击卡片弹出净额口径说明（dialog：借出+、借入−、收到还款−、我还款+）。
+- 明细视图：按日期分组，行显示 kind 标签（借出/借入/收到还款/我还款）+ 对方姓名 + ±金额（语义色 = 该行的净额贡献方向）+ 日期；点击 → 债务 Sheet（P-08）编辑/删除。
+- FAB「＋」→ 债务录入 Sheet（P-08）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 骨架列表 + 净额卡占位 |
+| Empty | 无任何债务：「还没有借还记录」+ 引导按钮；按对象视图无数据同 |
+| Error | 同全局账本不存在引导；债务无独立错误通道 |
+| 边界 | ±符号按「对净额贡献」语义着色（非收支语义），须在图例文案说清（明细表头旁一「?"口径」icon）；`partyName` 必填（空拒绝保存）；四态由 `kind×direction` 组合，禁止在 UI 层出现第五种状态（守卫 —— 未知组合渲染为中性灰并计入净额 0，避免崩溃）|
+
+**组件**：`NetBalanceCard`、`PartyNetRow`、`DebtDetailRow`、`DebtViewTab`、`NetLegendDialog`、`PrimaryFAB`。
+
+---
+
+### P-05 分类管理
+
+**概述**：展示与维护当前账本分类。内置 12 支出 + 6 收入（DATABASE §8），不可删、可改 icon/color/name（「其他」兜底禁改名）；自定义分类可增删改。
+
+```
+┌────────────────────────────────┐
+│ 分类                  [+ 新建]  │
+│ 支出 （12）                     │
+│  [🍜餐饮][🚗交通][🛒购物][...]  │ ← 图标网格（IconTile）
+│  [🔧其他]（「其他」置灰锁定改名）│
+│ 收入 （6）                      │
+│  [💰工资][🎯奖金][...]          │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 按 `type` 分「支出 / 收入」两组，组标题显示数量；网格布局（竖屏 4 列，见 §5）。
+- 点击分类块 → 分类编辑 Sheet（`sheet-category-editor`）：
+  - 内置分类：可改 `name/icon/color`；`type` 与 `isBuiltIn` 字段锁定不可编辑（DEC-007）；无「删除」项（禁删，视觉用 `onSurfaceVariant` 灰显删除占位说明「内置分类不可删除」）。「其他」兜底：`name` 也锁定只读（保持默认名），仅 icon/color 可改。
+  - 自定义分类：可改 `name/icon/color`，可删除。
+- 删除自定义分类流程（PRD F-03 异常处理 + DATABASE §4.3）：
+  1. `countTransactionsByCategory(categoryId)`。
+  2. `=0` → `ConfirmDialog` 直接删。
+  3. `>0` → `MigrationDialog`：文案「该分类下有 N 笔交易，删除前请迁移到其他分类」→ 弹分类选择 Sheet（P-10，同 type 且排除自身）→ 选迁移目标 → 确认后：事务内把关联交易 `update(categoryId=目标)` 再 `deleteById`（详见 §6 假设 A-1）。
+- 顶部「+ 新建」→ 分类编辑 Sheet 新建态：名称 / 图标（emoji 面板）/ 颜色（预设色板）/ 类型（支出|收入）必填。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 网格骨架块 |
+| Empty | 理论上不出现（种子幂等保证），防御性空态「初始化分类失败，请联系支持」 |
+| Error | 删除内置分类被业务拒绝 → snackbar「内置分类不可删除」；`countTransactionsByCategory` 异常按事务失败提示 |
+| 边界 | 删除被引用分类必须走迁移（拒绝直接删，DB 无级联，防悬空引用）；新建自定义 name 非空、与同账本内重名允许（DATABASE §4.3 不做同 name 去重，UI 允许但提示）；order 分配 1~98 不与「其他」的 99 冲突 |
+
+**组件**：`CategoryGroupSection`、`CategoryIconTile`、`CategoryEditorSheet`、`CategoryPickerSheet`、`MigrationDialog`、`EmptyState`。
+
+---
+
+### P-06 设置
+
+**概述**：安全（应用锁）、外观（暗色）、数据（导入导出）、账本入口、关于。
+
+```
+┌────────────────────────────────┐
+│ 设置                             │
+│ 通用                            │
+│  > 账本管理            默认账本 ▸│
+│ 外观                            │
+│  > 暗色模式            [跟随系统]│
+│ 安全                            │
+│  > 应用锁                 [开]  │
+│  > 超时时间           离开1分钟后│
+│  > 生物识别 / 系统凭据    已启用  │
+│  > 数据加密（SQLCipher）   已启用 │ ← 只读状态展示
+│ 数据                            │
+│  > 导出备份                      │
+│  > 导入备份                      │
+│ 关于                            │
+│  > 版本                v1.0.0   │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 账本管理行 → P-11。
+- 暗色模式：`ChoiceDialog` 三选项（跟随系统/亮/暗），选中即写入 DataStore 软切换（F-09）。
+- 应用锁开关：
+  - 开启时若 `isDeviceSecure=false` → 引导设锁屏（DEC-003）；开启成功 → 提示「下次进入需验证身份」。
+  - 关闭 → `ConfirmDialog` 提示「关闭后应用将不再要求验证，本地数据仍保持加密」（DEC-002，防误触）。
+- 超时时间：`ChoiceDialog` 五档（立即/30秒/1分钟/5分钟/永不）（ARCHITECTURE §9）。
+- 加密状态行：只读展示「已启用（SQLCipher + Keystore）」，无开关（F-10 架构级默认，不可关）。
+- 导出备份：点选 → SAF 目录选择器 → 全屏忙碌 → 成功 snackbar（文件名 `minibook_backup_yyyyMMdd_HHmmss.json`）/ 失败 banner。
+- 导入备份：点选 → SAF 文件选择 → `ConfirmDialog`（强确认：即将覆盖全部现有数据）→ 校验 → 忙碌 → 成功/失败（API §11.3：严格校验，失败零落库）。
+- 导入/导出期间 UI 锁数据入口（`FullScreenBusyOverlay`，禁返回/禁切 Tab）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 设置行骨架（首入）；导出/导入进行中全屏忙碌 |
+| Empty | 不适用 |
+| Error | 导入校验失败：banner `error` 色展示首个错误字段（如「第 3 组交易缺少 amount」），零落库；SAF 取消/IO 异常 → `onSurfaceVariant` 提示 |
+| 边界 | 导入覆盖为不可逆操作，强确认按钮用 `errorContainer` 危险样式；导出文件名含时间戳防重名；生物识别不可用（无系统凭据）时「生物识别/系统凭据」行灰显并提示（D-2 关联） |
+
+**组件**：`SettingSection`、`SettingRow`、`SwitchRow`、`ChoiceDialog`、`RadioRow`、`ConfirmDialog`（danger 变体）、`FullScreenBusyOverlay`、`SnackbarHost`。
+
+---
+
+### P-07 记一笔 Sheet
+
+**概述**：收支新增/编辑表单（Modal BottomSheet，最大高度 70% 屏高可滚动）。
+
+```
+┌────────────────────────────────┐
+│  记一笔                  💾     │ ← 顶部：标题+保存icon
+│  [支出] [收入]                  │ ← TransactionTypeTab
+│         ¥  0.00                │ ← MoneyInputField（大字36sp）
+│  [分类  🍜 餐饮        ▸]      │ ← 必填，占位「请选择分类」
+│  [日期  2026-08-18      ▸]      │ ← DatePickerField
+│  [备注  （可选，≤200字）     ]   │
+│            [保存]              │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 类型切换（支出/收入）→ 分类选择器候选列表随之切换（重订阅对应 type 分类流，P-10 已过滤类型）。
+- 金额输入：大字号聚焦态、数字键盘、最多 2 位小数（输入层拦截第 3 位）；`MoneyFormatter` 元↔分双向（DATABASE §9.2）。
+- 分类必填：点「保存」未选 → 内联错误「请选择分类」。
+- 日期默认今天；可改（`DateSectionHeader` 同款 DatePicker 交互）。
+- 保存 → `insert`（新增）/ `update`（编辑）→ 关闭 Sheet + snackbar；编辑模式底部含「删除」（danger ConfirmDialog）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 编辑模式回填中：表单字段骨架（brief） |
+| Empty | 无分类可选的极端场景（种子丢失防御）：提示「请先在分类页添加分类」禁用保存 |
+| Error | 金额 ≤0 / 超限（分 > `99_999_999_99`）：输入框下方 `error` 文案并禁用保存；备注超 200 字：计数器标红；保存 IO 失败 snackbar |
+| 边界 | 金额输入「0.00」不允许保存（`fen>0` 校验）；编辑时改类型会清空不匹配的分类（校验层拦截 + UI 弹「该分类类型与所选不一致，请重新选择」）；删除即物理删除，强确认 |
+
+**组件**：`SheetFormScaffold`、`MoneyInputField`、`CategoryPickerSheet`、`DatePickerField`、`TransactionTypeTab`、`TextField`（备注计数）、`ConfirmDialog`。
+
+---
+
+### P-08 债务录入 Sheet
+
+**概述**：新增/编辑一条借还（`kind × direction` 四态平级，DATABASE §4.2）。
+
+```
+┌────────────────────────────────┐
+│  债务        [明细|新增]         │
+│  [借出] [借入]                  │ ← kind 切换
+│  对方姓名：  [张  三       ]    │ ← 必填
+│  金额：      ¥ 500.00           │
+│  [这是一笔还款 ───────]        │ ← direction 切换（repay ⇄）
+│  │   借出+收到还款 / 借入+我还款│
+│  日期：      2026-08-18        │
+│  备注：      （可选）           │
+│            [保存]              │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 顶部 kind 分段：借出 / 借入（`lend`）；下方方向切换区：
+  - `kind=lend`：方向仅 `owe_me`（借出）→ 文案「对方欠我」。
+  - `kind=repay`：方向切换为「收到还款」（`owe_me`）/「我还款」（`i_owe`）。
+  - UI 上用**二选一 Card（收到还款 | 我还款）**替代裸枚举选择，降低理解成本；贷款方向默认 `owe_me`（借出）。
+- 编辑模式：预填全部字段；标题「编辑债务」，含删除（danger ConfirmDialog）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading / Empty | 同 P-07 |
+| Error | 姓名空 / 金额 ≤0 / 超限：内联错误并禁保存；保存失败 snackbar |
+| 边界 | 四态映射严格禁止用户选到"逻辑不可能"组合（`repay` 必选方向）；还款金额可大于原欠款（业务允许，UI 仅提示「金额超过当前净欠额，请确认」，不拦截）|
+
+**组件**：`SheetFormScaffold`、`MoneyInputField`、`RepayDirectionCard`、`DatePickerField`、`TextField`。
+
+---
+
+### P-09 还款 Sheet
+
+**概述**：快捷记还款，从按对象视图的「＋还款」进入，预填 partyName、方向。
+
+```
+┌────────────────────────────────┐
+│  收到还款（张三）               │ ← 标题即方向+姓名
+│  张三  曾借出 ¥500，还 ¥200？   │
+│  金额：      ¥ 200.00           │
+│  日期：      2026-08-18        │
+│  备注：      （可选）           │
+│            [确认还款]          │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 从 P-04 按对象视图行「＋还款」进入：`partyName` 只读预填，方向自动推导（对方欠我 → `repay×owe_me`「收到还款」；我欠对方 → `repay×i_owe`「我还款」，标题随之）。
+- 金额默认 0，聚焦待输；保存即 `DebtDataSource.insert`（还款独立成行，非嵌套，DATABASE §4.2 说明）。
+- 亦可从全局 FAB 进入（此时为 P-08 完整表单，还款入口需显式选择方向）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading / Empty | 不适用（无候选数据加载） |
+| Error | 金额非法内联报错；插入失败 snackbar |
+| 边界 | 还款金额超当前净额仅提示不拦截；同一对方可多次还款（各行为独立条目，净额实时重算） |
+
+**组件**：`SheetFormScaffold`、`MoneyInputField`、`DatePickerField`、`RepayDirectionCard`（只读态）。
+
+---
+
+### P-10 分类选择 Sheet
+
+**概述**：跨页面复用的分类选择器。按 `type` 过滤（支出/收入），网格多选单一。
+
+```
+┌────────────────────────────────┐
+│  选择分类（支出）               │
+│  [🍜餐饮][🚗交通][🛒购物]      │ ← 4列网格，选中描边 primary
+│  [🎬娱乐][🏠住房][💊医疗]      │
+│  ...                          │
+│              [确定]           │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 由 P-07（记一笔分类）、P-05（迁移目标选择）调用：入参 `type`（迁移场景取被删分类的 type）、排除自身 id、可选已选中 id。
+- 点击图标块：选中态（`primaryContainer` 底 + `primary` 描边 + 右上角勾）；再次点击取消。
+- 确定 → 返回所选 `Category`；关闭。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 网格骨架 |
+| Empty | 该 type 无分类（防御，正常不出现）：提示「请先添加分类」 |
+| Error | 无（纯选择器） |
+| 边界 | 迁移场景必须返回非空目标才允许删除流程继续 |
+
+**组件**：`CategoryPickerSheet`、`CategoryIconTile`。
+
+---
+
+### P-11 账本管理
+
+**概述**：多账本的列表与增删切换（F-11）。
+
+```
+┌────────────────────────────────┐
+│ 账本管理              [+ 新建]  │
+│  ✓ 家庭账本              2026→ │ ← 当前账本高亮
+│  ○ 默认账本   (默认)           │
+│  ○ 生意账本            [· · ·] │ ← 删除（非默认）
+│                              │
+│  「每个账本的记录互相独立」      │
+└────────────────────────────────┘
+```
+
+**交互**：
+
+- 列表：`observeAll` 渲染，当前账本行高亮（`primaryContainer` 底 + ✓）；点击其他行 → `LedgerDataStore.setCurrentLedgerId(x.id)` 纯状态切换（ARCHITECTURE §8.3），全 app Flow 自动重订阅。
+- 新建：`sheet-ledger`（名称必填 / 图标 emoji / 颜色）；保存 → `LedgerDataSource.insert`（事务内克隆内置分类，ARCHITECTURE §8.4）→ 自动切换为新账本。
+- 编辑：修改当前账本 name/icon/color（`update`）。
+- 删除：默认账本行不出现删除（禁删）；非默认账本删除 → danger ConfirmDialog「将同时删除该账本下全部交易/债务/分类」→ 事务内清 4 表再删 Ledger 行（DATABASE §4.4）。
+
+**状态说明**：
+
+| 态 | 表现 |
+|----|------|
+| Loading | 列表骨架 |
+| Empty | 无账本（首启动极短暂态）：引导「创建第一个账本」 |
+| Error | 删除失败（如唯一非默认账本被禁）提示；`LedgerNotFound` 兜底 |
+| 边界 | 至少保留一个账本（默认账本禁删）;新建后必须自动切换，避免落进"无当前账本"态 |
+
+**组件**：`LedgerListItem`、`LedgerEditorSheet`、`ConfirmDialog`（danger）、`EmptyState`。
+
+---
+
+### P-12 / P-13 / P-14 Phase 2 占位页
+
+**概述**：search / reports / budgets 本期占位。
+
+```
+┌────────────────────────────────┐
+│ 搜索（即将上线 Phase 2）        │
+│  🔍 搜索交易 / 债务            │ ← 禁用态搜索栏
+│  「搜索功能将在后续版本提供」    │
+└────────────────────────────────┘
+```
+
+- 统一 `PlaceholderPage` 骨架（标题、禁用搜索/统计控件示意、说明文案、返回）。
+- 交互：无业务交互，仅可返回；导航中默认不可达，仅保留 route 注册（ARCHITECTURE §12「预留目的地」）。
+
+**组件**：`PlaceholderPage`、`SettingRow`（关于页入口可跳转查看预告）。
+
+---
+
+## 4. 组件库
+
+通用组件统一放 `ui/components/`，供 §3 各页引用；颜色全部 token 化，无页面私制定制组件。
+
+| # | 组件 | 说明 | 使用页面 |
+|---|------|------|---------|
+| C-01 | `MoneyInputField` | 金额输入：36sp 大字聚焦态、数字键盘、2 位小数限制、`MoneyFormatter` 元↔分、超限/≤0 校验错误位 | P-07、P-08、P-09 |
+| C-02 | `CategoryPickerSheet` | 分类选择器（入参 type、排除 id、初选值），4 列网格单选 | P-07、P-05（迁移）、P-10 |
+| C-03 | `CategoryIconTile` | 分类图标块：emoji + 分类色弱化圆底；选中/禁用双态 | P-05、P-10 |
+| C-04 | `EmptyState` | 空态：图标（surfaceVariant 大尺寸）+ 主/副文案 + 可选动作按钮 | P-02、P-03、P-04、P-05、P-11 |
+| C-05 | `LoadingState` / `SkeletonBlock` | 骨架屏：结余卡/列表/网格占位块（闪烁） | P-02、P-03、P-04、P-05、P-11 |
+| C-06 | `PrimaryFAB` | 底部浮动「＋」；扩展点：按页定制语义（记一笔/记债务） | P-02、P-03、P-04 |
+| C-07 | `BottomNavItem` | 底部导航项（`NavigationBarItem` 封装，5 Tab，`saveState/restoreState` 支持） | 主页面壳（P-02~P-06） |
+| C-08 | `TransactionTypeTab` | 全部/支出/收入 `SegmentedButton` | P-03、P-07 |
+| C-09 | `DebtViewTab` | 明细/按对象 TabRow | P-04 |
+| C-10 | `DatePickerField` | 日期字段 + `DatePickerDialog`；默认今天、`yyyy-MM-dd` | P-07、P-08、P-09 |
+| C-11 | `DateSectionHeader` | 列表按日分组头（`2026-08-18 · 周六`） | P-03、P-04 明细 |
+| C-12 | `NetBalanceCard` | 净额卡：大字金额（tnum）+ 明细行；入参适配收支结余与债务净额 | P-02（收支结余）、P-04（债务净额） |
+| C-13 | `TransactionListItem` | 交易行：分类 emoji 圆底 + 名称 + 备注摘要 + ±金额（语义色）+ 日期 | P-02（最近交易）、P-03 |
+| C-14 | `PartyNetRow` | 按对象净额行：姓名 + "对方欠我/我欠对方/已两清"（红绿灰）+ 快捷还款按钮 | P-04 |
+| C-15 | `DebtDetailRow` | 债务明细行：kind 标签（借出/借入/收到还款/我还款）+ 姓名 + ±金额 + 日期 | P-04 |
+| C-16 | `LedgerSelector` | 顶部账本选择（当前账本名 + ▾），点击进账本管理 | P-02（首页） |
+| C-17 | `SheetFormScaffold` | 表单 Sheet 通用骨架：标题 + 内容槽 + 保存/取消 + 滚动 + 最大高度限制 | P-07、P-08、P-09、P-05 分类编辑、P-11 账本编辑 |
+| C-18 | `ConfirmDialog`（含 danger 变体） | 确认对话框（普通 / 危险 `errorContainer` 强调） | P-05、P-06（导入覆盖/关锁）、P-07/08（删除）、P-11（删账本） |
+| C-19 | `MigrationDialog` | 删除被引用分类的迁移确认（N 笔 → 迁移目标） | P-05 |
+| C-20 | `FullScreenBusyOverlay` | 全屏忙碌遮罩（锁数据入口，屏蔽返回与 Tab） | P-06（导出/导入） |
+| C-21 | `SnackbarHost` | 全局轻提示（保存成功/失败/操作结果） | 全部表单页 |
+| C-22 | `ChoiceDialog` / `RadioRow` | 单选对话框 | P-06（暗色模式、超时时间） |
+| C-23 | `SettingSection` / `SettingRow` / `SwitchRow` | 设置页分区与行 | P-06 |
+| C-24 | `RepayDirectionCard` | 还款方向二选一卡片（收到还款 \| 我还款），支持只读态 | P-08、P-09 |
+| C-25 | `PlaceholderPage` | Phase 2 占位页骨架（标题 + 禁用示意 + 文案） | P-12、P-13、P-14 |
+| C-26 | `LogoLockScreen` / `BioAuthButton` / `GuidanceCard` | 解锁门专用组合 | P-01 |
+
+组件使用约定：
+
+- 所有组件 props 一律公开状态而非裸回调枚举（UI 状态驱动单向下行（ARCHITECTURE §4.3））。
+- `tnum`（tabular figures）封装进 `MoneyText` 小工具并全量用于金额展示，禁止手写金额格式化。
+- 通用组件不允许携带业务文案；业务文案由页面注入。
+
+---
+
+## 5. 响应式设计
+
+**总体策略：手机竖屏优先（默认目标），大屏/横屏适配用 Material 3 `WindowSizeClass` 断点，MVP 实用主义——只做「对齐与加宽」的降级增强，不做复杂 mResize 重排版**。
+
+### 5.1 断点
+
+| SizeClass | 宽度 | 布局策略 | 落地 |
+|-----------|------|---------|------|
+| Compact | < 600dp | 单窗：底部 NavigationBar + 全宽 BottomSheet | 默认（手机竖屏） |
+| Medium | 600~839dp | 单窗为主，内容区 maxWidth 扩宽（540dp 居中）；Sheet 限宽 560dp | 小平板竖屏 / 大屏手机横屏 |
+| Expanded | ≥ 840dp | 双栏可选（见 §5.2）；主内容 ± 侧详情 | 平板/横屏 |
+
+### 5.2 双栏策略（Expanded，MVP 可选增强）
+
+| 页面 | 单窗（Compact） | 双栏（Expanded） |
+|------|----------------|------------------|
+| 首页 | 纵向串行卡片 | 结余卡 + 最近交易可并排双卡（左主右辅） |
+| 收支记录 | 列表全宽 | 左：筛选+列表；右：点选行详情/编辑 inline（替代弹 Sheet） |
+| 债务 | Tab 切明细/按对象 | 左：按对象净额列表；右：选中对象的明细流 |
+| 设置 | 全宽列表 | 左：设置分区导航；右：分区内容 |
+| Sheets | Modal BottomSheet 全宽 | 改为居中 Dialog（maxWidth 560dp）或右侧滑出面板 |
+
+MVP 承诺（控制范围）：
+- 五主页交于底部 NavigationBar 在横屏仍可用（不强制换 NavigationRail，列为后续优化）。
+- 首个版本实现 `BoxWithConstraints` 阈值（≥840dp）切换双栏，双栏内小屏逻辑复用一个数据源；其余断点仅做边距/宽度约束，不引入双布局代码。
+- 宽屏 Stepper 只增不改：`NavigationBar` 位置保持底部；Sheet 在宽屏用 `maxWidth` 约束 + 居中。
+
+### 5.3 横屏专项
+
+- 结余大字与金额行：横屏高度变窄，卡片横向压缩时允许金额折行（`softWrap`），不低于 20sp 最小字号。
+- `DateSectionHeader` 与列表行间距按 8dp 网格自适应（不做高度写死）。
+- 键盘弹出：底部导航栏自动避让（`imePadding`），Sheet 表单区 `scroll` 可滚，避免金额输入被键盘遮断竖屏。
+
+### 5.4 系统栏与沉浸
+
+- `enableEdgeToEdge()` 全页面开启；状态栏/导航栏色跟随 `colorScheme.background/surfaceContainer`（SystemBarStyle 自动对比图标色）。
+- 暗色下系统栏图标自动亮色、亮色下深色，无需页面手动处理。
+
+### 5.5 平铺约束
+
+- 内容最大行宽限制：不设全局 maxWidth（手机不浪费屏宽），只对 Dialog/Sheet 设 maxWidth（560dp）。
+- 触达目标 48dp 不随断点缩水；间距网格恒定，仅层次间距（24→32）在 Expanded 放宽。
+
+---
+
+## 6. 本设计假设以下接口存在（UI 接口依赖清单）
+
+> 本清单对齐 `docs/API.md`（= 04_api，已确认）。UI 只依赖领域模型类（`Transaction/Debt/Category/Ledger` 等）与下述 DataSource 方法，不感知 Room/Entity。**若任何行与 API.md 不一致，属 UI 假设缺漏，请 Architect 在阶段性双向确认中指出并记 `07_decisions.md`。**
+
+### 6.1 数据访问接口依赖（对齐 DataSource）
+
+| # | UI 场景 / 页面 | 依赖接口（API.md 章节） | 说明 |
+|---|----------------|------------------------|------|
+| D-01 | 首页本月结余（P-02） | `TransactionDataSource.monthlySummary(ledgerId, month: YearMonth): MonthSummary` | income/expense/balance 三字段 |
+| D-02 | 首页最近交易 / 收支列表 / 筛选 / 分组（P-02、P-03） | `TransactionDataSource.observeByLedger(ledgerId, filter: TransactionFilter): Flow<List<Transaction>>` | `filter.type` 全部/支出/收入；Phase 2 复用 `categoryId/dateFrom/dateTo` |
+| D-03 | 记一笔保存 / 编辑（P-07） | `TransactionDataSource.insert(tx): String` / `update(tx)` | 金额为正整分 |
+| D-04 | 删除交易（P-07 编辑态） | `TransactionDataSource.deleteById(id)` | — |
+| D-05 | 编辑回填（P-07） | `TransactionDataSource.getById(id): Transaction?` | id 取自路由参数 |
+| D-06 | 分账本重订阅（首页等全部） | `LedgerDataStore.currentLedgerId: Flow<String>`（非 DataSource，ARCHITECTURE §8.2） | UI 经 ViewModel `flatMapLatest` 组合 |
+| D-07 | 债务明细 / 编辑回填（P-04 明细、P-08） | `DebtDataSource.observeByLedger(ledgerId, filter: DebtFilter): Flow<List<Debt>>` | **假设** `DebtFilter{ kind?, direction? }` 可空过滤（API §4 未展开字段，以 DATABASE §6.2 `observeFiltered` 为参照） |
+| D-08 | 按对象净额（P-04 按对象） | `DebtDataSource.netByParty(ledgerId): Map<String, Long>` | 正值对方欠我 / 负值我欠对方，口径已对齐 API §4 |
+| D-09 | 债务新增 / 编辑 / 删除（P-08、P-09） | `DebtDataSource.insert/update/deleteById` | 四态 `kind×direction` 由 domain 字典 |
+| D-10 | 分类网格 / 选择器数据（P-05、P-10） | `CategoryDataSource.observeByLedger(ledgerId, type: CategoryType?): Flow<List<Category>>` | 按 order 升序（DATABASE §4.3） |
+| D-11 | 新建自定义分类（P-05） | `CategoryDataSource.insert(category): String` | — |
+| D-12 | 改分类 icon/color/name/order（P-05） | `CategoryDataSource.update(category)` | `type/isBuiltIn` 锁定（DEC-007），UI 表单不含这两字段 |
+| D-13 | 删除自定义分类（P-05） | `CategoryDataSource.deleteById(id)` | 内置分类由业务层拒绝，UI 依赖返回值/错误提示 |
+| D-14 | 删除前关联检查（P-05） | `CategoryDataSource.countTransactionsByCategory(categoryId): Int` | >0 进迁移流程 |
+| D-15 | 分类迁移重挂交易（P-05 迁移流程） | `TransactionDataSource.observeByLedger(ledgerId, filter.copy(categoryId=旧))` + 逐条 `update(tx.copy(categoryId=目标))` + `CategoryDataSource.deleteById` | 契约可支撑，见下方 A-1 假设 |
+| D-16 | 种子 / 导入还原（P-06 导入） | `CategoryDataSource.upsertList(categories)` | 事务原子性由 ImportAllUseCase（§6.2） |
+| D-17 | 账本列表 / 切换 / 新建 / 默认（P-11） | `LedgerDataSource.observeAll() / insert(ledger): String / getDefault(): Ledger? / getById(id)` | 新建联动克隆内置分类在 domain 事务内（ARCHITECTURE §8.4） |
+| D-18 | 改账本名/图标/颜色（P-11） | `LedgerDataSource.update(ledger): Ledger` | 返回最新行回填 UI |
+| D-19 | 预算页占位（P-14） | `BudgetDataSource.*`（Phase 2 预留） | 本期占位，不接线 |
+| D-20 | 交易删除后分类迁移依赖联动 | `TransactionDataSource.observeByLedger` 删除分支无级联（DB 外层） | 由 domain 流程保证 |
+
+### 6.2 领域/工具门面假设（非 DataSource，但 UI 依赖）
+
+| # | 假设 | 说明 |
+|---|------|------|
+| F-01 | `ExportAllUseCase` / `ImportAllUseCase` | 依 ARCHITECTURE §10 与 API §11（version 1、legacy 检测、严格校验、事务原子、导入期间 UI 锁入口）。UI 只描述进程/结果 |
+| F-02 | `util/MoneyFormatter` | 元↔分双向 + `formatFen` 千分位 + tnum 渲染（DATABASE §9） |
+| F-03 | `util/TimeFormatter` | `yyyy-MM-dd` 展示本地化、月份/年月显示 |
+| F-04 | `util/Validators` | 金额>0、≤99_999_999_99、备注 ≤200、姓名非空（DATABASE §9.4） |
+| F-05 | `AppLockController` / `BiometricHelper` / `DatabaseGate` | 解锁门与锁状态（ARCHITECTURE §7/§9）；UI 只订状态（collectAsState） |
+| F-06 | `SettingsDataStore` | 主题枚举、锁开关、超时五档、加密态只读 |
+| F-07 | domain 层「分类删除迁移 UseCase」 | 见 A-1，不属 DataSource 契约但 UI 依赖其原子语义 |
+
+### 6.3 需 Architect 确认的假设（不阻塞，契约兼容）
+
+- **A-1 分类迁移的编排位置**：删除被引用分类的「迁移重挂 N 笔交易」操作没有独立的 DataSource 批量接口。推荐由 domain 层新增 `DeleteCategoryWithMigrationUseCase`（事务内：`countTransactionsByCategory` → `observeByLedger(filter.categoryId=旧)` 取关联 → 逐条 `update` 到目标分类 → `deleteById`）给 UI 单调用；若该 UseCase 本期不建，则 UI 层退化为顺序调用（无整体事务保证）。**请 Architect 确认采用哪种（推荐前者），并纳入阶段 5 任务拆分。**
+- **A-2 `DebtFilter` 字段结构**：API §4 仅列出 `observeByLedger(ledgerId, filter: DebtFilter)` 未展开；本设计假设 `DebtFilter{ kind: DebtKind?, direction: DebtDirection? }`（与 DATABASE §6.2 `observeFiltered` 对齐，可空=不过滤）。请 Architect 在 API.md 展开确认。
+- **A-3 首页「最近交易」截断语义**：取 `observeByLedger` 前 10 条由 UI 层截断，MVP 不打分页；Phase 2 若上 Paging 3 由列表页统一替换，接口不变（API §3 已说明复用同一 filter）。
+
+> 以上 A-1~A-3 与 API.md **无冲突**，仅是契约未覆盖到的最小假设。若 Architect 判定需要变更 API/ARCHITECTURE，才属于需记 `07_decisions.md` 的冲突；本期无任何「推翻既有契约」的假设。
+
+---
+
+## 7. 与 PRD / API 合规性说明
+
+- **PRD F-01（金额/分类/日期/备注）**：本设计金额输入 2 位小数、分类必填、备注 ≤200、日期可改，全部具备且校验对齐 `util/Validators`。
+- **PRD F-01 首页结余/最近交易**：依赖 `monthlySummary` + `observeByLedger`，DB 端聚合，无浮点中间态（对齐 API §10 & DATABASE §9）。
+- **PRD F-02（借还平级、四态、按对象净额）**：P-04 双视图与 API §4 净额口径逐条对应，四态禁止第五态。
+- **PRD F-03（内置禁删 + 自定义增删改 + 引用检查迁移）**：P-05 完整映射 DEC-007（禁删内置、其他保持默认名）与 `countTransactionsByCategory` 迁移流程（A-1）。
+- **PRD F-04（导入导出）**：P-06 走 ImportAllUseCase/ExportAllUseCase，version 1 JSON、legacy 兼容、兜底零落库（D-3/D-5）。
+- **PRD F-05（应用锁：生物识别 + 系统凭据 + 冷启动恒锁 + 超时四档×1）**：P-01 解锁门与 D-2 无锁屏引导对齐；超时五档（立即/30s/1min/5min/永不）在 P-06。
+- **PRD F-09（暗色三态）**：§1 主题装配与 F-06 对齐，全页面 token 化（ARCHITECTURE §11）。
+- **PRD F-10（加密）**：解锁门为真实解密门，DB 未开无可达数据；设置页加密态只读展示，无关闭开关（架构级默认）。
+- **PRD F-11（多账本）**：全部列表页随 `currentLedgerId` `flatMapLatest` 重订阅（ARCHITECTURE §8.2/8.3）；默认账本禁删、外键不级联（删除前 UI 强确认 + 事务批量删）。
+- **DEC-001~DEC-009**：全部技术栈与决策约束在本设计中已吸收（无界面层数据假设冲突、无越权调整需求）。
+- **结论**：当前 UI 设计与 PRD / API / ARCHITECTURE 全部一致，**无矛盾，无「待人工决策」项**；仅 A-1~A-3 三项契约外假设需 Architect 双向确认，纳入其阶段 5 输出即可，不阻塞本设计。
+
+---
+
+（本文件为 UI 设计文档，为 05_ui；双向确认由阶段 5 前 Architect 执行；版本历史由协调者统一管理。）
