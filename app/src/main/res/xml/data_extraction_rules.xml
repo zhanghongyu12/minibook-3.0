@@ -1,15 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- DEC-006：备份分级策略——数据库已整体加密且密钥存于本机，备份/云恢复均不得带出 DB 与 key 文件。
-     强制 allowBackup=false + 此规则双保险；换机迁移走「应用内导出 JSON → 新机导入」。 -->
+<!-- DEC-006：换机/云备份路径——`android:allowBackup=false`（AndroidManifest）+ 本规则双保险。
+     Keystore 密钥不随备份迁移：若系统备份带走了 SQLCipher 加密库而新机无对应密钥，
+     将导致「可恢复却不可解密」的陷阱。因此系统备份一律不得带出 DB 与 key 文件；
+     换机迁移只走「应用内导出 JSON → 新机导入」（DEC-004/DEC-005 配合）。 -->
 <data-extraction-rules>
+    <!-- 云备份（D2D / Google 云）：排除数据库与密钥 -->
     <cloud-backup>
+        <!-- SQLCipher 加密库文件（databases/ 域全量排除，整库加密且密钥在本机） -->
         <exclude domain="database" path="." />
+        <!-- master key blob：noBackupFilesDir/minibook_key.bin（DEC-002 密钥 blob，必不随备份外泄） -->
         <exclude domain="no_backup" path="minibook_key.bin" />
+        <!-- noBackupFilesDir 全量排除（no_backup 域本就不参与系统备份，显式双保险） -->
+        <exclude domain="no_backup" path="." />
+        <!-- 应用私有 file 域全量排除（DEC-006 禁止系统备份） -->
         <exclude domain="file" path="." />
     </cloud-backup>
     <full-backup-content>
         <exclude domain="database" path="." />
         <exclude domain="no_backup" path="minibook_key.bin" />
+        <exclude domain="no_backup" path="." />
         <exclude domain="file" path="." />
     </full-backup-content>
 </data-extraction-rules>
