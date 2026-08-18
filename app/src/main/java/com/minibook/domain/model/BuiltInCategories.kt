@@ -1,0 +1,254 @@
+package com.minibook.domain.model
+
+/**
+ * 内置分类种子常量（TASK-011），对齐 DATABASE §8.1 / §8.2 两张表逐行一致。
+ *
+ * 18 条模板（12 支出 + 6 收入）作为**不可变常量**：`id`/`ledgerId`/`createdAt`/`updatedAt`
+ * 以空串占位（此时**不含具体 UUID**），克隆时由
+ * [com.minibook.domain.usecase.category.CloneBuiltInCategoriesUseCase] 为**每个账本独立**
+ * 生成 UUID + 账本 ID + 实际时间戳（DATABASE §8.3：不同账本的同名内置分类 id 不同）。
+ * 判断「是否内置」一律看 `isBuiltIn`（D-6）。
+ *
+ * 口径（DATABASE §8 / DEC-007）：
+ * - 「其他」兜底分类 `order=99` 恒末尾、默认名锁定（不可改名）；其余内置分类允许改
+ *   icon/color/name，但不可删、不可改 type/isBuiltIn；
+ * - `type` 与交易类型对应（expense/income），克隆时原样透传。
+ */
+object BuiltInCategories {
+
+    /** 「其他」兜底分类固定 order（DATABASE §8.3 / DEC-007），恒排末尾。 */
+    const val OTHERS_ORDER: Int = 99
+
+    /** 模板占位 id：ledgerId 在克隆时填充，此刻不含具体 UUID（DATABASE §8.3）。 */
+    private const val PLACEHOLDER_ID: String = ""
+
+    /** 模板占位时间戳：createdAt/updatedAt 在克隆时填实际值（DATABASE §9.5 ISO-8601）。 */
+    private const val PLACEHOLDER_TIMESTAMP: String = ""
+
+    /** 内置支出分类模板（12），顺序即 DATABASE §8.1 展示顺序；「其他」order=99。 */
+    val EXPENSE: List<Category> = listOf(
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "餐饮",
+            icon = "🍜",
+            color = "#FF6B6B",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 1,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "交通",
+            icon = "🚗",
+            color = "#4ECDC4",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 2,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "购物",
+            icon = "🛒",
+            color = "#45B7D1",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 3,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "娱乐",
+            icon = "🎬",
+            color = "#96CEB4",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 4,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "住房",
+            icon = "🏠",
+            color = "#FFEAA7",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 5,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "医疗",
+            icon = "💊",
+            color = "#DDA0DD",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 6,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "教育",
+            icon = "📚",
+            color = "#98D8C8",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 7,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "服饰",
+            icon = "👔",
+            color = "#F7DC6F",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 8,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "通讯",
+            icon = "📱",
+            color = "#BB8FCE",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 9,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "人情",
+            icon = "🎁",
+            color = "#F0B27A",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 10,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "旅行",
+            icon = "✈️",
+            color = "#85C1E9",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 11,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "其他",
+            icon = "🔧",
+            color = "#AEB6BF",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = OTHERS_ORDER,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+    )
+
+    /** 内置收入分类模板（6），顺序即 DATABASE §8.2 展示顺序；「其他」order=99。 */
+    val INCOME: List<Category> = listOf(
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "工资",
+            icon = "💰",
+            color = "#2ECC71",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 1,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "奖金",
+            icon = "🎯",
+            color = "#F39C12",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 2,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "投资",
+            icon = "📈",
+            color = "#3498DB",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 3,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "兼职",
+            icon = "💼",
+            color = "#9B59B6",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 4,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "礼金",
+            icon = "🧧",
+            color = "#E74C3C",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 5,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "其他",
+            icon = "💵",
+            color = "#1ABC9C",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = OTHERS_ORDER,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+    )
+
+    /** 全量内置模板（18）：支出在前、收入在后；克隆/校验共用（DATABASE §8 两表总和）。 */
+    val ALL: List<Category> = EXPENSE + INCOME
+}

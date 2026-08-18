@@ -1,0 +1,66 @@
+package com.minibook.domain.usecase.ledger
+
+import com.minibook.data.local.datastore.LedgerDataStore
+import com.minibook.domain.model.Ledger
+import com.minibook.domain.repository.LedgerRepository
+import com.minibook.domain.usecase.category.CloneBuiltInCategoriesUseCase
+import com.minibook.util.TimeFormatter
+import java.util.UUID
+import javax.inject.Inject
+
+/**
+ * 首次打开（DB 首次连接成功）幂等引导（TASK-011），对齐 ARCHITECTURE §8.4。
+ *
+ * 流程：`ledgers` 空（[LedgerRepository.getDefault] == null）→ 插入默认账本
+ * （`isDefault=true`，name="默认账本"，内置 icon/color，position=0）→ 为该账本克隆
+ * 18 内置分类（[CloneBuiltInCategoriesUseCase]）→ `LedgerDataStore.setCurrentLedgerId`
+ * 写入默认账本 id。
+ *
+ * **幂等守卫**：默认账本已存在则直接返回，不重复插入（重装/恢复 KeyStore 后不重复刷）。
+ * 分类克隆的幂等由 [CloneBuiltInCategoriesUseCase] 内部 `countByLedger==0` 守卫兜底。
+ */
+class BootstrapUseCase @Inject constructor(
+    private val ledgerRepository: LedgerRepository,
+    private val cloneBuiltInCategories: CloneBuiltInCategoriesUseCase,
+    private val ledgerDataStore: LedgerDataStore,
+) {
+
+    /**
+     * 执行首启引导（幂等）；重复调用时默认账本已存在则直接返回。
+     */
+    suspend operator fun invoke() {
+        // 幂等守卫：默认账本已存在 → 直接返回（ARCHITECTURE §8.4 步骤 1「空则插入」）。
+        if (ledgerRepository.getDefault() != null) return
+
+        // 插入默认账本。数据层 insert 会重新生成 UUID 与 createdAt/updatedAt
+        // （LedgerDataSourceAdapter），故此处 id/时间戳仅作完整对象占位；
+        // 下游一律使用返回的落库 id（克隆分类 + 写当前账本）。
+        val now = TimeFormatter.nowIso()
+        val defaultLedgerId = ledgerRepository.insert(
+            Ledger(
+                id = UUID.randomUUID().toString(),
+                name = DEFAULT_NAME,
+                icon = DEFAULT_ICON,
+                color = DEFAULT_COLOR,
+                isDefault = true,
+                position = DEFAULT_POSITION,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+
+        // 为该默认账本克隆 18 内置分类（12 支出 + 6 收入，内部幂等守卫 countByLedger==0）。
+        cloneBuiltInCategories(defaultLedgerId)
+
+        // 写入当前账本 id（ARCHITECTURE §8.4 步骤 3；上游幂等守卫保证此时尚无默认账本）。
+        ledgerDataStore.setCurrentLedgerId(defaultLedgerId)
+    }
+
+    /** 默认账本内置值（ARCHITECTURE §8.4 指定「内置值」，具体取值本类锁定）。 */
+    private companion object {
+        const val DEFAULT_NAME: String = "默认账本"
+        const val DEFAULT_ICON: String = "📒"
+        const val DEFAULT_COLOR: String = "#5D6D7E"
+        const val DEFAULT_POSITION: Int = 0
+    }
+}
