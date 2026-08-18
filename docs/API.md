@@ -122,6 +122,18 @@ interface DebtDataSource {
 | `observeByLedger` | `ledgerId, filter` | `Flow<List<Debt>>` | 明细视图，账本内按时间倒序。 |
 | `netByParty` | `ledgerId: String` | `Map<String, Long>` | 按对方姓名汇总净额（分）；正值=对方欠我，负值=我欠对方。净额口径见下。 |
 
+**`DebtFilter`**（阶段 5 由 Architect 双向确认 Designer 假设 A-2 后补充展开，2026-08-18）：
+
+```kotlin
+data class DebtFilter(
+    val kind: DebtKind? = null,          // 全部(null)/lend/repay
+    val direction: DebtDirection? = null, // 全部(null)/owe_me/i_owe
+)
+```
+
+- 字段语义与 `DATABASE §6.2 observeFiltered(ledgerId, kind?, direction?)` 完全对齐；可空=不过滤。
+- **MVP 仅展开 `kind` / `direction` 两个可空字段**，不上 `partyName` 模糊筛：MVP 按对象净额已由 `netByParty` 聚合支撑，明细视图无 partyName 过滤需要；`partyName` 模糊筛属 Phase 2 搜索（PRD F-06）范围，随该功能对同一 `DebtFilter` 扩展（与 `TransactionFilter` 的 Phase 2 扩展同理，见 §3）。
+
 **净额口径**（PRD F-02）：lend×owe_me=+，lend×i_owe=−，repay×owe_me=−，repay×i_owe=+。DB 端 `CASE WHEN` 一次聚合。
 
 ---

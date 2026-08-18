@@ -1,6 +1,6 @@
 # MiniBook Android 重构版 - UI 设计（05_ui）
 
-> 状态：**草稿**（内容对齐 PRD.md（已确认）与 API.md（已确认）；待 Architect 对 §6 接口假设做双向确认后，由协调者转「已确认」）
+> 状态：**已确认**（内容对齐 PRD.md（已确认）与 API.md（已确认）；Architect 阶段 5 已完成对 §6 接口假设 A-1/A-2/A-3 的双向确认——三项全部确认、无冲突、无契约推翻，确认结论已标注于 §6.3，2026-08-18）
 > 最后更新：2026-08-18
 > 维护者：Designer
 > 依据：`docs/PRD.md`（已确认，需求事实来源）；`docs/API.md`（= 04_api，已确认，UI 契约对齐）；`docs/ARCHITECTURE.md`（§11 暗色模式、§12 导航结构，仅供参考，不归本角色修改）；`docs/DATABASE.md`（§8 内置分类种子、§9 金额/日期格式口径）；`docs/07_decisions.md`（DEC-001~DEC-009）
@@ -775,6 +775,16 @@ MVP 承诺（控制范围）：
 - **A-3 首页「最近交易」截断语义**：取 `observeByLedger` 前 10 条由 UI 层截断，MVP 不打分页；Phase 2 若上 Paging 3 由列表页统一替换，接口不变（API §3 已说明复用同一 filter）。
 
 > 以上 A-1~A-3 与 API.md **无冲突**，仅是契约未覆盖到的最小假设。若 Architect 判定需要变更 API/ARCHITECTURE，才属于需记 `07_decisions.md` 的冲突；本期无任何「推翻既有契约」的假设。
+
+### 6.4 Architect 双向确认结论（阶段 5，2026-08-18）
+
+| 假设 | 判定 | 结论说明 |
+|------|------|----------|
+| **A-1 分类删除迁移的编排位置** | **确认（采纳 UseCase 方案）** | 采纳 domain 层新增 `DeleteCategoryWithMigrationUseCase`（单事务内：`countTransactionsByCategory` → 取关联交易 → 逐条 `update` 到目标 → `deleteById`），UI 单调用。理由：外键不设级联（DATABASE §1），删除被引用分类必须由业务层事务编排保证「重挂交易→删分类」原子性；UI 顺序调用无整体事务边界，中途失败会留下悬空 `categoryId`；这正是 UseCase「事务编排」职责（ARCHITECTURE §4.1），且不新增/变更任何既有 DataSource 契约（API §5 四方法均已存在）。已单列任务 **TASK-015**。不产生新决策。 |
+| **A-2 `DebtFilter` 字段结构** | **确认（契约补充展开）** | 采纳 `DebtFilter{ kind: DebtKind?, direction: DebtDirection? }`（可空=不过滤），与 DATABASE §6.2 `observeFiltered` 对齐。已在 **API.md §4** 展开字段定义并注明 MVP 仅此两字段、`partyName` 模糊筛留 Phase 2 搜索扩展。契约补充、非推翻，不产生新决策。 |
+| **A-3 首页「最近交易」截断语义** | **确认** | 采纳 UI 层 `take(10)` 截断，MVP 不打分页；Phase 2 若上 Paging 3 由列表页统一替换、接口不变（与 API §3 / ARCHITECTURE §13 一致）。不涉及契约变更，不产生新决策。 |
+
+> 三项假设均确认，无任何「推翻既有契约」项，故本期**未新增 DEC-010+ 决策**；A-2 的契约补充已直接落 API.md §4（Architect 权限内）。UI 设计据此转「已确认」，可作为阶段 6 编码输入。
 
 ---
 
