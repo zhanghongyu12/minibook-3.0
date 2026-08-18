@@ -1,0 +1,21 @@
+# Gradle 构建产物
+.gradle/
+build/
+
+# Android 本地配置
+/local.properties
+
+# IDE
+.idea/
+*.iml
+captures/
+
+# 构建产物包
+*.apk
+*.aab
+
+# 其他
+.DS_Store
+*.keystore
+cxx/
+.externalNativeBuild/

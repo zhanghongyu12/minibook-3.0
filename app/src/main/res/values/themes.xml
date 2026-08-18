@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 最小主题，保证 Application 启动可渲染；Compose 主题（MiniBookTheme）由 TASK-019 接管 -->
+    <style name="Theme.MiniBook" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
