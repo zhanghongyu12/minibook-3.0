@@ -75,7 +75,12 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 composable(Destination.Lock.route) { LockScreen() }
             } else {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
-                composable(Destination.Home.route) { MainScreen() }
+                // 中转 ledger-manage 根图跳转（MainScreen 内嵌图无法直达根图目的地）。
+                composable(Destination.Home.route) {
+                    MainScreen(onNavigateToLedgerManage = {
+                        rootController.navigate(Destination.LedgerManage.route)
+                    })
+                }
 
                 // Phase 2 占位页（P-12~14，TASK-030 真实占位 composable，默认不可达）。
                 composable(Destination.Search.route) {
@@ -88,8 +93,10 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                     BudgetsPlaceholder(onBack = { rootController.popBackStack() })
                 }
 
-                // 账本管理（P-11，TASK-029 真实页面；返回由页面内 TopBar popBackStack，待接线）。
-                composable(Destination.LedgerManage.route) { LedgerManageScreen() }
+                // 账本管理（P-11，TASK-029 真实页面）：顶栏返回 → 根图 popBackStack。
+                composable(Destination.LedgerManage.route) {
+                    LedgerManageScreen(onBack = { rootController.popBackStack() })
+                }
 
                 // 底部弹层（sheets）家族：可选 `{id}` 查询参数（UUID，§12）。
                 // Sheet composable 接收领域对象（编辑态）而非 route id，故各 Sheet 的实际

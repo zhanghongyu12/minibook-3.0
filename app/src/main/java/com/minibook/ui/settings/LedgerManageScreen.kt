@@ -15,11 +15,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,7 +47,8 @@ import com.minibook.ui.components.PrimaryFAB
 /**
  * 账本管理页（TASK-029，UI §2 P-11）。
  *
- * 页面结构：[LazyColumn] 渲染全部账本（[LedgerManageViewModel.ledgers]，按 `position` 升序），
+ * 页面结构：顶栏 [TopAppBar]（标题「账本管理」+ 返回按钮，material-icons 缺失用 `Text("←")`
+ * 占位）+ [LazyColumn] 渲染全部账本（[LedgerManageViewModel.ledgers]，按 `position` 升序），
  * 当前账本行（`id==currentLedgerId`）以 `primaryContainer` 高亮；右下 [PrimaryFAB] 新建入口。
  *
  * 交互流程：
@@ -62,10 +65,14 @@ import com.minibook.ui.components.PrimaryFAB
  * 空态：不应发生（TASK-011 Bootstrap 保证至少一个默认账本），仍以 [EmptyState] 兜底。
  * 图标经 `addPathNodes` 本地构造（工程未引入 material-icons，TASK-020 偏差同口径）。
  *
+ * @param onBack 顶栏返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
-fun LedgerManageScreen(viewModel: LedgerManageViewModel = hiltViewModel()) {
+fun LedgerManageScreen(
+    onBack: () -> Unit,
+    viewModel: LedgerManageViewModel = hiltViewModel(),
+) {
     val ledgers by viewModel.ledgers.collectAsStateWithLifecycle()
     val currentLedgerId by viewModel.currentLedgerId.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbar.collectAsStateWithLifecycle()
@@ -95,6 +102,7 @@ fun LedgerManageScreen(viewModel: LedgerManageViewModel = hiltViewModel()) {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        topBar = { LedgerManageTopBar(onBack) },
         snackbarHost = { MiniBookSnackbarHost(snackbarHostState) },
         floatingActionButton = {
             PrimaryFAB(onClick = { showCreate = true }, contentDescription = "新建账本")
@@ -171,6 +179,25 @@ fun LedgerManageScreen(viewModel: LedgerManageViewModel = hiltViewModel()) {
             onDismiss = { deleteTarget = null },
         )
     }
+}
+
+/**
+ * 账本管理顶栏：标题「账本管理」+ 返回按钮。
+ *
+ * material-icons 缺失（TASK-020 偏差），返回图标用 `Text("←")` 占位；[TopAppBar] 自行处理
+ * 状态栏 inset。
+ *
+ * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LedgerManageTopBar(onBack: () -> Unit) {
+    TopAppBar(
+        title = { Text("账本管理") },
+        navigationIcon = {
+            IconButton(onClick = onBack) { Text("←") }
+        },
+    )
 }
 
 /**

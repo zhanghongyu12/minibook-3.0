@@ -18,6 +18,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.EmptyState
+import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.LedgerSelector
 import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.MoneySemantic
@@ -56,19 +60,32 @@ import com.minibook.ui.theme.lightSemanticColors
  * 由 [TransactionListItem] fallback 占位（❔）；后续经 `ObserveCategoriesUseCase` 联表
  * id→[Category] 映射优化（KDoc 留痕）。
  *
- * **导航 TODO**：LedgerSelector → 账本管理（P-11）；「查看全部」→ transactions（P-03）；
- * FAB → sheet-transaction（P-07）。本期由编排者统一接线，本页留空 onClick。
+ * **导航已接线**：FAB / 空态「记一笔」/ 最近交易行点击 → 页内弹 [TransactionSheet]（P-07，
+ * 新增/编辑态，由页内状态驱动不走 NavHost route）；LedgerSelector → 账本管理（P-11）；
+ * 「查看全部」→ transactions（P-03，经 [onNavigateToTransactions] 由 MainScreen 嵌套导航）。
  *
  * @param viewModel 首页 VM；默认经 [hiltViewModel] 解析。
+ * @param onNavigateToTransactions 「查看全部」回调（MainScreen 内嵌导航到 [Destination.Transactions]）。
+ * @param onNavigateToLedgerManage 账本入口回调（MainScreen 中转根图导航到 ledger-manage）。
  */
 @Composable
-fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
+fun HomeScreen(
+    viewModel: HomeViewModel = hiltViewModel(),
+    onNavigateToTransactions: () -> Unit = {},
+    onNavigateToLedgerManage: () -> Unit = {},
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
+    var showTransactionSheet by remember { mutableStateOf(false) }
+    var editingTx by remember { mutableStateOf<Transaction?>(null) }
 
     Scaffold(
-        topBar = { HomeTopBar(uiState) },
+        topBar = { HomeTopBar(uiState, onNavigateToLedgerManage) },
         floatingActionButton = {
-            PrimaryFAB(onClick = { /* TODO(P-07): 跳转 sheet-transaction 记一笔 */ })
+            PrimaryFAB(onClick = {
+                editingTx = null
+                showTransactionSheet = true
+            })
         },
     ) { innerPadding ->
         Box(
@@ -84,21 +101,55 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                     income = 0L,
                     expense = 0L,
                     transactions = emptyList(),
+                    onOpenNewTransaction = {
+                        editingTx = null
+                        showTransactionSheet = true
+                    },
+                    onOpenEditTransaction = { tx ->
+                        editingTx = tx
+                        showTransactionSheet = true
+                    },
+                    onNavigateToTransactions = onNavigateToTransactions,
                 )
                 is HomeUiState.Success -> HomeDashboardContent(
                     balance = state.balance,
                     income = state.income,
                     expense = state.expense,
                     transactions = state.recentTransactions,
+                    onOpenNewTransaction = {
+                        editingTx = null
+                        showTransactionSheet = true
+                    },
+                    onOpenEditTransaction = { tx ->
+                        editingTx = tx
+                        showTransactionSheet = true
+                    },
+                    onNavigateToTransactions = onNavigateToTransactions,
                 )
             }
         }
     }
+
+    // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
+    if (showTransactionSheet) {
+        TransactionSheet(
+            tx = editingTx,
+            onDismiss = { showTransactionSheet = false },
+        )
+    }
 }
 
-/** 顶部栏：左「首页」标题 + 右 [LedgerSelector]（UI §2 P-02 顶栏；状态栏 inset 自处理）。 */
+/**
+ * 顶部栏：左「首页」标题 + 右 [LedgerSelector]（UI §2 P-02 顶栏；状态栏 inset 自处理）。
+ *
+ * @param onNavigateToLedgerManage [LedgerSelector] 点击回调（跳账本管理，P-11）。
+ */
 @Composable
-private fun HomeTopBar(uiState: HomeUiState, modifier: Modifier = Modifier) {
+private fun HomeTopBar(
+    uiState: HomeUiState,
+    onNavigateToLedgerManage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val currentLedger = (uiState as? HomeUiState.Success)?.currentLedger
         ?: (uiState as? HomeUiState.Empty)?.currentLedger
     Row(
@@ -115,7 +166,7 @@ private fun HomeTopBar(uiState: HomeUiState, modifier: Modifier = Modifier) {
         )
         LedgerSelector(
             ledger = currentLedger,
-            onClick = { /* TODO(P-11): 跳转账本管理 */ },
+            onClick = onNavigateToLedgerManage,
         )
     }
 }
@@ -128,6 +179,9 @@ private fun HomeTopBar(uiState: HomeUiState, modifier: Modifier = Modifier) {
  * @param income 本月收入（分）。
  * @param expense 本月支出（分）。
  * @param transactions 最近交易（调用方已截断前 10，A-3；此处再 take 兜底）。
+ * @param onOpenNewTransaction FAB / 空态「记一笔」回调（弹 [TransactionSheet] 新增态）。
+ * @param onOpenEditTransaction 最近交易行点击回调（弹 [TransactionSheet] 编辑态，传被点 tx）。
+ * @param onNavigateToTransactions 「查看全部」回调（跳 transactions 页，P-03）。
  */
 @Composable
 private fun HomeDashboardContent(
@@ -135,6 +189,9 @@ private fun HomeDashboardContent(
     income: Long,
     expense: Long,
     transactions: List<Transaction>,
+    onOpenNewTransaction: () -> Unit = {},
+    onOpenEditTransaction: (Transaction) -> Unit = {},
+    onNavigateToTransactions: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -164,7 +221,7 @@ private fun HomeDashboardContent(
             ) {
                 Text("最近交易", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { /* TODO(P-03): 跳转 transactions 页 */ }) {
+                TextButton(onClick = onNavigateToTransactions) {
                     Text("查看全部")
                 }
             }
@@ -176,7 +233,7 @@ private fun HomeDashboardContent(
                     title = "暂无交易记录",
                     subtitle = "还没有记录，点右下角 ＋ 记第一笔",
                     actionLabel = "记一笔",
-                    onAction = { /* TODO(P-07): 跳转 sheet-transaction */ },
+                    onAction = onOpenNewTransaction,
                 )
             }
         } else {
@@ -189,7 +246,7 @@ private fun HomeDashboardContent(
                     categoryName = null,
                     categoryIcon = null,
                     categoryColor = null,
-                    onClick = { /* TODO: 交易详情/编辑（P-07） */ },
+                    onClick = { onOpenEditTransaction(tx) },
                 )
             }
         }

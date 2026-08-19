@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Debt
+import com.minibook.domain.model.DebtDirection
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.components.DebtDetailRow
@@ -41,20 +42,24 @@ import com.minibook.ui.components.NetBalanceCard
 import com.minibook.ui.components.NetBalanceRow
 import com.minibook.ui.components.PartyNetRow
 import com.minibook.ui.components.PrimaryFAB
+import com.minibook.ui.sheets.DebtSheet
+import com.minibook.ui.sheets.RepaySheet
 
 /**
  * 债务管理页（TASK-025，UI §2 P-04）。
  *
  * 页面结构：顶部 [DebtViewTab]（明细/按对象）+ [NetBalanceCard] 净额卡（卡旁「?」口径说明
- * 按钮 → [ConfirmDialog]）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口
- * （TODO：跳 sheet-debt）。
+ * 按钮 → [ConfirmDialog]）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（弹 [DebtSheet]）。
  *
  * - **明细 Tab**：按 `date` 分组（组头 [DateSectionHeader]），行用 [DebtDetailRow]（C-15，
- *   已内置四态 netContribution 口径与 kind 标签，±金额按净额贡献语义着色）。
+ *   已内置四态 netContribution 口径与 kind 标签，±金额按净额贡献语义着色）；行点击 →
+ *   [DebtSheet] 编辑/详情态。
  * - **按对象 Tab**：遍历 `byParty`，行用 [PartyNetRow]（C-14，net>0 对方欠我绿 / net<0
- *   我欠对方红 / net==0 两清灰，行尾「还款」快捷入口）。
+ *   我欠对方红 / net==0 两清灰，行尾「还款」快捷入口）；「还款」→ [RepaySheet] 并按净额
+ *   推导方向预填（netFen>0 → [DebtDirection.OWE_ME] 收到还款 / netFen<0 → [DebtDirection.I_OWE]
+ *   我还款，PRD F-02 口径）。
  *
- * 行点击 / FAB / 快捷还款本期暂留 TODO（跳 sheet-repay 预填方向由后续 task 接线）。
+ * FAB / 行点击 / 快捷还款已接线：页内状态弹 [DebtSheet]/[RepaySheet]，不走 NavHost route。
  *
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
@@ -63,11 +68,20 @@ fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val tabIndex by viewModel.tabIndex.collectAsStateWithLifecycle()
     var showCriterion by remember { mutableStateOf(false) }
+    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 debt）。
+    var showDebtSheet by remember { mutableStateOf(false) }
+    var editingDebt by remember { mutableStateOf<Debt?>(null) }
+    var showRepaySheet by remember { mutableStateOf(false) }
+    var repayParty by remember { mutableStateOf("") }
+    var repayDirection by remember { mutableStateOf(DebtDirection.OWE_ME) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
-            PrimaryFAB(onClick = { /* TODO: TASK-XXX 新增债务 → sheet-debt */ })
+            PrimaryFAB(onClick = {
+                editingDebt = null
+                showDebtSheet = true
+            })
         },
     ) { innerPadding ->
         Column(
@@ -113,22 +127,49 @@ fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
                     if (tabIndex == 0) {
                         DebtDetailsList(
                             details = state.details,
-                            onItemClick = { /* TODO: TASK-XXX 跳 sheet-debt 编辑/详情态 */ },
+                            onItemClick = { debt ->
+                                editingDebt = debt
+                                showDebtSheet = true
+                            },
                         )
                     } else {
                         DebtByPartyList(
                             byParty = state.byParty,
                             onRepay = { party, netFen ->
-                                // TODO: TASK-XXX 跳 sheet-repay 并按净额方向预填：
-                                //   netFen > 0（对方欠我）→ 收到还款（repay × owe_me）；
-                                //   netFen < 0（我欠对方）→ 我还款（repay × i_owe）；
-                                //   netFen == 0（两清）→ 仅当仍需要时允许补记。
+                                // 按净额推导还款方向（PRD F-02）：
+                                //   netFen > 0（对方欠我）→ 收到还款（OWE_ME）；
+                                //   netFen < 0（我欠对方）→ 我还款（I_OWE）；
+                                //   netFen == 0（两清）→ 默认收到还款预填，仍允许补记。
+                                repayParty = party
+                                repayDirection = when {
+                                    netFen > 0L -> DebtDirection.OWE_ME
+                                    netFen < 0L -> DebtDirection.I_OWE
+                                    else -> DebtDirection.OWE_ME
+                                }
+                                showRepaySheet = true
                             },
                         )
                     }
                 }
             }
         }
+    }
+
+    // 债务新增 / 编辑 Sheet（P-08）：debt=null 新增态 / debt 非空编辑态。
+    if (showDebtSheet) {
+        DebtSheet(
+            debt = editingDebt,
+            onDismiss = { showDebtSheet = false },
+        )
+    }
+
+    // 快捷还款 Sheet（P-09）：按对象视图行尾「还款」拉起，partyName/direction 预填只读。
+    if (showRepaySheet) {
+        RepaySheet(
+            partyName = repayParty,
+            direction = repayDirection,
+            onDismiss = { showRepaySheet = false },
+        )
     }
 
     if (showCriterion) {
@@ -230,7 +271,7 @@ private fun DebtDetailsList(
  * 语义无强依赖，仅展示顺序。
  *
  * @param byParty 对方姓名 → 净额（分）映射。
- * @param onRepay 行尾「还款」回调（跳 sheet-repay 预填，方向推导见调用方 TODO）。
+ * @param onRepay 行尾「还款」回调（跳 sheet-repay 预填，方向按净额推导，见调用方）。
  */
 @Composable
 private fun DebtByPartyList(

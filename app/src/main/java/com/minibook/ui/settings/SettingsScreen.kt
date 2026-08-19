@@ -51,7 +51,7 @@ import kotlinx.coroutines.withContext
  * 设置页（TASK-027，UI §2 P-06、ARCHITECTURE §9/§10/§11、DEC-002/DEC-003/DEC-005）。
  *
  * 分区结构（[SettingSection]/[SettingRow]/[SwitchRow]，C-23）：
- * - 账本：账本管理入口（TODO：跳 `ledger-manage`，P-11）。
+ * - 账本：账本管理入口（经 [onNavigateToLedgerManage] 跳 `ledger-manage`，P-11，MainScreen 中转根图）。
  * - 外观：暗色模式三态 [ChoiceDialog]（跟随系统/亮色/暗色，软切换即时生效，F-09）。
  * - 安全：应用锁 [SwitchRow]（开启前 `isDeviceSecure` 检测，无锁屏经 [GuidanceCard] 引导
  *   DEC-003；关闭走 [ConfirmDialog] 提示「数据仍保持加密」DEC-002）+ 锁定时长五档
@@ -66,9 +66,13 @@ import kotlinx.coroutines.withContext
  * （C-21）播报统一轻提示。
  *
  * @param viewModel 设置页 VM；默认经 [hiltViewModel] 解析。
+ * @param onNavigateToLedgerManage 账本管理入口回调（MainScreen 中转根图导航到 ledger-manage）。
  */
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel = hiltViewModel(),
+    onNavigateToLedgerManage: () -> Unit = {},
+) {
     val context = LocalContext.current
     // 改父类为 FragmentActivity 后成立；取不到则记为不可操作态（防御，正常不出现）。
     val activity = context as? FragmentActivity
@@ -171,7 +175,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                             title = "账本管理",
                             subtitle = "切换、新增、重命名与删除账本",
                             trailing = { TrailingChevron() },
-                            onClick = { /* TODO: TASK-XXX 跳 ledger-manage（P-11） */ },
+                            onClick = onNavigateToLedgerManage,
                         )
                     })
                 }

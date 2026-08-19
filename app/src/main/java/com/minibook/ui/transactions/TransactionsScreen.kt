@@ -10,7 +10,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -21,6 +23,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Transaction
 import com.minibook.ui.components.DateSectionHeader
+import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.EmptyState
 import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.PrimaryFAB
@@ -31,13 +34,13 @@ import com.minibook.ui.components.TransactionTypeTab
  * 收支记录页（TASK-024，UI §2 P-03）。
  *
  * 页面结构：顶部 [TransactionTypeTab] 类型筛选（全部/支出/收入，切筛选即由 ViewModel
- * 重订阅）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（TODO：跳 sheet-transaction）。
+ * 重订阅）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（弹 [TransactionSheet]）。
  *
  * 列表按 `date` 分组（组头 [DateSectionHeader]，组内 createdAt DESC 由 DAO 保证），
  * `LazyColumn + key=id + animateItem` 保证千条级滚动流畅与条目复用稳定。分类信息本期
  * 未联表，[TransactionListItem] 分类字段传 null 走组件内 fallback（❔/outline 色）。
  *
- * 行点击 / FAB 点击本期暂留 TODO（跳 sheet-transaction 编辑态 / 新增态，由后续 task 接线）。
+ * FAB / 行点击已接线：页内状态弹 [TransactionSheet]（P-07，新增/编辑态），不走 NavHost route。
  *
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
@@ -45,11 +48,17 @@ import com.minibook.ui.components.TransactionTypeTab
 fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val filterType by viewModel.filterType.collectAsStateWithLifecycle()
+    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
+    var showTransactionSheet by remember { mutableStateOf(false) }
+    var editingTx by remember { mutableStateOf<Transaction?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
-            PrimaryFAB(onClick = { /* TODO: TASK-XXX 新增交易 → sheet-transaction */ })
+            PrimaryFAB(onClick = {
+                editingTx = null
+                showTransactionSheet = true
+            })
         },
     ) { innerPadding ->
         Column(
@@ -76,10 +85,21 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 )
                 is TransactionsUiState.Success -> TransactionList(
                     transactions = state.transactions,
-                    onItemClick = { /* TODO: TASK-XXX 跳 sheet-transaction 编辑态 */ },
+                    onItemClick = { tx ->
+                        editingTx = tx
+                        showTransactionSheet = true
+                    },
                 )
             }
         }
+    }
+
+    // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
+    if (showTransactionSheet) {
+        TransactionSheet(
+            tx = editingTx,
+            onDismiss = { showTransactionSheet = false },
+        )
     }
 }
 

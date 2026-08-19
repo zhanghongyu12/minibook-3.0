@@ -47,12 +47,29 @@ private val mainTabs = listOf(
  * Tab 切换用 `launchSingleTop + saveState + restoreState`（popUpTo startDestination 保留
  * 各 Tab 状态，§12）。各 Tab 内容已接线为真实页面 composable（TASK-023~026）：
  * Home / Transactions / Debts / Categories / Settings。
+ *
+ * **跨层导航中转**（ledger-manage 注册于根图，嵌套图无法直达）：本页接收外层
+ * [onNavigateToLedgerManage] 回调（由 [MiniBookNavHost] 传入根图 navigate），并分发给
+ * Home / Settings 两个入口；Home 的「查看全部」用本页自持的嵌套 [navController] 跳
+ * [Destination.Transactions]（同 Tab 语义）。内部 Tab 切换复用 [navigateToTab]。
+ *
+ * @param onNavigateToLedgerManage 账本管理导航回调（根图跳转，MiniBookNavHost 接线传入）。
  */
 @Composable
-fun MainScreen() {
+fun MainScreen(onNavigateToLedgerManage: () -> Unit = {}) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    // 嵌套图内 Tab 跳转语义：launchSingleTop + saveState/restoreState（各 Tab 状态保留）。
+    val navigateToTab: (String) -> Unit = { route ->
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -62,15 +79,7 @@ fun MainScreen() {
                     val selected = currentRoute == tab.route
                     NavigationBarItem(
                         selected = selected,
-                        onClick = {
-                            navController.navigate(tab.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { navigateToTab(tab.route) },
                         icon = { Text(tab.emoji) },
                         label = { Text(tab.label) },
                     )
@@ -85,11 +94,18 @@ fun MainScreen() {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            composable(Destination.Home.route) { HomeScreen() }
+            composable(Destination.Home.route) {
+                HomeScreen(
+                    onNavigateToTransactions = { navigateToTab(Destination.Transactions.route) },
+                    onNavigateToLedgerManage = onNavigateToLedgerManage,
+                )
+            }
             composable(Destination.Transactions.route) { TransactionsScreen() }
             composable(Destination.Debts.route) { DebtsScreen() }
             composable(Destination.Categories.route) { CategoriesScreen() }
-            composable(Destination.Settings.route) { SettingsScreen() }
+            composable(Destination.Settings.route) {
+                SettingsScreen(onNavigateToLedgerManage = onNavigateToLedgerManage)
+            }
         }
     }
 }
