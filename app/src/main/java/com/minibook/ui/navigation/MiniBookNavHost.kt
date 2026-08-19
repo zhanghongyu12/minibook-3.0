@@ -17,6 +17,10 @@ import androidx.navigation.navArgument
 import com.minibook.data.local.security.AppLockController
 import com.minibook.ui.lock.LockScreen
 import com.minibook.ui.main.MainScreen
+import com.minibook.ui.reserved.BudgetsPlaceholder
+import com.minibook.ui.reserved.ReportsPlaceholder
+import com.minibook.ui.reserved.SearchPlaceholder
+import com.minibook.ui.settings.LedgerManageScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.StateFlow
@@ -60,8 +64,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
     val isLocked by viewModel.isLocked.collectAsStateWithLifecycle()
 
     key(isLocked) {
+        val rootController = rememberNavController()
         NavHost(
-            navController = rememberNavController(),
+            navController = rootController,
             startDestination = if (isLocked) Destination.Lock.route else Destination.Home.route,
             modifier = Modifier.fillMaxSize(),
         ) {
@@ -72,15 +77,24 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
                 composable(Destination.Home.route) { MainScreen() }
 
-                // Phase 2 占位页（P-12~14，TASK-021 注册占位）。
-                composable(Destination.Search.route) { PlaceholderRoute("搜索（P-12 占位）") }
-                composable(Destination.Reports.route) { PlaceholderRoute("报表（P-13 占位）") }
-                composable(Destination.Budgets.route) { PlaceholderRoute("预算（P-14 占位）") }
+                // Phase 2 占位页（P-12~14，TASK-030 真实占位 composable，默认不可达）。
+                composable(Destination.Search.route) {
+                    SearchPlaceholder(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.Reports.route) {
+                    ReportsPlaceholder(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.Budgets.route) {
+                    BudgetsPlaceholder(onBack = { rootController.popBackStack() })
+                }
 
-                // 账本管理（P-11）。
-                composable(Destination.LedgerManage.route) { PlaceholderRoute("账本管理（P-11 占位）") }
+                // 账本管理（P-11，TASK-029 真实页面；返回由页面内 TopBar popBackStack，待接线）。
+                composable(Destination.LedgerManage.route) { LedgerManageScreen() }
 
                 // 底部弹层（sheets）家族：可选 `{id}` 查询参数（UUID，§12）。
+                // Sheet composable 接收领域对象（编辑态）而非 route id，故各 Sheet 的实际
+                // 弹起由宿主页面内部状态驱动（FAB/行点击 → 页内 ModalBottomSheet），不走
+                // NavHost route 跳转；此处仅注册占位以保导航图完整，待页面内联 Sheet 落地。
                 sheetRoute(Destination.SheetTransaction, "记一笔")
                 sheetRoute(Destination.SheetDebt, "债务明细")
                 sheetRoute(Destination.SheetRepay, "还款")

@@ -14,8 +14,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.minibook.ui.categories.CategoriesScreen
+import com.minibook.ui.debts.DebtsScreen
+import com.minibook.ui.home.HomeScreen
 import com.minibook.ui.navigation.Destination
-import com.minibook.ui.navigation.PlaceholderRoute
+import com.minibook.ui.settings.SettingsScreen
+import com.minibook.ui.transactions.TransactionsScreen
 
 /**
  * 底部导航 Tab 定义（TASK-021，UI §4 C-07 简化版）。
@@ -41,8 +45,8 @@ private val mainTabs = listOf(
  * 底部 [NavigationBar]（5 Tab）+ 内嵌嵌套导航图：自持 `rememberNavController()`，以
  * [Destination.Home] 为 startDestination，5 Tab 为子目的地（嵌套导航，与根级锁门控分层）。
  * Tab 切换用 `launchSingleTop + saveState + restoreState`（popUpTo startDestination 保留
- * 各 Tab 状态，§12）。页面内容本期为 [PlaceholderRoute] 占位（传不同 label），TASK-022~030
- * 由各自页面 composable 替换。
+ * 各 Tab 状态，§12）。各 Tab 内容已接线为真实页面 composable（TASK-023~026）：
+ * Home / Transactions / Debts / Categories / Settings。
  */
 @Composable
 fun MainScreen() {
@@ -81,9 +85,11 @@ fun MainScreen() {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            mainTabs.forEach { tab ->
-                composable(tab.route) { PlaceholderRoute(tab.label) }
-            }
+            composable(Destination.Home.route) { HomeScreen() }
+            composable(Destination.Transactions.route) { TransactionsScreen() }
+            composable(Destination.Debts.route) { DebtsScreen() }
+            composable(Destination.Categories.route) { CategoriesScreen() }
+            composable(Destination.Settings.route) { SettingsScreen() }
         }
     }
 }
