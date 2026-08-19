@@ -15,6 +15,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.minibook.data.local.security.AppLockController
+import com.minibook.ui.lock.LockScreen
 import com.minibook.ui.main.MainScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -65,8 +66,8 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
             modifier = Modifier.fillMaxSize(),
         ) {
             if (isLocked) {
-                // 锁态唯一可达目标：TASK-022 替换为真实 LockScreen。
-                composable(Destination.Lock.route) { PlaceholderRoute("锁屏（TASK-022 占位）") }
+                // 锁态唯一可达目标：真实解锁门（TASK-022），DEC-003/DEC-002 路径见 LockScreen。
+                composable(Destination.Lock.route) { LockScreen() }
             } else {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
                 composable(Destination.Home.route) { MainScreen() }
