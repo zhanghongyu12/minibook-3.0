@@ -47,6 +47,15 @@ interface CategoryRepository {
      */
     suspend fun deleteById(id: String)
 
+    /**
+     * 按 [ledgerId] 批删该账本全部分类（删账本时调用，TASK-012 DeleteLedgerUseCase
+     * 单事务编排；DATABASE §4.4）。
+     *
+     * **含内置分类**：删账本场景不保留任何分类，**无 `isBuiltIn` 守卫**（与单条
+     * [deleteById] 的内置禁删语义不同）。
+     */
+    suspend fun deleteByLedger(ledgerId: String)
+
     /** 账本分类数；种子幂等判断用（==0 才 clone，DATABASE §8.3）。 */
     suspend fun countByLedger(ledgerId: String): Long
 

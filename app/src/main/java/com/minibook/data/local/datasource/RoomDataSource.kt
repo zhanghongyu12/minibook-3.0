@@ -72,6 +72,15 @@ class LedgerDataSourceAdapter @Inject constructor(
     override suspend fun getById(id: String): Ledger? =
         ledgerDao().getById(id)?.let(LedgerMapper::toDomain)
 
+    /** 按 id 删除账本行（删账本时最后一步，TASK-012；LedgerDao 无 delete → 原始 SQL，同 update 逃生舱）。 */
+    override suspend fun deleteById(id: String) {
+        gate.database?.openHelper?.writableDatabase?.delete(
+            "ledgers",
+            "id = ?",
+            arrayOf(id),
+        ) ?: error("DatabaseGate 未解锁/未打开，无法访问数据库")
+    }
+
     override suspend fun getDefault(): Ledger? =
         ledgerDao().getDefault()?.let(LedgerMapper::toDomain)
 

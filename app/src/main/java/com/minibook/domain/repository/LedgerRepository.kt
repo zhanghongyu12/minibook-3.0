@@ -25,6 +25,9 @@ interface LedgerRepository {
     /** 更新后回读并返回最新值。 */
     suspend fun update(ledger: Ledger): Ledger
 
+    /** 按 [id] 删除账本行（删账本时最后一步，TASK-012 DeleteLedgerUseCase 编排；DATABASE §4.4）。 */
+    suspend fun deleteById(id: String)
+
     /** 单账本，不存在返回 `null`。 */
     suspend fun getById(id: String): Ledger?
 

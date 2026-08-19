@@ -39,6 +39,15 @@ interface CategoryDataSource {
      */
     suspend fun deleteById(id: String)
 
+    /**
+     * 按 [ledgerId] 批删该账本全部分类（删账本时调用，DATABASE §4.4）。
+     *
+     * **含内置分类**：删账本时内置分类一并清空，**无 `isBuiltIn` 守卫**——与单条
+     * [deleteById] 的 `isBuiltIn=0` 守卫（DEC-007 内置禁删）不同：账本整体删除
+     * 不保留任何分类，删账本原子性由 TASK-012 DeleteLedgerUseCase 单事务承载。
+     */
+    suspend fun deleteByLedger(ledgerId: String)
+
     /** 账本分类数；种子幂等判断用（==0 才 clone，DATABASE §8.3）。 */
     suspend fun countByLedger(ledgerId: String): Long
 

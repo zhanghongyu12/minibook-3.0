@@ -62,6 +62,10 @@ import kotlinx.coroutines.flow.map
  *   Category 三接口共享（无法在单实现内按接口分发到不同表），故对三表各发等价 DELETE——
  *   UUID 全局唯一，实际只会命中 id 所属那一行（其余为空操作），分类保留 `isBuiltIn=0`
  *   防误删守卫（DEC-007）。
+ * - TASK-012 回溯补齐的 `deleteByLedger(ledgerId)` 亦同签名被 Transaction/Debt/Category/
+ *   Budget 四接口共享（无法在单实现内按接口分发到不同表），单方法对四表各发等价 DELETE
+ *   ——ledgerId 为各表外键维度，四表全部命中（删账本场景，DATABASE §4.4）；分类无
+ *   `isBuiltIn=0` 守卫（删账本时内置分类一并清空），预算无「先删后插」语义。
  * - 无 ledgerId 入参的 `getById(id)` 经 `gate.database.openHelper.writableDatabase` 直接查询
  *   （Room 官方逃生舱）；`Category.observeByLedger(type=null)` 由 expense+income 双流 [combine]。
  * - `SyncChangeDataSource.enqueue` 签名缺 `ledgerId` 而表结构要求该列，本期属 Phase 3
@@ -108,6 +112,24 @@ class RoomDataSourceImpl @Inject constructor(
         db.delete("debts", "id = ?", arrayOf(id))
         // 保留 DAO deleteCustom 的 `isBuiltIn=0` 守卫（DEC-007 内置禁删下沉到 SQL）。
         db.delete("categories", "id = ? AND isBuiltIn = 0", arrayOf(id))
+    }
+
+    /**
+     * 同签名四接口共享（Transaction/Debt/Category/Budget 均「按 ledgerId 批删」）：
+     * 见类注释取舍说明。DAO 均无 `deleteByLedger` → 四表各发等价 DELETE（原始 SQL，
+     * 与 deleteById 三表 DELETE 同一逃生舱）。
+     *
+     * 语义差异说明：
+     * - categories 删账本场景**内置分类一并清空，无 `isBuiltIn=0` 守卫**（与单条
+     *   deleteById 的 DEC-007 守卫不同）；
+     * - budgets 无「先删后插」语义（DEC-008 只约束月度总预算唯一性）。
+     */
+    override suspend fun deleteByLedger(ledgerId: String) {
+        val db = writableDatabase()
+        db.delete("transactions", "ledgerId = ?", arrayOf(ledgerId))
+        db.delete("debts", "ledgerId = ?", arrayOf(ledgerId))
+        db.delete("categories", "ledgerId = ?", arrayOf(ledgerId))
+        db.delete("budgets", "ledgerId = ?", arrayOf(ledgerId))
     }
 
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =

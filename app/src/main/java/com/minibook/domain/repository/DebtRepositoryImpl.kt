@@ -24,6 +24,8 @@ class DebtRepositoryImpl @Inject constructor(
 
     override suspend fun deleteById(id: String) = dataSource.deleteById(id)
 
+    override suspend fun deleteByLedger(ledgerId: String) = dataSource.deleteByLedger(ledgerId)
+
     override fun observeByLedger(ledgerId: String, filter: DebtFilter): Flow<List<Debt>> =
         dataSource.observeByLedger(ledgerId, filter)
 

@@ -8,6 +8,8 @@ import com.minibook.data.datasource.SyncChangeDataSource
 import com.minibook.data.datasource.TransactionDataSource
 import com.minibook.data.local.datasource.LedgerDataSourceAdapter
 import com.minibook.data.local.datasource.RoomDataSourceImpl
+import com.minibook.domain.repository.BudgetRepository
+import com.minibook.domain.repository.BudgetRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -43,6 +45,10 @@ abstract class DataSourceModule {
 
     @Binds
     abstract fun bindBudgetDataSource(impl: RoomDataSourceImpl): BudgetDataSource
+
+    /** Repository 层装配（TASK-012 回溯补齐：BudgetRepository 原为 Phase 2 预留无 Impl，现接线）。 */
+    @Binds
+    abstract fun bindBudgetRepository(impl: BudgetRepositoryImpl): BudgetRepository
 
     @Binds
     abstract fun bindSyncChangeDataSource(impl: RoomDataSourceImpl): SyncChangeDataSource

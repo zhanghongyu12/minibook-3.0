@@ -40,6 +40,8 @@ class CategoryRepositoryImpl @Inject constructor(
 
     override suspend fun deleteById(id: String) = categoryDataSource.deleteById(id)
 
+    override suspend fun deleteByLedger(ledgerId: String) = categoryDataSource.deleteByLedger(ledgerId)
+
     override suspend fun countByLedger(ledgerId: String): Long = categoryDataSource.countByLedger(ledgerId)
 
     override fun observeByLedger(ledgerId: String, type: CategoryType?): Flow<List<Category>> =

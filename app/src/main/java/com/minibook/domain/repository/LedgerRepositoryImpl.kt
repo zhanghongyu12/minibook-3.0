@@ -21,6 +21,8 @@ class LedgerRepositoryImpl @Inject constructor(
 
     override suspend fun update(ledger: Ledger): Ledger = dataSource.update(ledger)
 
+    override suspend fun deleteById(id: String) = dataSource.deleteById(id)
+
     override suspend fun getById(id: String): Ledger? = dataSource.getById(id)
 
     override suspend fun getDefault(): Ledger? = dataSource.getDefault()

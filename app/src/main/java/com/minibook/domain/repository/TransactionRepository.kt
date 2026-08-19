@@ -37,6 +37,12 @@ interface TransactionRepository {
     suspend fun deleteById(id: String)
 
     /**
+     * 按 [ledgerId] 批删该账本全部交易（删账本时调用，TASK-012 DeleteLedgerUseCase
+     * 单事务编排；DATABASE §4.4）。
+     */
+    suspend fun deleteByLedger(ledgerId: String)
+
+    /**
      * 账本内按时间倒序返回交易流；[filter] 为全部/支出/收入 + 分类 + 日期区间
      * （API §3）。冷流，仅订阅时执行。Phase 2 搜索复用同一参数化查询。
      */

@@ -29,6 +29,15 @@ interface BudgetDataSource {
     /** 删除分类预算。 */
     suspend fun deleteByCategory(ledgerId: String, month: YearMonth, categoryId: String)
 
+    /**
+     * 按 [ledgerId] 批删该账本全部预算（删账本时调用，DATABASE §4.4）。
+     *
+     * 与 [deleteTotal]/[deleteByCategory] 的月度维度不同：无 month 入参、整表按账本
+     * 清空（含总预算与分类预算）；删账本原子性由 TASK-012 DeleteLedgerUseCase
+     * 单事务编排承载。
+     */
+    suspend fun deleteByLedger(ledgerId: String)
+
     /** 账本+月份取月度预算列表（含总预算与分类预算，categoryId 区分）。 */
     fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>>
 }

@@ -29,6 +29,12 @@ interface DebtRepository {
     suspend fun deleteById(id: String)
 
     /**
+     * 按 [ledgerId] 批删该账本全部借/还（删账本时调用，TASK-012 DeleteLedgerUseCase
+     * 单事务编排；DATABASE §4.4）。
+     */
+    suspend fun deleteByLedger(ledgerId: String)
+
+    /**
      * 明细视图：账本内按时间倒序；[filter] 为可选 `kind` / `direction` 过滤
      * （A-2 确认展开，`DebtFilter{ kind?, direction? }`，null=不过滤）。
      */
