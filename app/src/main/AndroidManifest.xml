@@ -1,13 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- TASK-018 补充 MainActivity；本期空应用壳即可编译 -->
+    <!-- TASK-018 收口：注册 @HiltAndroidApp 壳（.MiniBookApp）与唯一 launcher Activity（.MainActivity）。
+         安全模块懒加载，Application 初始化不触碰 DB（ARCHITECTURE §13）。
+         androidx.biometric 1.1.0 自带 USE_BIOMETRIC/USE_FINGERPRINT 权限合并，无需本清单显式声明。 -->
     <application
         android:name=".MiniBookApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MiniBook" />
+        android:theme="@style/Theme.MiniBook">
+
+        <!-- 单 Activity + Compose 壳；锁门控在 MiniBookNavHost 内（TASK-021）。 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
 
 </manifest>
