@@ -19,3 +19,6 @@ captures/
 *.keystore
 cxx/
 .externalNativeBuild/
+
+# Kotlin/KSP 构建缓存
+.kotlin/
