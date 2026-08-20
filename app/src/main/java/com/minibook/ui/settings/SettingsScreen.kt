@@ -200,8 +200,9 @@ fun SettingsScreen(
                             checked = appLockEnabled,
                             onCheckedChange = { enabled ->
                                 if (enabled) {
-                                    // 开启：VM 内 isDeviceSecure 检测，无锁屏走引导事件（DEC-003）。
-                                    viewModel.setAppLockEnabled(true, null)
+                                    // 开启：VM 内 isDeviceSecure 检测（DEC-003，无锁屏走引导事件）；
+                                    // 通过后经 BiometricPrompt 认证把 blob 重加密为 auth 包裹（DEC-002）。
+                                    viewModel.setAppLockEnabled(true, activity)
                                 } else {
                                     // 关闭：先强确认（数据仍保持加密，DEC-002）。
                                     showLockOffConfirm = true

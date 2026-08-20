@@ -33,11 +33,13 @@ import kotlinx.coroutines.withContext
  *   重锁只需关连接即无 key 引用。
  * - [unlock]：`useAuth=false` → plain key 静默开库直达（§7.4 分诊 A，锁关闭路径）；
  *   `useAuth=true` → [BiometricHelper] 认证解出 master key → [DatabaseGate.open]。
+ *   首启（无 `minibook_key.bin`）按当前锁状态落盘：锁关闭→plain 包裹、锁开启→先认证再
+ *   auth 包裹（[firstLaunchOpenPlain]/[authFirstLaunchOpen]，DEC-002）。
  * - 闲置超时重锁：读 [SettingsDataStore.lockTimeout]（立即/30s/1min/5min/永不），在
  *   [ApplicationScope] 协程 delay 后 [lock]；由 TASK-018 MiniBookApp 生命周期观察者接入
  *   [onAppBackground]/[onAppForeground]。
- * - 锁状态切换（开→关）：[downgradeToPlainKey] 用 plain key 重加密覆盖 blob（DEC-002，
- *   关锁不降级为明文）。
+ * - 锁状态切换：开→关 [downgradeToPlainKey]、关→开 [upgradeToAuthKey]，均先认证再以目标
+ *   包裹 key 重加密覆盖 blob（DEC-002，关锁不降级为明文）。
  *
  * 锁状态模型：[LockState]（ui/lock 层）推迟到 TASK-022，本期以 `StateFlow<Boolean>`
  * `isLocked` 对外广播（true=锁定，false=解锁）。
@@ -91,7 +93,13 @@ class AppLockController(
             return
         }
         if (!useAuth) {
-            val success = databaseGate.openWithKeyManager(false)
+            // 锁「关闭」路径：plain key 静默开库直达（§7.4 分诊 A，无锁屏）。
+            // 首启（无 blob）：生成 master key → plain 包裹落盘 → 开库（DEC-002 关锁不降级明文）。
+            val success = if (keyManager.hasMasterKeyBlob()) {
+                databaseGate.openWithKeyManager(false)
+            } else {
+                firstLaunchOpenPlain()
+            }
             if (success) _isLocked.value = false
             onResult?.invoke(success)
             return
@@ -106,6 +114,12 @@ class AppLockController(
             onResult?.invoke(false)
             return
         }
+        if (!keyManager.hasMasterKeyBlob()) {
+            // 首启 + 锁开启：先认证再 auth 包裹落盘，随后用内存中的 master key 开库
+            // （禁止锁开启时首启生成 plain 包裹，DEC-002）。
+            authFirstLaunchOpen(host, onResult)
+            return
+        }
         val cipher = keyManager.createDecryptCipher(useAuth = true)
         biometricHelper.authenticate(
             activity = host,
@@ -114,8 +128,14 @@ class AppLockController(
                 // BiometricPrompt 回调在主线程；解密 + 开库切后台（TASK-018 后走 @IoDispatcher）。
                 applicationScope.launch {
                     val success = withContext(Dispatchers.IO) {
-                        // decryptBlobWith 产出 32B master key；DatabaseGate.open 内部 finally 清零。
-                        databaseGate.open(keyManager.decryptBlobWith(authorizedCipher))
+                        // 兜底：blob 包裹方式与 useAuth 不匹配时 GCM 解密抛异常（AEADBadTagException），
+                        // 捕获后回调失败而非崩溃（对齐 downgradeToPlainKey 兜底模式）。
+                        try {
+                            // decryptBlobWith 产出 32B master key；DatabaseGate.open 内部 finally 清零。
+                            databaseGate.open(keyManager.decryptBlobWith(authorizedCipher))
+                        } catch (e: Exception) {
+                            false
+                        }
                     }
                     if (success) _isLocked.value = false
                     onResult?.invoke(success)
@@ -164,6 +184,117 @@ class AppLockController(
                             false
                         }
                     }
+                    onResult?.invoke(success)
+                }
+            },
+            onError = { _, _ -> onResult?.invoke(false) },
+        )
+    }
+
+    /**
+     * 锁状态切换（关→开，DEC-002）：把 master key blob 从 plain 包裹重加密为 auth 包裹。
+     *
+     * 用户在设置页开启应用锁时调用（TASK-027 设置页消费）：先经 [BiometricHelper] 认证解出
+     * master key，再 [KeyManager.persistMasterKey]（`useAuth=true`）覆盖 blob，master key 用后
+     * 立即清零（ARCHITECTURE §7.2 审查点）；成功后旧 blob 失效，此后冷启动走 auth key 认证开库。
+     * 幂等：若 blob 已是 auth 包裹（[KeyManager.decryptBlobWith] 直接成功），视为成功返回。
+     *
+     * @param activity 当前 [FragmentActivity]（BiometricPrompt）。
+     * @param onResult 切换结果回调（true=已重加密为 auth 包裹；false=认证取消/失败或
+     *                 DEC-003 设备无锁屏）。
+     */
+    fun upgradeToAuthKey(
+        activity: FragmentActivity,
+        onResult: ((Boolean) -> Unit)? = null,
+    ) {
+        if (!biometricHelper.isDeviceSecure()) {
+            onResult?.invoke(false)
+            return
+        }
+        if (!keyManager.hasMasterKeyBlob()) {
+            // 防御：正常流程下设置页可达时 blob 必已生成（解锁首启路径已落盘）；缺失时失败不崩溃。
+            onResult?.invoke(false)
+            return
+        }
+        val cipher = keyManager.createDecryptCipher(useAuth = true)
+        biometricHelper.authenticate(
+            activity = activity,
+            cipher = cipher,
+            onSuccess = { authorizedCipher ->
+                applicationScope.launch {
+                    val success = withContext(Dispatchers.IO) {
+                        try {
+                            val masterKey = try {
+                                // auth 解包成功 → blob 已是 auth 包裹（幂等），确认后直接成功、不重写。
+                                keyManager.decryptBlobWith(authorizedCipher).also { Arrays.fill(it, 0) }
+                                return@withContext true
+                            } catch (e: Exception) {
+                                // auth 解包失败 → blob 仍是 plain 包裹（正常「关→开」）→ 解出后重包裹。
+                                keyManager.getMasterKey(useAuth = false)
+                            }
+                            try {
+                                keyManager.persistMasterKey(masterKey, useAuth = true)
+                                true
+                            } finally {
+                                Arrays.fill(masterKey, 0) // ARCHITECTURE §7.2 密钥清零审查点
+                            }
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                    onResult?.invoke(success)
+                }
+            },
+            onError = { _, _ -> onResult?.invoke(false) },
+        )
+    }
+
+    /**
+     * 首启 + 锁关闭开库：生成 master key → plain 包裹落盘 → 开库（DEC-002）。
+     *
+     * 锁关闭路径无认证要求（plain key），`persistMasterKey` 后直接以内存中的 master key 直开 DB
+     * （[DatabaseGate.open] 内部 finally 清零，ARCHITECTURE §7.2）。
+     *
+     * @return true=落盘 + 开库成功；false=任一环节失败（DB 保持关闭）。
+     */
+    private fun firstLaunchOpenPlain(): Boolean {
+        val masterKey = keyManager.generateMasterKey()
+        return try {
+            keyManager.persistMasterKey(masterKey, useAuth = false)
+            databaseGate.open(masterKey)
+        } catch (e: Exception) {
+            Arrays.fill(masterKey, 0)
+            false
+        }
+    }
+
+    /**
+     * 首启 + 锁开启开库：先生成 master key，经 BiometricPrompt 认证（ENCRYPT cipher 绑定 auth
+     * key）后 auth 包裹落盘，再用内存中的 master key 开库（DEC-002 禁止首启生成 plain 包裹）。
+     *
+     * 首启时无 blob，[KeyManager.createDecryptCipher] 无法初始化（`readBlobParts` 抛「blob 不存在」），
+     * 故以 [KeyManager.createMasterKeyEncryptCipher] 产出 ENCRYPT cipher 绑定认证，认证成功后用
+     * **已授权** cipher 经 [KeyManager.persistMasterKeyWithCipher] 落盘——避免认证后新建 auth-key
+     * cipher 触发 [UserNotAuthenticatedException]（ARCHITECTURE §7.5 认证语义）。
+     */
+    private fun authFirstLaunchOpen(activity: FragmentActivity, onResult: ((Boolean) -> Unit)?) {
+        val encryptCipher = keyManager.createMasterKeyEncryptCipher(useAuth = true)
+        biometricHelper.authenticate(
+            activity = activity,
+            cipher = encryptCipher,
+            onSuccess = { authorizedCipher ->
+                applicationScope.launch {
+                    val success = withContext(Dispatchers.IO) {
+                        val masterKey = keyManager.generateMasterKey()
+                        try {
+                            keyManager.persistMasterKeyWithCipher(masterKey, authorizedCipher)
+                            databaseGate.open(masterKey) // open 内部 finally 清零
+                        } catch (e: Exception) {
+                            Arrays.fill(masterKey, 0)
+                            false
+                        }
+                    }
+                    if (success) _isLocked.value = false
                     onResult?.invoke(success)
                 }
             },

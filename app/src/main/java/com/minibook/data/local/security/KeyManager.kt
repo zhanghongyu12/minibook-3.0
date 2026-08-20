@@ -138,11 +138,38 @@ class KeyManager(private val context: Context) {
      *                BiometricPrompt 后调用）；false=用 `_plain` 包裹 key 加密（静默）。
      */
     fun persistMasterKey(masterKey: ByteArray, useAuth: Boolean) {
-        require(masterKey.size == MASTER_KEY_BYTES) { "master key 必须为 $MASTER_KEY_BYTES 字节" }
+        persistMasterKeyWithCipher(masterKey, createMasterKeyEncryptCipher(useAuth))
+    }
+
+    /**
+     * 创建包裹用 ENCRYPT cipher（**无 blob 依赖**，可在首次运行无 `minibook_key.bin` 时调用）。
+     *
+     * 首启 + 锁开启路径：`createDecryptCipher` 依赖 blob（`readBlobParts` 会抛「blob 不存在」），
+     * 无法在首启时初始化；故改用本方法产出 ENCRYPT cipher 并绑定 BiometricPrompt 认证
+     * （CryptoObject 使用 auth key），认证成功后以 [persistMasterKeyWithCipher] 落盘 auth 包裹
+     * 的 master key（DEC-002：**禁止**锁开启时首启生成 plain 包裹）。锁关闭首启无需认证，
+     * 直接 [persistMasterKey]（内部复用本方法）。
+     *
+     * @param useAuth true=用 `_auth` 包裹 key（需认证）；false=用 `_plain` 包裹 key（静默）。
+     */
+    fun createMasterKeyEncryptCipher(useAuth: Boolean): Cipher {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getSecretKey(if (useAuth) ALIAS_AUTH else ALIAS_PLAIN))
-        val iv = cipher.iv
-        val ciphertext = cipher.doFinal(masterKey)
+        return cipher
+    }
+
+    /**
+     * 用**已授权**的 ENCRYPT cipher 加密 [masterKey] 并覆盖写 `minibook_key.bin`。
+     *
+     * 与 [persistMasterKey] 的区别：cipher 由调用方经 [createMasterKeyEncryptCipher] 创建并绑定
+     * BiometricPrompt 认证后传入（首启 + 锁开启路径），避免认证后新建 auth-key cipher 触发
+     * [UserNotAuthenticatedException]（ARCHITECTURE §7.5 认证语义；「解密须绑定 CryptoObject」
+     * 的加密侧对称用法）。
+     */
+    fun persistMasterKeyWithCipher(masterKey: ByteArray, encryptCipher: Cipher) {
+        require(masterKey.size == MASTER_KEY_BYTES) { "master key 必须为 $MASTER_KEY_BYTES 字节" }
+        val iv = encryptCipher.iv
+        val ciphertext = encryptCipher.doFinal(masterKey)
         val blob = ByteArray(iv.size + ciphertext.size)
         System.arraycopy(iv, 0, blob, 0, iv.size)
         System.arraycopy(ciphertext, 0, blob, iv.size, ciphertext.size)

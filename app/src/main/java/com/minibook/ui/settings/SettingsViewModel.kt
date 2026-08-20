@@ -36,7 +36,8 @@ import kotlinx.coroutines.withContext
  *
  * - 暗色模式三态：[setDarkMode] 写 DataStore，经 TASK-019 ThemeViewModel 即时生效（F-09）。
  * - 应用锁开关：[setAppLockEnabled]——开启前先检 [BiometricHelper.isDeviceSecure]（DEC-003，
- *   设备无系统锁屏时不开启、暴露 [needDeviceSecure] 引导事件）；关闭走
+ *   设备无系统锁屏时不开启、暴露 [needDeviceSecure] 引导事件）；开启走
+ *   [AppLockController.upgradeToAuthKey]（DEC-002，blob 重加密为 auth 包裹后落库）；关闭走
  *   [AppLockController.downgradeToPlainKey]（DEC-002，blob 重加密为 plain 包裹后落库，
  *   关锁不降级明文，数据仍保持加密）。
  * - 锁定时长五档：[setLockTimeout] 写 DataStore（TASK-017 闲置重锁计时消费）。
@@ -127,13 +128,16 @@ class SettingsViewModel @Inject constructor(
     /**
      * 切换应用锁开关。
      *
-     * 开启（true）：先检 [BiometricHelper.isDeviceSecure]（DEC-003）——设备已设系统锁屏才落库
-     * 开启；否则不开启，仅发射 [needDeviceSecure] 引导事件由 UI 展示引导卡跳系统安全设置。
+     * 开启（true）：先检 [BiometricHelper.isDeviceSecure]（DEC-003）——设备已设系统锁屏才走
+     * [AppLockController.upgradeToAuthKey] 将 master key blob 重加密为 auth 包裹（DEC-002，
+     * 认证后落盘；开启锁前必须确保 blob 最终为 auth 包裹，否则下次解锁用 auth key 解 plain
+     * 包裹密文会 GCM 失败）；成功才落库开启，失败播报原因。设备无系统锁屏时不开启，仅发射
+     * [needDeviceSecure] 引导事件由 UI 展示引导卡跳系统安全设置。
      *
      * 关闭（false）：经 [AppLockController.downgradeToPlainKey] 将 master key blob 重加密为
      * plain 包裹（DEC-002，关锁不降级明文，数据仍保持加密）；成功后落库关闭，失败播报原因。
      *
-     * @param activity 当前 [FragmentActivity]（BiometricPrompt 宿主；仅关闭路径需要）。
+     * @param activity 当前 [FragmentActivity]（BiometricPrompt 宿主；开/关路径均需要）。
      */
     fun setAppLockEnabled(enabled: Boolean, activity: FragmentActivity?) {
         if (_isBusy.value) return
@@ -143,9 +147,22 @@ class SettingsViewModel @Inject constructor(
                 _needDeviceSecure.tryEmit(Unit)
                 return
             }
-            viewModelScope.launch {
-                settingsDataStore.setAppLockEnabled(true)
-                _snackbar.value = "应用锁已开启，下次进入应用需生物识别解锁"
+            // DEC-002：开启锁须先把 blob 重加密为 auth 包裹（认证后），成功才落库开启；
+            // 与关闭路径的 downgrade 编排对称——写标志本身不回滚，但开启前 blob 必为 auth 包裹。
+            val host = activity
+            if (host == null) {
+                _snackbar.value = "开启失败：缺少页面上下文"
+                return
+            }
+            appLockController.upgradeToAuthKey(host) { success ->
+                if (success) {
+                    viewModelScope.launch {
+                        settingsDataStore.setAppLockEnabled(true)
+                        _snackbar.value = "应用锁已开启，下次进入应用需生物识别解锁"
+                    }
+                } else {
+                    _snackbar.value = "开启失败：认证取消或未通过"
+                }
             }
         } else {
             // DEC-002：关锁须先把 blob 重加密为 plain 包裹（认证后），成功才落库关闭。
