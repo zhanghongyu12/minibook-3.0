@@ -102,6 +102,20 @@ class DatabaseGate(
     }
 
     companion object {
+        /**
+         * 显式加载 SQLCipher native 库。
+         *
+         * SQLCipher 4.6.1（`net.zetetic:sqlcipher-android`）不会在首次使用
+         * [SupportOpenHelperFactory] 时自动加载 `libsqlcipher.so`；若不在此加载，
+         * Java 层 `SQLiteConnection.nativeOpen` 将找不到 native 实现并抛
+         * `UnsatisfiedLinkError`，导致 `open` 静默失败（锁关闭路径「自动解锁失败」）。
+         * companion object 的 init 块仅在本类首次加载时执行一次（比每次实例化的
+         * init 块更省）；`System.loadLibrary` 重复调用本身幂等、安全。
+         */
+        init {
+            System.loadLibrary("sqlcipher")
+        }
+
         private const val TAG = "DatabaseGate"
 
         /** SQLCipher 加密库文件名（DATABASE §2）。 */
