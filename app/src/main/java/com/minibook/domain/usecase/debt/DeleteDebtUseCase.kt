@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.debt
 
+import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.DebtFilter
 import com.minibook.domain.repository.DebtRepository
@@ -25,14 +26,14 @@ class DeleteDebtUseCase @Inject constructor(
      * 删除一条借/还。
      *
      * @param id 目标债务 id。
-     * @throws IllegalArgumentException 当前账本视图内不存在该债务。
+     * @throws InvalidInput 当前账本视图内不存在该债务。
      */
     suspend operator fun invoke(id: String) {
         val ledgerId = ledgerProvider.currentLedgerId()
         val exists = debtRepository.observeByLedger(ledgerId, DebtFilter())
             .first()
             .any { it.id == id }
-        if (!exists) throw IllegalArgumentException("债务不存在：$id")
+        if (!exists) throw InvalidInput("债务不存在：$id")
         debtRepository.deleteById(id)
     }
 }

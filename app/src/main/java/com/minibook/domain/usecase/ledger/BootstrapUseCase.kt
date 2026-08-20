@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.ledger
 
+import com.minibook.data.datasource.TransactionRunner
 import com.minibook.data.local.datastore.LedgerDataStore
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.repository.LedgerRepository
@@ -16,6 +17,11 @@ import javax.inject.Inject
  * 18 内置分类（[CloneBuiltInCategoriesUseCase]）→ `LedgerDataStore.setCurrentLedgerId`
  * 写入默认账本 id。
  *
+ * **事务原子性（TASK-013 评审 W3）**：插入默认账本 + 克隆分类 + 写当前账本三步整体包进
+ * [TransactionRunner.runInTransaction]（与 [CreateLedgerUseCase] 同口径）——任一失败 →
+ * 账本插入一并回滚，杜绝「账本已建但分类未克隆/当前账本未写」的半初始化态被幂等守卫
+ * （默认账本已存在）永久跳过。
+ *
  * **幂等守卫**：默认账本已存在则直接返回，不重复插入（重装/恢复 KeyStore 后不重复刷）。
  * 分类克隆的幂等由 [CloneBuiltInCategoriesUseCase] 内部 `countByLedger==0` 守卫兜底。
  */
@@ -23,6 +29,7 @@ class BootstrapUseCase @Inject constructor(
     private val ledgerRepository: LedgerRepository,
     private val cloneBuiltInCategories: CloneBuiltInCategoriesUseCase,
     private val ledgerDataStore: LedgerDataStore,
+    private val transactionRunner: TransactionRunner,
 ) {
 
     /**
@@ -32,28 +39,30 @@ class BootstrapUseCase @Inject constructor(
         // 幂等守卫：默认账本已存在 → 直接返回（ARCHITECTURE §8.4 步骤 1「空则插入」）。
         if (ledgerRepository.getDefault() != null) return
 
-        // 插入默认账本。数据层 insert 会重新生成 UUID 与 createdAt/updatedAt
-        // （LedgerDataSourceAdapter），故此处 id/时间戳仅作完整对象占位；
-        // 下游一律使用返回的落库 id（克隆分类 + 写当前账本）。
-        val now = TimeFormatter.nowIso()
-        val defaultLedgerId = ledgerRepository.insert(
-            Ledger(
-                id = UUID.randomUUID().toString(),
-                name = DEFAULT_NAME,
-                icon = DEFAULT_ICON,
-                color = DEFAULT_COLOR,
-                isDefault = true,
-                position = DEFAULT_POSITION,
-                createdAt = now,
-                updatedAt = now,
-            ),
-        )
+        transactionRunner.runInTransaction {
+            // 插入默认账本。数据层 insert 会重新生成 UUID 与 createdAt/updatedAt
+            // （LedgerDataSourceAdapter），故此处 id/时间戳仅作完整对象占位；
+            // 下游一律使用返回的落库 id（克隆分类 + 写当前账本）。
+            val now = TimeFormatter.nowIso()
+            val defaultLedgerId = ledgerRepository.insert(
+                Ledger(
+                    id = UUID.randomUUID().toString(),
+                    name = DEFAULT_NAME,
+                    icon = DEFAULT_ICON,
+                    color = DEFAULT_COLOR,
+                    isDefault = true,
+                    position = DEFAULT_POSITION,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
 
-        // 为该默认账本克隆 18 内置分类（12 支出 + 6 收入，内部幂等守卫 countByLedger==0）。
-        cloneBuiltInCategories(defaultLedgerId)
+            // 为该默认账本克隆 18 内置分类（12 支出 + 6 收入，内部幂等守卫 countByLedger==0）。
+            cloneBuiltInCategories(defaultLedgerId)
 
-        // 写入当前账本 id（ARCHITECTURE §8.4 步骤 3；上游幂等守卫保证此时尚无默认账本）。
-        ledgerDataStore.setCurrentLedgerId(defaultLedgerId)
+            // 写入当前账本 id（ARCHITECTURE §8.4 步骤 3；上游幂等守卫保证此时尚无默认账本）。
+            ledgerDataStore.setCurrentLedgerId(defaultLedgerId)
+        }
     }
 
     /** 默认账本内置值（ARCHITECTURE §8.4 指定「内置值」，具体取值本类锁定）。 */

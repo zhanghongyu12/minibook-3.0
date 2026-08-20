@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.category
 
+import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.BuiltInCategories
 import com.minibook.domain.repository.CategoryRepository
@@ -32,7 +33,7 @@ class UpdateCategoryUseCase @Inject constructor(
      * @param icon 新图标 emoji。
      * @param color 新主题色（如 `#FF6B6B`）。
      * @param order 新排序值（1~98；99 为「其他」保留）。
-     * @throws IllegalArgumentException 分类不存在 / name 为空 / 「其他」改名 / order 越界。
+     * @throws InvalidInput 分类不存在 / name 为空 / 「其他」改名 / order 越界。
      */
     suspend operator fun invoke(
         categoryId: String,
@@ -41,21 +42,21 @@ class UpdateCategoryUseCase @Inject constructor(
         color: String,
         order: Int,
     ) {
-        if (!Validators.validatePartyName(name)) throw IllegalArgumentException("分类名不能为空")
+        if (!Validators.validatePartyName(name)) throw InvalidInput("分类名不能为空")
         if (order !in 1 until BuiltInCategories.OTHERS_ORDER) {
-            throw IllegalArgumentException("分类排序值须在 1~98（99 为「其他」保留）")
+            throw InvalidInput("分类排序值须在 1~98（99 为「其他」保留）")
         }
 
         val ledgerId = ledgerProvider.currentLedgerId()
         val original = categoryRepository.observeByLedger(ledgerId, null).first()
             .firstOrNull { it.id == categoryId }
-            ?: throw IllegalArgumentException("分类不存在：$categoryId")
+            ?: throw InvalidInput("分类不存在：$categoryId")
 
         // 「其他」name 只读（DEC-007）：仅当其名被实际改动才拒绝（同名无操作放行）。
         val isOthers = (original.isBuiltIn && original.order == BuiltInCategories.OTHERS_ORDER) ||
             original.name == "其他"
         if (isOthers && name != original.name) {
-            throw IllegalArgumentException("「其他」分类默认名不可修改")
+            throw InvalidInput("「其他」分类默认名不可修改")
         }
 
         // type/isBuiltIn 从原值 copy，锁定不可改（数据层 update 亦不写这两列，双保险）。

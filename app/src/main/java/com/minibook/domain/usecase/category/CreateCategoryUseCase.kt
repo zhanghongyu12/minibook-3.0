@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.category
 
+import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.BuiltInCategories
 import com.minibook.domain.model.Category
@@ -38,7 +39,7 @@ class CreateCategoryUseCase @Inject constructor(
      * @param color 主题色（如 `#FF6B6B`）。
      * @param type 收支类型（必填）。
      * @return 落库分类 id（数据层重生成，非入参占位）。
-     * @throws IllegalArgumentException name 为空 / 该类型分类数已达上限（98）。
+     * @throws InvalidInput name 为空 / 该类型分类数已达上限（98）。
      */
     suspend operator fun invoke(
         name: String,
@@ -46,7 +47,7 @@ class CreateCategoryUseCase @Inject constructor(
         color: String,
         type: CategoryType,
     ): String {
-        if (!Validators.validatePartyName(name)) throw IllegalArgumentException("分类名不能为空")
+        if (!Validators.validatePartyName(name)) throw InvalidInput("分类名不能为空")
 
         val ledgerId = ledgerProvider.currentLedgerId()
         val order = nextOrder(ledgerId, type)
@@ -77,6 +78,6 @@ class CreateCategoryUseCase @Inject constructor(
             .map { it.order }
             .toSet()
         return (1 until BuiltInCategories.OTHERS_ORDER).firstOrNull { it !in usedOrders }
-            ?: throw IllegalArgumentException("该类型分类数量已达上限（98），请先删除无用分类")
+            ?: throw InvalidInput("该类型分类数量已达上限（98），请先删除无用分类")
     }
 }

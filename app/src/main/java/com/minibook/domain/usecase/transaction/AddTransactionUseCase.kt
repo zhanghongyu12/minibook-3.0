@@ -1,6 +1,7 @@
 package com.minibook.domain.usecase.transaction
 
 import com.minibook.domain.common.CategoryRequired
+import com.minibook.domain.common.InvalidTransactionInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
@@ -18,12 +19,12 @@ import javax.inject.Inject
  * `MoneyFormatter.toFen` 精确换算）——本类只校验「分」值本身是否合法（>0 且不超上限），
  * 不感知元/分换算，单测可直接覆盖 `12.34` 元 = `1234` 分后的金额校验。
  *
- * **校验清单（顺序执行，任一失败抛 [CategoryRequired] 或 `IllegalArgumentException`）**：
- * 1. **金额 > 0 且不超上限**：`require(Validators.validateAmount(amount))`（拒绝 0/负数/
- *    超 [Validators.MAX_AMOUNT_FEN]，DATABASE §9.4）；
+ * **校验清单（顺序执行，任一失败抛 [CategoryRequired] 或 [InvalidTransactionInput]）**：
+ * 1. **金额 > 0 且不超上限**：`if (!Validators.validateAmount(amount)) throw InvalidTransactionInput`
+ *    （拒绝 0/负数/超 [Validators.MAX_AMOUNT_FEN]，DATABASE §9.4）；
  * 2. **分类必填**：`categoryId` 非空非纯空白 → [CategoryRequired]（DATABASE §4.1 NOT NULL）；
- * 3. **备注 ≤ 200**：`require(Validators.validateNoteLength(description.orEmpty()))`（可空
- *    字段空串视为合法，DATABASE §4.1）。
+ * 3. **备注 ≤ 200**：`if (!Validators.validateNoteLength(description.orEmpty())) throw InvalidTransactionInput`
+ *    （可空字段空串视为合法，DATABASE §4.1）。
  *
  * 记入「当前账本」：经 [LedgerProvider.currentLedgerId] 取当前账本 ID（ARCHITECTURE §8.2/§8.5），
  * 本类不感知 DataStore/Room（DEC-001）。`createdAt/updatedAt` 统一 [TimeFormatter.nowIso]，
@@ -44,7 +45,7 @@ class AddTransactionUseCase @Inject constructor(
      * @param description 备注（≤ 200 字符，可为空）。
      * @return 落库交易 id（数据层 insert 生成 UUID）。
      * @throws CategoryRequired 分类为空或纯空白。
-     * @throws IllegalArgumentException 金额 ≤ 0 或超上限 / 备注超长（`require` 抛出）。
+     * @throws InvalidTransactionInput 金额 ≤ 0 或超上限 / 备注超长。
      * @throws com.minibook.domain.common.LedgerNotFound 当前账本未初始化（§8.5）。
      */
     suspend operator fun invoke(
@@ -55,14 +56,14 @@ class AddTransactionUseCase @Inject constructor(
         description: String? = null,
     ): String {
         // 录入校验（DATABASE §9.4）：金额 >0 且不超上限。
-        require(Validators.validateAmount(amount)) {
-            "金额必须大于 0 且不超过 ${Validators.MAX_AMOUNT_FEN} 分"
+        if (!Validators.validateAmount(amount)) {
+            throw InvalidTransactionInput("金额必须大于 0 且不超过 ${Validators.MAX_AMOUNT_FEN} 分")
         }
         // 分类必填（DATABASE §4.1 NOT NULL）。
         if (categoryId.isBlank()) throw CategoryRequired()
         // 备注 ≤ 200 字（可空字段空串视为合法）。
-        require(Validators.validateNoteLength(description.orEmpty())) {
-            "备注不能超过 ${Validators.MAX_NOTE_LENGTH} 字"
+        if (!Validators.validateNoteLength(description.orEmpty())) {
+            throw InvalidTransactionInput("备注不能超过 ${Validators.MAX_NOTE_LENGTH} 字")
         }
 
         val ledgerId = ledgerProvider.currentLedgerId()

@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.debt
 
+import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtDirection
@@ -44,7 +45,8 @@ class AddDebtUseCase @Inject constructor(
      * @param date 发生日期 `yyyy-MM-dd`（DATABASE §9.5 口径）。
      * @param remark 备注（≤ 200 字符，可为空）。
      * @return 落库债务 id（数据层 insert 生成 UUID）。
-     * @throws IllegalArgumentException 姓名空 / 金额 ≤ 0 或超上限 / 当前账本未初始化。
+     * @throws InvalidInput 姓名空 / 金额 ≤ 0 或超上限。
+     * @throws com.minibook.domain.common.LedgerNotFound 当前账本未初始化（§8.5）。
      */
     suspend operator fun invoke(
         partyName: String,
@@ -55,8 +57,8 @@ class AddDebtUseCase @Inject constructor(
         remark: String? = null,
     ): String {
         // 录入校验（TASK-010 Validators，DATABASE §9.4）：姓名空 / 金额 ≤0 或超上限拒绝。
-        require(Validators.validatePartyName(partyName)) { "对方姓名不能为空" }
-        require(Validators.validateAmount(amount)) { "金额必须大于 0 且不超过上限" }
+        if (!Validators.validatePartyName(partyName)) throw InvalidInput("对方姓名不能为空")
+        if (!Validators.validateAmount(amount)) throw InvalidInput("金额必须大于 0 且不超过上限")
         // 四态校验：kind/direction 强类型枚举取值恒合法，无非法组合（见类 KDoc 字典）。
         val ledgerId = ledgerProvider.currentLedgerId()
         val now = TimeFormatter.nowIso()

@@ -7,6 +7,7 @@ import com.minibook.data.datasource.CategoryDataSource
 import com.minibook.data.datasource.DebtDataSource
 import com.minibook.data.datasource.SyncChangeDataSource
 import com.minibook.data.datasource.TransactionDataSource
+import com.minibook.data.datasource.TransactionRunner
 import com.minibook.data.local.db.dao.BudgetDao
 import com.minibook.data.local.db.dao.CategoryDao
 import com.minibook.data.local.db.dao.DebtDao
@@ -61,11 +62,13 @@ import kotlinx.coroutines.flow.map
  *   契约的 `deleteById(id)` 为 id 单参（API §3~§5）；`deleteById` 同签名被 Transaction/Debt/
  *   Category 三接口共享（无法在单实现内按接口分发到不同表），故对三表各发等价 DELETE——
  *   UUID 全局唯一，实际只会命中 id 所属那一行（其余为空操作），分类保留 `isBuiltIn=0`
- *   防误删守卫（DEC-007）。
+ *   防误删守卫（DEC-007）。方法内部经 [TransactionRunner] 事务包裹，**自身原子**
+ *   （TASK-013 评审 W4，不依赖调用方闭合事务）。
  * - TASK-012 回溯补齐的 `deleteByLedger(ledgerId)` 亦同签名被 Transaction/Debt/Category/
  *   Budget 四接口共享（无法在单实现内按接口分发到不同表），单方法对四表各发等价 DELETE
  *   ——ledgerId 为各表外键维度，四表全部命中（删账本场景，DATABASE §4.4）；分类无
- *   `isBuiltIn=0` 守卫（删账本时内置分类一并清空），预算无「先删后插」语义。
+ *   `isBuiltIn=0` 守卫（删账本时内置分类一并清空），预算无「先删后插」语义。方法内部
+ *   同样经 [TransactionRunner] 事务包裹，**自身原子**（TASK-013 评审 W4）。
  * - 无 ledgerId 入参的 `getById(id)` 经 `gate.database.openHelper.writableDatabase` 直接查询
  *   （Room 官方逃生舱）；`Category.observeByLedger(type=null)` 由 expense+income 双流 [combine]。
  * - `SyncChangeDataSource.enqueue` 签名缺 `ledgerId` 而表结构要求该列，本期属 Phase 3
@@ -74,6 +77,7 @@ import kotlinx.coroutines.flow.map
 @Singleton
 class RoomDataSourceImpl @Inject constructor(
     private val gate: DatabaseGate,
+    private val transactionRunner: TransactionRunner,
 ) : RoomDataSource,
     TransactionDataSource,
     DebtDataSource,
@@ -105,13 +109,22 @@ class RoomDataSourceImpl @Inject constructor(
         )
     }
 
-    /** 同签名三接口共享（Transaction/Debt/Category 均「物理删除」）：见类注释取舍说明。 */
+    /**
+     * 同签名三接口共享（Transaction/Debt/Category 均「物理删除」）：见类注释取舍说明。
+     *
+     * **自身原子（TASK-013 评审 W4）**：三表 DELETE 整体包进
+     * [TransactionRunner.runInTransaction]——方法自身闭合事务，不依赖调用方；
+     * 若调用方已在事务内（如 [com.minibook.domain.repository.CategoryRepositoryImpl.deleteCategoryWithMigration]），
+     * Room `withTransaction` 可重入，直接并入外层事务，不产生嵌套事务。
+     */
     override suspend fun deleteById(id: String) {
-        val db = writableDatabase()
-        db.delete("transactions", "id = ?", arrayOf(id))
-        db.delete("debts", "id = ?", arrayOf(id))
-        // 保留 DAO deleteCustom 的 `isBuiltIn=0` 守卫（DEC-007 内置禁删下沉到 SQL）。
-        db.delete("categories", "id = ? AND isBuiltIn = 0", arrayOf(id))
+        transactionRunner.runInTransaction {
+            val db = writableDatabase()
+            db.delete("transactions", "id = ?", arrayOf(id))
+            db.delete("debts", "id = ?", arrayOf(id))
+            // 保留 DAO deleteCustom 的 `isBuiltIn=0` 守卫（DEC-007 内置禁删下沉到 SQL）。
+            db.delete("categories", "id = ? AND isBuiltIn = 0", arrayOf(id))
+        }
     }
 
     /**
@@ -119,17 +132,24 @@ class RoomDataSourceImpl @Inject constructor(
      * 见类注释取舍说明。DAO 均无 `deleteByLedger` → 四表各发等价 DELETE（原始 SQL，
      * 与 deleteById 三表 DELETE 同一逃生舱）。
      *
+     * **自身原子（TASK-013 评审 W4）**：四表 DELETE 整体包进
+     * [TransactionRunner.runInTransaction]——方法自身闭合事务，不依赖调用方；
+     * 调用方 [com.minibook.domain.usecase.ledger.DeleteLedgerUseCase] 外层已包事务时
+     * （Room `withTransaction` 可重入）并入外层事务，不产生嵌套事务。
+     *
      * 语义差异说明：
      * - categories 删账本场景**内置分类一并清空，无 `isBuiltIn=0` 守卫**（与单条
      *   deleteById 的 DEC-007 守卫不同）；
      * - budgets 无「先删后插」语义（DEC-008 只约束月度总预算唯一性）。
      */
     override suspend fun deleteByLedger(ledgerId: String) {
-        val db = writableDatabase()
-        db.delete("transactions", "ledgerId = ?", arrayOf(ledgerId))
-        db.delete("debts", "ledgerId = ?", arrayOf(ledgerId))
-        db.delete("categories", "ledgerId = ?", arrayOf(ledgerId))
-        db.delete("budgets", "ledgerId = ?", arrayOf(ledgerId))
+        transactionRunner.runInTransaction {
+            val db = writableDatabase()
+            db.delete("transactions", "ledgerId = ?", arrayOf(ledgerId))
+            db.delete("debts", "ledgerId = ?", arrayOf(ledgerId))
+            db.delete("categories", "ledgerId = ?", arrayOf(ledgerId))
+            db.delete("budgets", "ledgerId = ?", arrayOf(ledgerId))
+        }
     }
 
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =

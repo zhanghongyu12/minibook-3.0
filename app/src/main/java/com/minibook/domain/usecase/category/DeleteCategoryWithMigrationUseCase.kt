@@ -1,5 +1,6 @@
 package com.minibook.domain.usecase.category
 
+import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.repository.CategoryRepository
 import javax.inject.Inject
@@ -28,7 +29,7 @@ class DeleteCategoryWithMigrationUseCase @Inject constructor(
      *
      * @param categoryId 源分类 id（被删除）。
      * @param targetCategoryId 目标分类 id（交易重挂至此）。
-     * @throws IllegalArgumentException 源/目标不存在、源为内置、目标不同 type、自身迁移、
+     * @throws InvalidInput 源/目标不存在、源为内置、目标不同 type、自身迁移、
      *   无关联交易（应走 [DeleteCategoryUseCase] 直接删）。
      */
     suspend operator fun invoke(categoryId: String, targetCategoryId: String) {
@@ -37,17 +38,17 @@ class DeleteCategoryWithMigrationUseCase @Inject constructor(
         val categories = categoryRepository.observeByLedger(ledgerId, null).first()
 
         val source = categories.firstOrNull { it.id == categoryId }
-            ?: throw IllegalArgumentException("分类不存在：$categoryId")
+            ?: throw InvalidInput("分类不存在：$categoryId")
         val target = categories.firstOrNull { it.id == targetCategoryId }
-            ?: throw IllegalArgumentException("目标分类不存在：$targetCategoryId")
+            ?: throw InvalidInput("目标分类不存在：$targetCategoryId")
 
-        if (source.isBuiltIn) throw IllegalArgumentException("内置分类不可删除")
-        if (source.id == target.id) throw IllegalArgumentException("目标分类不能是自身")
+        if (source.isBuiltIn) throw InvalidInput("内置分类不可删除")
+        if (source.id == target.id) throw InvalidInput("目标分类不能是自身")
         if (target.type != source.type) {
-            throw IllegalArgumentException("目标分类与源分类类型不一致（须同为 ${source.type.value}）")
+            throw InvalidInput("目标分类与源分类类型不一致（须同为 ${source.type.value}）")
         }
         if (categoryRepository.countTransactionsByCategory(categoryId) == 0) {
-            throw IllegalArgumentException("该分类无关联交易，请直接删除（DeleteCategoryUseCase）")
+            throw InvalidInput("该分类无关联交易，请直接删除（DeleteCategoryUseCase）")
         }
 
         // 单调用；事务已在 Repository 闭合（TASK-009），本类不承载事务细节（DEC-001）。
