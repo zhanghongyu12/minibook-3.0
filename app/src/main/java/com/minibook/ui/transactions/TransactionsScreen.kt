@@ -79,6 +79,10 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                         .fillMaxSize()
                         .padding(16.dp),
                 )
+                is TransactionsUiState.Error -> ErrorTransactions(
+                    message = state.message,
+                    onRetry = viewModel::refresh,
+                )
                 is TransactionsUiState.Empty -> EmptyTransactions(
                     hasActiveFilter = state.hasActiveFilter,
                     onClearFilter = { viewModel.setFilter(null) },
@@ -172,6 +176,28 @@ private fun EmptyTransactions(
             modifier = modifier.fillMaxSize(),
         )
     }
+}
+
+/**
+ * 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 「重试」按钮。
+ *
+ * @param message 错误文案（VM 已折叠）。
+ * @param onRetry 「重试」回调（[com.minibook.ui.transactions.TransactionsViewModel.refresh]）。
+ */
+@Composable
+private fun ErrorTransactions(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    EmptyState(
+        icon = EmptyReceiptIcon,
+        title = message,
+        subtitle = "加载失败，请重试",
+        actionLabel = "重试",
+        onAction = onRetry,
+        modifier = modifier.fillMaxSize(),
+    )
 }
 
 /**

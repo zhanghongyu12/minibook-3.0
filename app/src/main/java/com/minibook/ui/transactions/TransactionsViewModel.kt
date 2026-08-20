@@ -2,17 +2,21 @@ package com.minibook.ui.transactions
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -42,8 +46,14 @@ class TransactionsViewModel @Inject constructor(
     /** 对外只读的类型筛选态。 */
     val filterType: StateFlow<TransactionType?> = _filterType.asStateFlow()
 
-    /** 页面三态：[Loading] 流未首发射（骨架屏）；[Empty] 空列表；[Success] 非空扁平列表。 */
-    val uiState: StateFlow<TransactionsUiState> = _filterType
+    /** 手动刷新触发：递增使 `flatMapLatest` 重订阅观察流（冷流重连，供错误重试）。 */
+    private val refreshTick = MutableStateFlow(0)
+
+    /**
+     * 页面四态：[Loading] 流未首发射（骨架屏）；[Empty] 空列表；[Error] 观察流异常
+     * （账本未初始化 / 数据库异常，供 UI 展示重试）；[Success] 非空扁平列表。
+     */
+    val uiState: StateFlow<TransactionsUiState> = combine(_filterType, refreshTick) { type, _ -> type }
         .flatMapLatest { type ->
             observeTransactions.observe(TransactionFilter(type = type))
         }
@@ -54,6 +64,14 @@ class TransactionsViewModel @Inject constructor(
                 TransactionsUiState.Success(list)
             }
         }
+        .catch { e ->
+            if (e is CancellationException) throw e
+            emit(
+                TransactionsUiState.Error(
+                    if (e is LedgerNotFound) LEDGER_ERROR_MESSAGE else LOAD_ERROR_MESSAGE,
+                ),
+            )
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState.Loading)
 
     /**
@@ -63,6 +81,22 @@ class TransactionsViewModel @Inject constructor(
      */
     fun setFilter(type: TransactionType?) {
         _filterType.value = type
+    }
+
+    /**
+     * 手动刷新：重订阅交易观察流（`WhileSubscribed` 已保证回页自动刷新，
+     * 本方法供 UI 事件驱动的刷新 / 错误重试使用）。
+     */
+    fun refresh() {
+        refreshTick.value += 1
+    }
+
+    companion object {
+        /** 当前账本未初始化文案（对齐 HomeViewModel §8.5）。 */
+        const val LEDGER_ERROR_MESSAGE = "账本不存在或当前账本未初始化"
+
+        /** 未知异常兜底文案。 */
+        const val LOAD_ERROR_MESSAGE = "加载失败，请稍后重试"
     }
 }
 
@@ -78,6 +112,9 @@ sealed interface TransactionsUiState {
 
     /** 空列表：[hasActiveFilter]=true 提示清除筛选；false 提示暂无记录。 */
     data class Empty(val hasActiveFilter: Boolean) : TransactionsUiState
+
+    /** 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 重试。 */
+    data class Error(val message: String) : TransactionsUiState
 
     /** 非空扁平交易列表（组内 createdAt DESC 由 DAO 保证，分组在 UI 层完成）。 */
     data class Success(val transactions: List<Transaction>) : TransactionsUiState

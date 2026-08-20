@@ -80,10 +80,14 @@ fun RepaySheet(
         }
     }
 
-    // 保存成功 → 关闭弹层
+    // 保存成功 → 关闭弹层（统一先清 snackbar 再关闭，防止 Sheet 移出组合时残留「已保存」下次重放）
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val dismissAndClear: () -> Unit = {
+        viewModel.clearSnackbar()
+        currentOnDismiss()
+    }
     LaunchedEffect(viewModel) {
-        viewModel.saved.collect { currentOnDismiss() }
+        viewModel.saved.collect { dismissAndClear() }
     }
 
     // 标题随方向：收到还款（张三）/ 我还款（张三）
@@ -96,7 +100,7 @@ fun RepaySheet(
         SheetFormScaffold(
             title = title,
             onConfirm = { viewModel.save() },
-            onDismiss = onDismiss,
+            onDismiss = dismissAndClear,
             confirmEnabled = !isSaving,
             confirmLabel = "确认还款",
             modifier = Modifier.fillMaxWidth(),

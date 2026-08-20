@@ -2,6 +2,8 @@ package com.minibook.ui.categories
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.minibook.domain.common.InvalidInput
+import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
 import com.minibook.domain.usecase.category.CreateCategoryUseCase
@@ -11,6 +13,8 @@ import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.category.UpdateCategoryUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -18,6 +22,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -41,6 +47,7 @@ import kotlinx.coroutines.launch
  * **迁移判定**：不直接注入 Repository，改用 [DeleteCategoryUseCase] 异常信息判断
  * （「N 笔交易引用」→ [parseRefCount] 解析 N，TASK-026 决定）。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class CategoriesViewModel @Inject constructor(
     observeCategories: ObserveCategoriesUseCase,
@@ -54,9 +61,32 @@ class CategoriesViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    /** 全量分类流（UI 层按 `type` 分组 EXPENSE/INCOME，账本切换自动重订阅）。 */
-    val categories: StateFlow<List<Category>> = observeCategories.observe(null)
-        .onEach { _isLoading.value = false }
+    /** 观察流错误文案；null=正常。异常后 UI 展示 Error 态并提供重试。 */
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    /** 手动刷新触发：递增使 `flatMapLatest` 重订阅分类观察流（冷流重连，供错误重试）。 */
+    private val refreshTick = MutableStateFlow(0)
+
+    /**
+     * 全量分类流（UI 层按 `type` 分组 EXPENSE/INCOME，账本切换自动重订阅）。
+     *
+     * 观察流异常（账本未初始化 / 数据库异常）→ [error] 置文案、`isLoading` 置 false，
+     * 页面折叠为 Error 态；[retry] 通过递增 [refreshTick] 重订阅恢复。
+     */
+    val categories: StateFlow<List<Category>> = refreshTick
+        .flatMapLatest {
+            observeCategories.observe(null)
+                .onEach {
+                    _error.value = null
+                    _isLoading.value = false
+                }
+        }
+        .catch { e ->
+            if (e is CancellationException) throw e
+            _isLoading.value = false
+            _error.value = if (e is LedgerNotFound) LEDGER_ERROR_MESSAGE else LOAD_ERROR_MESSAGE
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 全局轻提示文案（删除/迁移/创建/保存结果）。 */
@@ -90,6 +120,15 @@ class CategoriesViewModel @Inject constructor(
     }
 
     /**
+     * 重试：清错误、回到加载态并重订阅分类观察流（错误态「重试」按钮回调）。
+     */
+    fun retry() {
+        _error.value = null
+        _isLoading.value = true
+        refreshTick.value += 1
+    }
+
+    /**
      * 删除自定义分类（内置由 UI 无入口，此处兜底拒绝）。
      *
      * 直接调 [DeleteCategoryUseCase]：0 引用成功路径直接删；关联交易>0 → UseCase 抛
@@ -107,7 +146,7 @@ class CategoriesViewModel @Inject constructor(
             try {
                 deleteCategoryUseCase(category.id)
                 _snackbar.value = "已删除分类「${category.name}」"
-            } catch (e: IllegalArgumentException) {
+            } catch (e: InvalidInput) {
                 val message = e.message.orEmpty()
                 if (message.contains("交易引用")) {
                     _migrationRequest.emit(
@@ -194,6 +233,14 @@ class CategoriesViewModel @Inject constructor(
     /** 从异常信息解析引用计数（「该分类已有 N 笔交易引用…」）；解析失败回退 0。 */
     private fun parseRefCount(message: String): Int =
         Regex("""(\d+)""").find(message)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+    companion object {
+        /** 当前账本未初始化文案（对齐 HomeViewModel §8.5）。 */
+        const val LEDGER_ERROR_MESSAGE = "账本不存在或当前账本未初始化"
+
+        /** 未知异常兜底文案。 */
+        const val LOAD_ERROR_MESSAGE = "加载失败，请稍后重试"
+    }
 }
 
 /**

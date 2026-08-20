@@ -95,7 +95,10 @@ fun HomeScreen(
         ) {
             when (val state = uiState) {
                 HomeUiState.Loading -> LoadingState(Modifier.fillMaxSize().padding(16.dp))
-                is HomeUiState.Error -> HomeErrorContent(state.message)
+                is HomeUiState.Error -> HomeErrorContent(
+                    message = state.message,
+                    onRetry = viewModel::refresh,
+                )
                 is HomeUiState.Empty -> HomeDashboardContent(
                     balance = 0L,
                     income = 0L,
@@ -253,13 +256,31 @@ private fun HomeDashboardContent(
     }
 }
 
-/** 错误态：一屏提示 + 引导账本管理（本期无跳转，仅文案；UI §2 P-02 Error）。 */
+/**
+ * 错误态：一屏提示 + 「重试」按钮（调 [HomeViewModel.refresh]）+ 引导账本管理。
+ *
+ * 账本未初始化场景（[HomeViewModel.LEDGER_ERROR_MESSAGE]）保留引导文案；其余异常仅展示
+ * 重试按钮（UI §2 P-02 Error）。
+ *
+ * @param message 错误文案。
+ * @param onRetry 「重试」回调（[HomeViewModel.refresh]）。
+ */
 @Composable
-private fun HomeErrorContent(message: String, modifier: Modifier = Modifier) {
+private fun HomeErrorContent(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     EmptyState(
         icon = HomeIcons.Info,
         title = message,
-        subtitle = "请前往账本管理初始化或切换账本",
+        subtitle = if (message == HomeViewModel.LEDGER_ERROR_MESSAGE) {
+            "请前往账本管理初始化或切换账本"
+        } else {
+            null
+        },
+        actionLabel = "重试",
+        onAction = onRetry,
         modifier = modifier.fillMaxSize(),
     )
 }

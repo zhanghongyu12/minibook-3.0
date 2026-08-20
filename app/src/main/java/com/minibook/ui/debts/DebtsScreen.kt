@@ -117,6 +117,10 @@ fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
                     )
                     EmptyDebts()
                 }
+                is DebtsUiState.Error -> ErrorDebts(
+                    message = state.message,
+                    onRetry = viewModel::refresh,
+                )
                 is DebtsUiState.Success -> {
                     NetBalanceHeader(
                         balanceFen = state.totalNet,
@@ -303,6 +307,28 @@ private fun EmptyDebts(modifier: Modifier = Modifier) {
         icon = EmptyWalletIcon,
         title = "暂无债务记录",
         subtitle = "点击右下角「＋」记一笔",
+        modifier = modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 「重试」按钮。
+ *
+ * @param message 错误文案（VM 已折叠）。
+ * @param onRetry 「重试」回调（[com.minibook.ui.debts.DebtsViewModel.refresh]）。
+ */
+@Composable
+private fun ErrorDebts(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    EmptyState(
+        icon = EmptyWalletIcon,
+        title = message,
+        subtitle = "加载失败，请重试",
+        actionLabel = "重试",
+        onAction = onRetry,
         modifier = modifier.fillMaxSize(),
     )
 }

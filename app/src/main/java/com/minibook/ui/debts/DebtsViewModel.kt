@@ -9,11 +9,13 @@ import com.minibook.domain.usecase.debt.NetByPartyUseCase
 import com.minibook.domain.usecase.debt.ObserveDebtsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -51,7 +53,10 @@ class DebtsViewModel @Inject constructor(
     /** 显式刷新触发：递增使 `flatMapLatest` 重订阅观察流（冷流重连）。 */
     private val refreshTick = MutableStateFlow(0)
 
-    /** 页面三态：[Loading] 流未首发射（骨架屏）；[Empty] 无任何债务；[Success] 明细+按对象净额+净额合计。 */
+    /**
+     * 页面四态：[Loading] 流未首发射（骨架屏）；[Empty] 无任何债务；[Error] 观察流异常
+     * （账本未初始化 / 数据库异常，供 UI 展示重试）；[Success] 明细+按对象净额+净额合计。
+     */
     val uiState: StateFlow<DebtsUiState> = refreshTick
         .flatMapLatest {
             observeDebts.observe(DebtFilter())
@@ -64,6 +69,14 @@ class DebtsViewModel @Inject constructor(
             } else {
                 DebtsUiState.Success(details, byParty, totalNet)
             }
+        }
+        .catch { e ->
+            if (e is CancellationException) throw e
+            emit(
+                DebtsUiState.Error(
+                    if (e is LedgerNotFound) LEDGER_ERROR_MESSAGE else LOAD_ERROR_MESSAGE,
+                ),
+            )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DebtsUiState.Loading)
 
@@ -97,6 +110,14 @@ class DebtsViewModel @Inject constructor(
         } catch (e: LedgerNotFound) {
             emptyMap()
         }
+
+    companion object {
+        /** 当前账本未初始化文案（对齐 HomeViewModel §8.5）。 */
+        const val LEDGER_ERROR_MESSAGE = "账本不存在或当前账本未初始化"
+
+        /** 未知异常兜底文案。 */
+        const val LOAD_ERROR_MESSAGE = "加载失败，请稍后重试"
+    }
 }
 
 /**
@@ -113,6 +134,9 @@ sealed interface DebtsUiState {
 
     /** 无任何债务记录（明细与按对象均为空）：展示 [com.minibook.ui.components.EmptyState]。 */
     data object Empty : DebtsUiState
+
+    /** 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 重试。 */
+    data class Error(val message: String) : DebtsUiState
 
     /** 非空债务数据：明细 + 按对象净额 + 净额合计。 */
     data class Success(

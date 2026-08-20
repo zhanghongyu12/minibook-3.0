@@ -90,10 +90,14 @@ fun TransactionSheet(
         }
     }
 
-    // 保存成功 → 关闭弹层
+    // 保存成功 → 关闭弹层（统一先清 snackbar 再关闭，防止 Sheet 移出组合时残留「已保存」下次重放）
     val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val dismissAndClear: () -> Unit = {
+        viewModel.clearSnackbar()
+        currentOnDismiss()
+    }
     LaunchedEffect(viewModel) {
-        viewModel.saved.collect { currentOnDismiss() }
+        viewModel.saved.collect { dismissAndClear() }
     }
 
     // 当前所选分类展示用（分类随 type 重订阅后即可命中）
@@ -105,7 +109,7 @@ fun TransactionSheet(
         SheetFormScaffold(
             title = if (isEditMode) "编辑记一笔" else "记一笔",
             onConfirm = { viewModel.save() },
-            onDismiss = onDismiss,
+            onDismiss = dismissAndClear,
             confirmEnabled = !isSaving,
             modifier = Modifier.fillMaxWidth(),
         ) {

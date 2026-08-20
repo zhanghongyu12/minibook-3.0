@@ -64,6 +64,7 @@ import com.minibook.ui.components.PrimaryFAB
 fun CategoriesScreen(viewModel: CategoriesViewModel = hiltViewModel()) {
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.error.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbar.collectAsStateWithLifecycle()
     val serverError by viewModel.createUpdateError.collectAsStateWithLifecycle()
     val saving by viewModel.isSaving.collectAsStateWithLifecycle()
@@ -121,6 +122,10 @@ fun CategoriesScreen(viewModel: CategoriesViewModel = hiltViewModel()) {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(16.dp),
+                )
+                errorMessage != null -> ErrorCategories(
+                    message = errorMessage.orEmpty(),
+                    onRetry = viewModel::retry,
                 )
                 categories.isEmpty() -> EmptyCategories()
                 else -> CategoryGrid(
@@ -299,6 +304,28 @@ private fun EmptyCategories(modifier: Modifier = Modifier) {
         icon = EmptyCategoryIcon,
         title = "暂无分类",
         subtitle = "点击右下角「＋」新建分类",
+        modifier = modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 「重试」按钮。
+ *
+ * @param message 错误文案（VM 已折叠）。
+ * @param onRetry 「重试」回调（[com.minibook.ui.categories.CategoriesViewModel.retry]）。
+ */
+@Composable
+private fun ErrorCategories(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    EmptyState(
+        icon = EmptyCategoryIcon,
+        title = message,
+        subtitle = "加载失败，请重试",
+        actionLabel = "重试",
+        onAction = onRetry,
         modifier = modifier.fillMaxSize(),
     )
 }

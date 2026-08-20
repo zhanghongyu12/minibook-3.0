@@ -1,8 +1,12 @@
 package com.minibook.ui.lock
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -80,18 +84,23 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
             }
         }
 
-        // 失败/取消提示：停留锁屏可重试（生物识别按钮仍可点按）。
+        // 失败/取消提示：停留锁屏可重试（生物识别按钮仍可点按；锁关闭路径亦补「重试」恢复）。
         unlockError?.let { message ->
-            Box(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 24.dp, vertical = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     text = message,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = { activity?.let(viewModel::unlock) }) {
+                    Text("重试")
+                }
             }
         }
     }
