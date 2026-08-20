@@ -6,13 +6,17 @@ import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.datastore.SettingsDataStore
 import com.minibook.data.local.security.AppLockController
 import com.minibook.data.local.security.BiometricHelper
+import com.minibook.domain.usecase.ledger.BootstrapUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 解锁门 ViewModel（TASK-022，ARCHITECTURE §7.4/§9、DEC-002/DEC-003）。
@@ -39,6 +43,7 @@ class LockViewModel @Inject constructor(
     private val appLockController: AppLockController,
     settingsDataStore: SettingsDataStore,
     private val biometricHelper: BiometricHelper,
+    private val bootstrapUseCase: BootstrapUseCase,
 ) : ViewModel() {
 
     /** 锁状态透传：true=已锁定（DB 关闭）；false=已解锁（DB 打开）。 */
@@ -76,7 +81,12 @@ class LockViewModel @Inject constructor(
         if (!appLockEnabled.value) {
             runCatching {
                 appLockController.unlock(useAuth = false, onResult = { success ->
-                    if (!success) _unlockError.value = "自动解锁失败，请重试"
+                    if (success) {
+                        // 解锁成功 → DB 已打开（onResult(true) 时序保证）→ 触发首启引导。
+                        bootstrapAfterUnlock()
+                    } else {
+                        _unlockError.value = "自动解锁失败，请重试"
+                    }
                 })
             }.onFailure {
                 _unlockError.value = "自动解锁失败，请重试"
@@ -94,11 +104,37 @@ class LockViewModel @Inject constructor(
                 useAuth = true,
                 activity = activity,
                 onResult = { success ->
-                    if (!success) _unlockError.value = "认证失败或已取消，请重试"
+                    if (success) {
+                        // 解锁成功 → DB 已打开（onResult(true) 时序保证）→ 触发首启引导。
+                        bootstrapAfterUnlock()
+                    } else {
+                        _unlockError.value = "认证失败或已取消，请重试"
+                    }
                 },
             )
         }.onFailure {
             _unlockError.value = "解锁失败，请重试"
+        }
+    }
+
+    /**
+     * 解锁成功（[AppLockController.unlock] `onResult(true)`，DB 已打开）后触发首启引导
+     * （TASK-011 [BootstrapUseCase]）：插入默认账本 + 克隆 18 内置分类 + 写当前账本 id。
+     *
+     * **时序保证**：`onResult(true)` 仅在 [AppLockController.unlock] 开库成功（
+     * [com.minibook.data.local.security.DatabaseGate] 已打开）之后回调，故本处协程内调用
+     * 写库安全。BootstrapUseCase 幂等（默认账本已存在则直接返回），重复调用/多路径触发无副作用。
+     *
+     * **防取消**：解锁成功触发 `isLocked` 翻转 → NavHost `key(isLocked)` 重建、Lock 路由销毁
+     * （本 ViewModel 随之清理、viewModelScope 取消）。首启引导事务须在 DB 打开后完整跑完，
+     * 否则首页仍报「账本不存在」（TASK-011 验收点），故以 [NonCancellable] 隔离取消；
+     * [runCatching] 兜底失败不崩溃（幂等，下次解锁/启动重试）。
+     */
+    private fun bootstrapAfterUnlock() {
+        viewModelScope.launch {
+            withContext(NonCancellable) {
+                runCatching { bootstrapUseCase() }
+            }
         }
     }
 }

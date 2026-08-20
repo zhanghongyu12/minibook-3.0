@@ -23,10 +23,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Ledger
 import com.minibook.ui.components.SheetFormScaffold
 
@@ -35,6 +37,10 @@ import com.minibook.ui.components.SheetFormScaffold
  *
  * 编辑态（[ledger] 非空）回填 name/icon/color；新建态（[ledger] 为 null）为空表单。
  * 三个字段 **均必填**（名称 / 图标 emoji / 颜色 `#RRGGBB`），任一为空时确认按钮置灰。
+ *
+ * 图标字段为 **emoji 选择器**：预设账本常用 emoji（[EmojiPresetRow] 横向点选，选中高亮）
+ * + 自定义输入框兜底（手输其他 emoji），与颜色字段「预设色行 + 手输兜底」同交互口径。
+ * 项目未引入 material-icons（禁改依赖），全项目图标方案为 ImageVector 手绘 + emoji 字符。
  *
  * 确认回调 [onConfirm] 只回传三个可编辑字段，由调用方路由到 VM create/update
  * （新建走 [CreateLedgerUseCase]，编辑走 [LedgerRepository.update]，TASK-029 决定）。
@@ -73,10 +79,14 @@ fun LedgerEditorSheet(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
+        Text("图标", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        EmojiPresetRow(selected = icon, onSelect = { icon = it })
+        Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = icon,
             onValueChange = { icon = it.take(4) },
-            label = { Text("图标（Emoji）") },
+            label = { Text("自定义图标（Emoji）") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -92,6 +102,62 @@ fun LedgerEditorSheet(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * 预设账本图标 emoji 快捷选择行：可横向滚动的 emoji 圆格，点击即选；当前选中项以主题
+ * primary 描边 + `primaryContainer` 底色高亮（与 [ColorPresetRow] 同交互口径）。
+ *
+ * 项目未引入 material-icons（禁改依赖），全项目图标方案为 ImageVector 手绘 + emoji 字符
+ * （TASK-020 偏差同口径）；账本图标以 emoji 表达，预设覆盖账本常用图标，另有表单内
+ * 「自定义图标（Emoji）」输入框兜底（手输其他 emoji）。
+ *
+ * @param selected 当前选中 emoji（空串表示未选）。
+ * @param onSelect 选中回调。
+ */
+@Composable
+private fun EmojiPresetRow(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val presets = listOf(
+        "📒", "📓", "📔", "📕", "📗", "📘", "📙", "📚",
+        "💼", "💰", "🏦", "💳", "📊", "🛒", "🏠", "🚗",
+    )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        presets.forEach { emoji ->
+            val isSelected = selected == emoji
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    )
+                    .then(
+                        if (isSelected) {
+                            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        } else {
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        },
+                    )
+                    .clickable { onSelect(emoji) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(emoji, fontSize = 22.sp)
+            }
+        }
     }
 }
 
