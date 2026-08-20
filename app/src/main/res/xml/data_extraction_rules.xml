@@ -8,17 +8,13 @@
     <cloud-backup>
         <!-- SQLCipher 加密库文件（databases/ 域全量排除，整库加密且密钥在本机） -->
         <exclude domain="database" path="." />
-        <!-- master key blob：noBackupFilesDir/minibook_key.bin（DEC-002 密钥 blob，必不随备份外泄） -->
-        <exclude domain="no_backup" path="minibook_key.bin" />
-        <!-- noBackupFilesDir 全量排除（no_backup 域本就不参与系统备份，显式双保险） -->
-        <exclude domain="no_backup" path="." />
-        <!-- 应用私有 file 域全量排除（DEC-006 禁止系统备份） -->
+        <!-- 应用私有 file 域全量排除（DEC-006 禁止系统备份）。
+             master key blob 位于 noBackupFilesDir（no_backup 域），该域本就不参与
+             系统备份，无需也无法在 backup rules 里显式排除（no_backup 非合法 domain 值）。 -->
         <exclude domain="file" path="." />
     </cloud-backup>
     <full-backup-content>
         <exclude domain="database" path="." />
-        <exclude domain="no_backup" path="minibook_key.bin" />
-        <exclude domain="no_backup" path="." />
         <exclude domain="file" path="." />
     </full-backup-content>
 </data-extraction-rules>
