@@ -16,9 +16,9 @@
 ## 项目状态区块
 
 - 运行模式：**编排模式**
-- 当前阶段：**阶段 5 已完成 / 阶段 6 待开始**
-- 当前任务：阶段 6 编码（Developer）
-- 下一步行动：Developer 执行阶段 6（编码，TASK-001 起按依赖链推进）→ Tester 阶段 7（测试）
+- 当前阶段：**阶段 9 已完成（v1.0.0 MVP 发布）**
+- 当前任务：全部完成
+- 下一步行动：v1.0.0 已交付（release APK + 发布说明 docs/RELEASE_NOTES.md）；待用户决策 release 正式签名 keystore；Phase 2/3 功能与历史 debt 非阻塞待办
 - 阻塞项：无
 
 ---
@@ -29,6 +29,7 @@
 - 2026-08-18：协调者复盘越界行为（直接改 ARCHITECTURE.md 正文、欲直接写业务代码）并纠正；8 项架构决策已闭环，决策记录见 07_decisions.md。
 - 2026-08-18（Architect 接管后收口）：ARCHITECTURE.md 复核并由 Architect 正式接管（§2 版本口径对齐 DEC-001 既定栈）；DATABASE.md 状态由「草稿」转「已确认」并修正 §8.3 待定措辞（D-6 最终口径）；新建 `docs/API.md`（= 04_api，已确认）展开全部 DataSource 契约、RemoteDataSource 出口与 JSON version 1 结构；决策记录落盘 `docs/07_decisions.md`（DEC-001~DEC-009）；阶段 3 收口完成。
 - 2026-08-18（Architect 阶段 5）：完成 Designer 三项契约外假设 A-1/A-2/A-3 双向确认（全部确认、无契约推翻、未新增决策）；A-2 的 `DebtFilter{ kind?, direction? }` 契约补充直接落 API.md §4；UI.md 状态由「草稿」转「已确认」（§6.3 标注确认结论）；任务清单填充 **TASK-001~TASK-030**（构建骨架 2 / 数据层 4 / 领域契约层 4 / 业务层 8 / UI 层 12），版本锁定写入 TASK-001（与 DEC-001 既定栈完全一致）。
+- 2026-08-20（阶段 6~9 收尾）：阶段 6 编码（TASK-001~030 + UI 接线 + 连接债务收尾）全部完成；阶段 7 测试落地（4 JVM 单测全绿 + 3 instrumented 骨架）；阶段 8 评审（3 层并行 Reviewer）发现并修复 2 个严重安全 bug（DEC-002 双钥系统：缺失关→开重包裹路径 + 首启 master key 生成未接线 + unlock 兜底）+ 9 个高价值警告项（错误分类/Update 校验/Bootstrap 事务/数据源原子/圈账本/三页 Error 态/重试/snackbar 重放）；阶段 9 发布——修复 release lintVital 拦截（data_extraction_rules.xml 非法 domain）、assembleRelease 成功产出 `app-release-unsigned.apk`、发布说明落盘 `docs/RELEASE_NOTES.md`。v1.0.0 MVP 交付，全部提交推送 GitHub。
 
 ---
 
