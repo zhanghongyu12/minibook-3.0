@@ -9,6 +9,7 @@ import com.minibook.data.local.db.dao.LedgerDao
 import com.minibook.data.local.db.dao.SyncChangeDao
 import com.minibook.data.local.db.dao.TransactionDao
 import com.minibook.data.local.security.DatabaseGate
+import com.minibook.data.local.security.DatabaseProvider
 import com.minibook.data.local.security.KeyManager
 import dagger.Module
 import dagger.Provides
@@ -43,6 +44,19 @@ object DatabaseModule {
         @ApplicationContext context: Context,
         keyManager: KeyManager,
     ): DatabaseGate = DatabaseGate(context, keyManager)
+
+    /**
+     * 解密门以 [DatabaseProvider] 接口对外暴露（可测性改造，TASK-009/015）。
+     *
+     * 本模块为 Kotlin `object`（仅承载 @Provides，无法放置 abstract @Binds），故以
+     * @Provides 直接返回与 [provideDatabaseGate] 同一 @Singleton [DatabaseGate] 实例的
+     * 接口视图。DatabaseGate 仍是唯一单例、open/close/锁状态/SQLCipher/KeyManager
+     * 语义完全不变，仅多一个接口绑定供 [com.minibook.data.local.datasource.RoomTransactionRunner]
+     * 与 [com.minibook.data.local.datasource.RoomDataSourceImpl] 构造注入。
+     */
+    @Provides
+    @Singleton
+    fun provideDatabaseProvider(gate: DatabaseGate): DatabaseProvider = gate
 
     @Provides
     fun provideTransactionDao(gate: DatabaseGate): TransactionDao =

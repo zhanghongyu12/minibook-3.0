@@ -27,7 +27,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 class DatabaseGate(
     private val context: Context,
     private val keyManager: KeyManager,
-) {
+) : DatabaseProvider {
     private val lock = Any()
     private val databaseRef = AtomicReference<MiniBookDatabase?>(null)
 
@@ -36,7 +36,7 @@ class DatabaseGate(
         get() = databaseRef.get()?.isOpen == true
 
     /** 当前打开的 [MiniBookDatabase]；未解锁（未 open）时为 null，调用方不得强解包。 */
-    val database: MiniBookDatabase?
+    override val database: MiniBookDatabase?
         get() = databaseRef.get()
 
     /**

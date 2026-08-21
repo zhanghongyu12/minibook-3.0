@@ -15,7 +15,7 @@ import com.minibook.data.local.db.dao.SyncChangeDao
 import com.minibook.data.local.db.dao.TransactionDao
 import com.minibook.data.local.db.entity.BudgetEntity
 import com.minibook.data.local.db.entity.TransactionEntity
-import com.minibook.data.local.security.DatabaseGate
+import com.minibook.data.local.security.DatabaseProvider
 import com.minibook.data.mapper.BudgetMapper
 import com.minibook.data.mapper.CategoryMapper
 import com.minibook.data.mapper.DebtMapper
@@ -48,7 +48,7 @@ import kotlinx.coroutines.flow.map
  * 由独立 [LedgerDataSourceAdapter] 实现，经 `DataSourceModule` 的 `@Binds` 装配。
  *
  * 锁周期安全（ARCHITECTURE §7.5 / DatabaseModule 注释）：本实现**不缓存 DAO 引用**，
- * 构造注入 [DatabaseGate]，每方法经 `gate.database?.xxxDao()` 取「当前已打开数据库」的 DAO；
+ * 构造注入 [DatabaseProvider]，每方法经 `gate.database?.xxxDao()` 取「当前已打开数据库」的 DAO；
  * 未解锁时 `gate.database` 为 null → 统一 `error(...)` 硬失败。重锁→再解锁后
  * 自动取到新建 DB 的 DAO，绝不持有已关闭实例。
  *
@@ -76,7 +76,7 @@ import kotlinx.coroutines.flow.map
  */
 @Singleton
 class RoomDataSourceImpl @Inject constructor(
-    private val gate: DatabaseGate,
+    private val gate: DatabaseProvider,
     private val transactionRunner: TransactionRunner,
 ) : RoomDataSource,
     TransactionDataSource,
@@ -324,7 +324,7 @@ class RoomDataSourceImpl @Inject constructor(
         )
     }
 
-    /** 从 [DatabaseGate.database] 取当前已打开库的 [TransactionDao]；未解锁即硬失败。 */
+    /** 从 [DatabaseProvider.database] 取当前已打开库的 [TransactionDao]；未解锁即硬失败。 */
     private fun transactionDao(): TransactionDao = gate.database?.transactionDao()
         ?: error("DatabaseGate 未解锁/未打开，无法提供 TransactionDao")
 
