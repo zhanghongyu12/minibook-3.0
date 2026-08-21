@@ -25,7 +25,7 @@
 - 运行模式：**编排模式**
 - 当前阶段：**阶段 9 已完成（v1.0.0 MVP 发布）**
 - 当前任务：全部完成
-- 下一步行动：v1.0.0 已交付（release APK + 发布说明 docs/RELEASE_NOTES.md）；待用户决策 release 正式签名 keystore；Phase 2/3 功能与历史 debt 非阻塞待办
+- 下一步行动：v1.0.0 收尾补漏已闭环（首页分类联表 + 可测性改造 + 事务原子性测试补全，见协调日志 2026-08-21）；剩余待办——① 用户决策 release 签名 keystore；② instrumented 用例待真机/模拟器执行（3+3 已就绪）；③ transactions 页同类分类联表 TODO（本次发现的额外缺口，未纳入）；④ Phase 2 搜索/报表/预算与 Phase 3 云端同步为非阻塞规划项
 - 阻塞项：无
 
 ---
@@ -37,6 +37,7 @@
 - 2026-08-18（Architect 接管后收口）：ARCHITECTURE.md 复核并由 Architect 正式接管（§2 版本口径对齐 DEC-001 既定栈）；DATABASE.md 状态由「草稿」转「已确认」并修正 §8.3 待定措辞（D-6 最终口径）；新建 `docs/API.md`（= 04_api，已确认）展开全部 DataSource 契约、RemoteDataSource 出口与 JSON version 1 结构；决策记录落盘 `docs/07_decisions.md`（DEC-001~DEC-009）；阶段 3 收口完成。
 - 2026-08-18（Architect 阶段 5）：完成 Designer 三项契约外假设 A-1/A-2/A-3 双向确认（全部确认、无契约推翻、未新增决策）；A-2 的 `DebtFilter{ kind?, direction? }` 契约补充直接落 API.md §4；UI.md 状态由「草稿」转「已确认」（§6.3 标注确认结论）；任务清单填充 **TASK-001~TASK-030**（构建骨架 2 / 数据层 4 / 领域契约层 4 / 业务层 8 / UI 层 12），版本锁定写入 TASK-001（与 DEC-001 既定栈完全一致）。
 - 2026-08-20（阶段 6~9 收尾）：阶段 6 编码（TASK-001~030 + UI 接线 + 连接债务收尾）全部完成；阶段 7 测试落地（4 JVM 单测全绿 + 3 instrumented 骨架）；阶段 8 评审（3 层并行 Reviewer）发现并修复 2 个严重安全 bug（DEC-002 双钥系统：缺失关→开重包裹路径 + 首启 master key 生成未接线 + unlock 兜底）+ 9 个高价值警告项（错误分类/Update 校验/Bootstrap 事务/数据源原子/圈账本/三页 Error 态/重试/snackbar 重放）；阶段 9 发布——修复 release lintVital 拦截（data_extraction_rules.xml 非法 domain）、assembleRelease 成功产出 `app-release-unsigned.apk`、发布说明落盘 `docs/RELEASE_NOTES.md`。v1.0.0 MVP 交付，全部提交推送 GitHub。
+- 2026-08-21（v1.0.0 收尾补漏，编排者调度）：① 修复首页最近交易分类联表 TODO——HomeViewModel 注入 ObserveCategoriesUseCase、HomeUiState.Success 携带 categoriesById、HomeScreen 传真实分类名/图标/色（替代 null 占位 ❔），commit 0c041a3；② 可测性改造——DatabaseGate 提炼 DatabaseProvider 接口（加密语义零改动），RoomTransactionRunner/RoomDataSourceImpl 依赖接口化，commit 3f042b6；③ Tester 补全 TransactionRunnerAtomicityTest 三个空骨架用例为真实断言（内存库 + DatabaseProvider 替身：deleteById 三表分发 / runInTransaction 回滚 / deleteByLedger 四表批删），commit ab7214c；④ 构建验证全绿（compileDebugKotlin + testDebugUnitTest 56 例 + compileDebugAndroidTestKotlin）；⑤ 任务清单 TASK-001~030 状态统一翻转为「已完成」。instrumented 用例仍待设备执行（标注待人工，见 09_test_report.md / 10_release_notes.md）。
 
 ---
 
@@ -62,7 +63,7 @@
 
 ### TASK-001: 工程骨架与版本锁定（Gradle 初始化）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：构建骨架
@@ -123,7 +124,7 @@
 
 ### TASK-002: Room 实体与 TypeConverter（6 表）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：数据层
@@ -154,7 +155,7 @@
 
 ### TASK-003: Room DAO 与 Database（6 DAO + schema 导出）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：数据层
@@ -192,7 +193,7 @@
 
 ### TASK-004: SQLCipher 加密与密钥管理（security 层）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：数据层（安全）
@@ -227,7 +228,7 @@
 
 ### TASK-005: DataStore 存储（Settings / Ledger）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：数据层
@@ -253,7 +254,7 @@
 
 ### TASK-006: Domain 模型（纯 Kotlin）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：领域/契约层
@@ -281,7 +282,7 @@
 
 ### TASK-007: DataSource 抽象接口（6 + Remote 占位）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：领域/契约层
@@ -310,7 +311,7 @@
 
 ### TASK-008: 数据映射与 RoomDataSource 实现（+ DataSourceModule）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：数据层
@@ -337,7 +338,7 @@
 
 ### TASK-009: Repository 接口与实现
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：领域/契约层
@@ -366,7 +367,7 @@
 
 ### TASK-010: util 工具门面（MoneyFormatter / TimeFormatter / Validators / JsonMappers 骨架）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层（工具）
@@ -394,7 +395,7 @@
 
 ### TASK-011: BootstrapUseCase 与内置分类种子
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -422,7 +423,7 @@
 
 ### TASK-012: 账本业务 UseCase
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -452,7 +453,7 @@
 
 ### TASK-013: 交易业务 UseCase
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -484,7 +485,7 @@
 
 ### TASK-014: 债务业务 UseCase
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -515,7 +516,7 @@
 
 ### TASK-015: 分类业务 + 删除迁移 UseCase（A-1 采纳）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -545,7 +546,7 @@
 
 ### TASK-016: 导入导出 UseCase（version 1 JSON / legacy / 事务原子）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层
@@ -579,7 +580,7 @@
 
 ### TASK-017: 应用锁控制器与冷启动分诊
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：业务层（安全联动）
@@ -610,7 +611,7 @@
 
 ### TASK-018: Hilt 装配收口与 Application/MainActivity 壳
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：构建骨架（汇聚点）
@@ -637,7 +638,7 @@
 
 ### TASK-019: 主题与设计系统（theme）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -666,7 +667,7 @@
 
 ### TASK-020: 通用组件库（components）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -690,7 +691,7 @@
 
 ### TASK-021: 导航壳与主页面框架
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -719,7 +720,7 @@
 
 ### TASK-022: 解锁门页（P-01）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P0
 - 负责角色：Developer
 - 所属层：UI 层
@@ -744,7 +745,7 @@
 
 ### TASK-023: 首页仪表板（P-02）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -768,7 +769,7 @@
 
 ### TASK-024: 收支记录页（P-03）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -793,7 +794,7 @@
 
 ### TASK-025: 债务管理页（P-04）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -820,7 +821,7 @@
 
 ### TASK-026: 分类管理页 + 迁移流程接线（P-05）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -847,7 +848,7 @@
 
 ### TASK-027: 设置页（P-06）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -877,7 +878,7 @@
 
 ### TASK-028: 表单 Sheets（P-07 / P-08 / P-09 / P-10）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -907,7 +908,7 @@
 
 ### TASK-029: 账本管理页（P-11）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P1
 - 负责角色：Developer
 - 所属层：UI 层
@@ -934,7 +935,7 @@
 
 ### TASK-030: Phase 2 占位页（P-12~P-14）
 
-- 状态：待办
+- 状态：已完成
 - 优先级：P3
 - 负责角色：Developer
 - 所属层：UI 层
