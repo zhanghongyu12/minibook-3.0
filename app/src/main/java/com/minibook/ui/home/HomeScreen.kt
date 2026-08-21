@@ -32,6 +32,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.minibook.domain.model.Category
+import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.EmptyState
@@ -56,9 +58,9 @@ import com.minibook.ui.theme.lightSemanticColors
  *   （[NetBalanceCard]「本月结余」+ 收入/支出明细行）+ 最近交易列表（[TransactionListItem]，
  *   前 10 条 UI 截断，A-3）+「查看全部」入口。
  *
- * **分类联表 TODO**：首页只有 [Transaction]（无分类名/图标/色），本期简化传 null 分类信息，
- * 由 [TransactionListItem] fallback 占位（❔）；后续经 `ObserveCategoriesUseCase` 联表
- * id→[Category] 映射优化（KDoc 留痕）。
+ * **分类联表**：交易无分类名/图标/色，由 [HomeViewModel] 经 `ObserveCategoriesUseCase` 联表
+ * （id→[Category]）折叠为 [HomeUiState.Success.categoriesById]；[HomeScreen] 据此给
+ * [TransactionListItem] 传真实 `categoryName/categoryIcon/categoryColor`（缺失时组件 fallback ❔）。
  *
  * **导航已接线**：FAB / 空态「记一笔」/ 最近交易行点击 → 页内弹 [TransactionSheet]（P-07，
  * 新增/编辑态，由页内状态驱动不走 NavHost route）；LedgerSelector → 账本管理（P-11）；
@@ -104,6 +106,7 @@ fun HomeScreen(
                     income = 0L,
                     expense = 0L,
                     transactions = emptyList(),
+                    categoriesById = emptyMap(),
                     onOpenNewTransaction = {
                         editingTx = null
                         showTransactionSheet = true
@@ -119,6 +122,7 @@ fun HomeScreen(
                     income = state.income,
                     expense = state.expense,
                     transactions = state.recentTransactions,
+                    categoriesById = state.categoriesById,
                     onOpenNewTransaction = {
                         editingTx = null
                         showTransactionSheet = true
@@ -182,6 +186,8 @@ private fun HomeTopBar(
  * @param income 本月收入（分）。
  * @param expense 本月支出（分）。
  * @param transactions 最近交易（调用方已截断前 10，A-3；此处再 take 兜底）。
+ * @param categoriesById 分类 id→[Category] 映射（[HomeViewModel] 联表产物），按 `tx.categoryId`
+ *   解析名称/图标/颜色；缺失分类时 [TransactionListItem] fallback（❔）。
  * @param onOpenNewTransaction FAB / 空态「记一笔」回调（弹 [TransactionSheet] 新增态）。
  * @param onOpenEditTransaction 最近交易行点击回调（弹 [TransactionSheet] 编辑态，传被点 tx）。
  * @param onNavigateToTransactions 「查看全部」回调（跳 transactions 页，P-03）。
@@ -192,6 +198,7 @@ private fun HomeDashboardContent(
     income: Long,
     expense: Long,
     transactions: List<Transaction>,
+    categoriesById: Map<String, Category>,
     onOpenNewTransaction: () -> Unit = {},
     onOpenEditTransaction: (Transaction) -> Unit = {},
     onNavigateToTransactions: () -> Unit = {},
@@ -244,11 +251,12 @@ private fun HomeDashboardContent(
                 items = transactions.take(HomeViewModel.MAX_RECENT_TRANSACTIONS),
                 key = { it.id },
             ) { tx ->
+                val category = categoriesById[tx.categoryId]
                 TransactionListItem(
                     tx = tx,
-                    categoryName = null,
-                    categoryIcon = null,
-                    categoryColor = null,
+                    categoryName = category?.name,
+                    categoryIcon = category?.icon,
+                    categoryColor = category?.color,
                     onClick = { onOpenEditTransaction(tx) },
                 )
             }
@@ -358,6 +366,32 @@ private fun HomeDashboardPreview() {
                         date = "2026-08-01",
                         createdAt = "2026-08-01T09:00:00Z",
                         updatedAt = "2026-08-01T09:00:00Z",
+                    ),
+                ),
+                categoriesById = mapOf(
+                    "c1" to Category(
+                        id = "c1",
+                        ledgerId = "l1",
+                        name = "餐饮",
+                        icon = "🍜",
+                        color = "#FF7043",
+                        type = CategoryType.EXPENSE,
+                        isBuiltIn = true,
+                        order = 1,
+                        createdAt = "2026-08-01T00:00:00Z",
+                        updatedAt = "2026-08-01T00:00:00Z",
+                    ),
+                    "c2" to Category(
+                        id = "c2",
+                        ledgerId = "l1",
+                        name = "工资",
+                        icon = "💰",
+                        color = "#66BB6A",
+                        type = CategoryType.INCOME,
+                        isBuiltIn = true,
+                        order = 2,
+                        createdAt = "2026-08-01T00:00:00Z",
+                        updatedAt = "2026-08-01T00:00:00Z",
                     ),
                 ),
             )

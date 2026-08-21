@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.datastore.LedgerDataStore
 import com.minibook.domain.common.LedgerNotFound
+import com.minibook.domain.model.Category
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.ledger.ObserveLedgersUseCase
 import com.minibook.domain.usecase.transaction.FetchMonthSummaryUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
@@ -41,24 +43,27 @@ sealed interface HomeUiState {
     /** 错误态：展示错误文案并引导账本管理（本期无跳转，仅文案）。 */
     data class Error(val message: String) : HomeUiState
 
-    /** 成功态：月度汇总 + 最近交易（前 10，A-3）。 */
+    /** 成功态：月度汇总 + 最近交易（前 10，A-3）+ 分类 id→[Category] 映射（联表展示用）。 */
     data class Success(
         val balance: Long,
         val income: Long,
         val expense: Long,
         val recentTransactions: List<Transaction>,
         val currentLedger: Ledger?,
+        val categoriesById: Map<String, Category>,
     ) : HomeUiState
 }
 
 /**
  * 首页仪表板 ViewModel（TASK-023，UI §2 P-02，ARCHITECTURE §8.2/§8.3）。
  *
- * 组合三条数据流（[ObserveTransactionsUseCase.observe] 交易流 + [ObserveLedgersUseCase.observe]
- * 账本流 + [LedgerDataStore.currentLedgerId] 当前账本 id + [refresh] 手动刷新触发器），再经
- * `flatMapLatest` 每次变化重算月度汇总 [FetchMonthSummaryUseCase]：
+ * 组合数据流（[ObserveTransactionsUseCase.observe] 交易流 + [ObserveLedgersUseCase.observe]
+ * 账本流 + [ObserveCategoriesUseCase.observe] 分类流 + [LedgerDataStore.currentLedgerId] 当前账本 id
+ * + [refresh] 手动刷新触发器），再经 `flatMapLatest` 每次变化重算月度汇总 [FetchMonthSummaryUseCase]：
  *
- * - **账本切换自动重订阅**：交易流 UseCase 已内置 `flatMapLatest`（§8.3），账本写后立即重订阅；
+ * - **分类联表**：分类流经 [ObserveCategoriesUseCase] 与交易流同账本同源（内置切换重订阅），
+ *   在 [HomeUiState.Success] 侧折叠为 `categoriesById`（id→[Category]）供 UI 联表展示。
+ * - **账本切换自动重订阅**：交易/分类流 UseCase 已内置 `flatMapLatest`（§8.3），账本写后立即重订阅；
  *   本 VM 的 `combine` 随 `currentLedgerId` 变化整体重算，月度汇总随账本同步刷新，不混账（§8.3）。
  * - **当前账本对象解析**：`observeLedgers()` 列表（按 position 升序）中「匹配 currentLedgerId」
  *   优先、否则 `isDefault=true` 兜底；两者皆无（首启 Bootstrap 前）→ [HomeUiState.Error]
@@ -69,6 +74,7 @@ sealed interface HomeUiState {
  * @param fetchMonthSummary 月度汇总（`balanceFen = incomeFen - expenseFen`）。
  * @param observeTransactions 当前账本交易流（filter=null 全部，时间倒序）。
  * @param observeLedgers 全部账本流（按 position 升序，含 isDefault）。
+ * @param observeCategories 当前账本分类流（filter=null 全部，用于 id→[Category] 联表）。
  * @param ledgerDataStore 当前账本 id DataStore（用于解析当前账本对象与空串兜底）。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -77,6 +83,7 @@ class HomeViewModel @Inject constructor(
     private val fetchMonthSummary: FetchMonthSummaryUseCase,
     private val observeTransactions: ObserveTransactionsUseCase,
     private val observeLedgers: ObserveLedgersUseCase,
+    private val observeCategories: ObserveCategoriesUseCase,
     private val ledgerDataStore: LedgerDataStore,
 ) : ViewModel() {
 
@@ -87,10 +94,11 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = combine(
         observeTransactions.observe(),
         observeLedgers.observe(),
+        observeCategories.observe(),
         ledgerDataStore.currentLedgerId,
         refreshTrigger,
-    ) { transactions, ledgers, currentLedgerId, _ ->
-        HomeSource(transactions, ledgers, currentLedgerId)
+    ) { transactions, ledgers, categories, currentLedgerId, _ ->
+        HomeSource(transactions, ledgers, categories, currentLedgerId)
     }.flatMapLatest { source ->
         flow {
             val currentLedger = resolveCurrentLedger(source.ledgers, source.currentLedgerId)
@@ -110,6 +118,7 @@ class HomeViewModel @Inject constructor(
                             expense = summary.expenseFen,
                             recentTransactions = source.transactions.take(MAX_RECENT_TRANSACTIONS),
                             currentLedger = currentLedger,
+                            categoriesById = source.categories.associateBy { it.id },
                         )
                     )
                 }
@@ -146,9 +155,10 @@ private fun resolveCurrentLedger(ledgers: List<Ledger>, currentLedgerId: String)
     ledgers.firstOrNull { it.id == currentLedgerId }
         ?: ledgers.firstOrNull { it.isDefault }
 
-/** [HomeViewModel] 组合源数据：交易列表 + 账本列表 + 当前账本 id。 */
+/** [HomeViewModel] 组合源数据：交易列表 + 账本列表 + 分类列表 + 当前账本 id。 */
 private data class HomeSource(
     val transactions: List<Transaction>,
     val ledgers: List<Ledger>,
+    val categories: List<Category>,
     val currentLedgerId: String,
 )
