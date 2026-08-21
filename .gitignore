@@ -1,24 +1,65 @@
-# Gradle 构建产物
-.gradle/
+# Dependencies
+node_modules/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Build output
+dist/
 build/
+*.egg-info/
+.next/
+.nuxt/
+out/
 
-# Android 本地配置
-/local.properties
+# Environment
+.env
+.env.local
+.env.*.local
 
-# IDE
+# Editor
+.vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/
+
+# Temp files
+*.tmp
+*.bak
+
+# ExpertDebate
+.session/
+
+# Android / Gradle
+.gradle/
+.kotlin/
+build/
+/local.properties
 *.iml
 captures/
-
-# 构建产物包
 *.apk
 *.aab
-
-# 其他
-.DS_Store
 *.keystore
 cxx/
 .externalNativeBuild/
-
-# Kotlin/KSP 构建缓存
-.kotlin/
+# 导入/导出临时数据（用户数据，不进版本库）
+export.txt
+debt_import.json
