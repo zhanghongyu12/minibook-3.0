@@ -3,8 +3,8 @@
 > 状态：**已确认**
 > 维护者：Architect
 > 最后更新：2026-08-18
-> 依据：`docs/PRD.md`（已确认，唯一需求事实来源）；`docs/ARCHITECTURE.md`（§6 数据源抽象出口设计、§10 导入导出设计）。
-> 配套：`docs/DATABASE.md`（实体字段/DAO 落地口径）、`docs/07_decisions.md`（DEC-001~DEC-009）。
+> 依据：`docs/01_prd.md`（已确认，唯一需求事实来源）；`docs/02_architecture.md`（§6 数据源抽象出口设计、§10 导入导出设计）。
+> 配套：`docs/03_database.md`（实体字段/DAO 落地口径）、`docs/07_decisions.md`（DEC-001~DEC-009）。
 
 ---
 
@@ -31,9 +31,9 @@
 原则：
 
 - **契约即 API**：Repository 只依赖下述 `*DataSource` 接口，不感知 Room/SQL/SQLCipher。
-- **云端留出口**：未来接云端只需新增 `RemoteDataSource` 实现，业务层与其余 DataSource 接口不变（D-8 / ARCHITECTURE §6.3）。
+- **云端留出口**：未来接云端只需新增 `RemoteDataSource` 实现，业务层与其余 DataSource 接口不变（D-8 / 02_architecture §6.3）。
 - **同步方法**：写/读单值用 `suspend`（Room suspend 自动切后台）；列表/汇总观察用 `Flow`（Room 冷流）。
-- **账本维度**：所有业务查询第一参数统一 `ledgerId`，违反即视为契约破坏（ARCHITECTURE §8.1）。
+- **账本维度**：所有业务查询第一参数统一 `ledgerId`，违反即视为契约破坏（02_architecture §8.1）。
 - **金额单位**：一律整数「分」`Long`，杜绝浮点。
 - **ID**：UUID v4 字符串，离线生成。
 - 本期不实现 `SyncChange` 写入与 `RemoteDataSource`（仅契约落盘，见 §8 §9 及各 DEC）。
@@ -116,7 +116,7 @@ interface DebtDataSource {
 
 | 方法 | 参数 | 返回 | 语义 |
 |------|------|------|------|
-| `insert` | `debt: Debt` | `String`（新 id） | 新增一条借/还；`kind×direction` 四态平级（DATABASE §4.2）。 |
+| `insert` | `debt: Debt` | `String`（新 id） | 新增一条借/还；`kind×direction` 四态平级（03_database §4.2）。 |
 | `update` | `debt: Debt` | `Unit` | 按 `id` 更新。 |
 | `deleteById` | `id: String` | `Unit` | 物理删除。 |
 | `observeByLedger` | `ledgerId, filter` | `Flow<List<Debt>>` | 明细视图，账本内按时间倒序。 |
@@ -131,7 +131,7 @@ data class DebtFilter(
 )
 ```
 
-- 字段语义与 `DATABASE §6.2 observeFiltered(ledgerId, kind?, direction?)` 完全对齐；可空=不过滤。
+- 字段语义与 `03_database §6.2 observeFiltered(ledgerId, kind?, direction?)` 完全对齐；可空=不过滤。
 - **MVP 仅展开 `kind` / `direction` 两个可空字段**，不上 `partyName` 模糊筛：MVP 按对象净额已由 `netByParty` 聚合支撑，明细视图无 partyName 过滤需要；`partyName` 模糊筛属 Phase 2 搜索（PRD F-06）范围，随该功能对同一 `DebtFilter` 扩展（与 `TransactionFilter` 的 Phase 2 扩展同理，见 §3）。
 
 **净额口径**（PRD F-02）：lend×owe_me=+，lend×i_owe=−，repay×owe_me=−，repay×i_owe=+。DB 端 `CASE WHEN` 一次聚合。
@@ -192,13 +192,13 @@ interface LedgerDataSource {
 
 | 方法 | 参数 | 返回 | 语义 |
 |------|------|------|------|
-| `insert` | `ledger: Ledger` | `String` | 新增账本；新账本创建流程在事务内联动克隆内置分类（ARCHITECTURE §8.4）。 |
+| `insert` | `ledger: Ledger` | `String` | 新增账本；新账本创建流程在事务内联动克隆内置分类（02_architecture §8.4）。 |
 | `update` | `ledger: Ledger` | `Ledger` | 更新后回读并返回最新值。 |
 | `getById` | `id: String` | `Ledger?` | 单账本。 |
 | `getDefault` | — | `Ledger?` | 取默认账本（`isDefault=1`），不存在返回 `null`（首启动引导）。 |
 | `observeAll` | — | `Flow<List<Ledger>>` | 全部账本，按 `position` 排序。 |
 
-> 「当前账本」由 `LedgerDataStore` 提供，不属本数据源；切换为纯状态变更（ARCHITECTURE §8.3）。
+> 「当前账本」由 `LedgerDataStore` 提供，不属本数据源；切换为纯状态变更（02_architecture §8.3）。
 
 ---
 
@@ -244,13 +244,13 @@ interface SyncChangeDataSource {
 | `pendingChanges(ledgerId)` | 取未同步变更（按 `timestamp` 升序），供云端推送。 |
 | `markSynced(ids)` | 推送成功后批量标记已同步。 |
 
-> 签名以 DATABASE §6.5 `SyncChangeDao` 为准（带 `ledgerId` 维度），比 ARCHITECTURE §6.1 初稿更精确。
+> 签名以 03_database §6.5 `SyncChangeDao` 为准（带 `ledgerId` 维度），比 02_architecture §6.1 初稿更精确。
 
 ---
 
 ## 9. RemoteDataSource（未来云端出口契约）
 
-仅接口、**本期空实现**（ARCHITECTURE §6.3）。未来对接 REST/GraphQL，业务层零改动。
+仅接口、**本期空实现**（02_architecture §6.3）。未来对接 REST/GraphQL，业务层零改动。
 
 ```kotlin
 interface RemoteDataSource {
@@ -270,9 +270,9 @@ interface RemoteDataSource {
 
 ## 10. 公共领域模型与通用约定
 
-领域模型为纯 Kotlin data class（`com.minibook.domain.model`），字段与 DATABASE 实体一致（见 DATABASE §4）。UI 只依赖领域模型，不依赖 Entity。
+领域模型为纯 Kotlin data class（`com.minibook.domain.model`），字段与 03_database 实体一致（见 03_database §4）。UI 只依赖领域模型，不依赖 Entity。
 
-| 类型 | 关键字段（与 DATABASE §4 一致） | 账本维度 |
+| 类型 | 关键字段（与 03_database §4 一致） | 账本维度 |
 |------|--------------------------------|:--------:|
 | `Transaction` | id, ledgerId, type, amount(分), categoryId, description?, date, createdAt, updatedAt, syncStatus | ✔ |
 | `Debt` | id, ledgerId, partyName, amount(分), kind, direction, date, remark?, createdAt, updatedAt, syncStatus | ✔ |
@@ -292,7 +292,7 @@ interface RemoteDataSource {
 
 ## 11. 导入导出 JSON 格式 version 1
 
-备份/迁移交换格式（PRD F-04，ARCHITECTURE §10）。**导出为明文 JSON**（D-4）。文件名 `minibook_backup_yyyyMMdd_HHmmss.json`。
+备份/迁移交换格式（PRD F-04，02_architecture §10）。**导出为明文 JSON**（D-4）。文件名 `minibook_backup_yyyyMMdd_HHmmss.json`。
 
 ### 11.1 顶层结构
 
@@ -396,7 +396,7 @@ interface RemoteDataSource {
 ### 11.3 导入校验与原子性
 
 - **严格校验**：`version` 仅支持 1；字段类型/必填校验失败 → 停止、报错、**零落库**。
-- **引用完整性**成对校验：`transaction.categoryId ∈ categories`；`*.ledgerId ∈ ledgers`；金额为正整分；UUID 合法（ARCHITECTURE §10.2）。
+- **引用完整性**成对校验：`transaction.categoryId ∈ categories`；`*.ledgerId ∈ ledgers`；金额为正整分；UUID 合法（02_architecture §10.2）。
 - **全量覆盖**单事务：`transaction { 清空 transactions/debts/categories/budgets → 保留/重建 ledgers → 逐行写入 }`，任一失败整体回滚（Room `withTransaction`）。
 - 导入期间 UI 锁数据入口，防并发改写快照冲突。
 

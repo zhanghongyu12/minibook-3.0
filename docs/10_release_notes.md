@@ -1,5 +1,9 @@
 # MiniBook Android — 发布说明
 
+> 状态：已确认
+> 最后更新：2026-08-20
+> 维护者：Coordinator
+
 ## v1.0.0（MVP 首版，2026-08-20）
 
 MiniBook Android 重构版首个正式版本。Kotlin + Jetpack Compose + Material 3 技术栈，

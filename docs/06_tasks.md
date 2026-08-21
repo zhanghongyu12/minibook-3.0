@@ -2,14 +2,21 @@
 
 > 项目：MiniBook Android 重构版（本地优先记账应用）
 > 维护者：全员可更新（项目状态区块由当前阶段负责角色更新）
+> 最后更新：2026-08-21
+> 状态：阶段 9 已完成（v1.0.0 MVP 发布）
 >
-> 文档编号映射（本仓库沿用原命名，与 AI-work-model 编号体系对应）：
-> - `01_prd` → `docs/PRD.md`
-> - `02_architecture` → `docs/ARCHITECTURE.md`
-> - `03_database` → `docs/DATABASE.md`
-> - `04_api` → `docs/API.md`（已确认）
-> - `05_ui` → `docs/UI.md`（阶段 5 双向确认后已转已确认）
-> - `07_decisions` → `docs/07_decisions.md`（已确认）
+> 文档编号映射（已对齐 AI-work-model 编号规范，document_rules §文档编号体系）：
+> - `docs/00_idea.md`（已归档，被 01_prd 取代）
+> - `docs/01_prd.md`（已确认）
+> - `docs/02_architecture.md`（已确认）
+> - `docs/03_database.md`（已确认）
+> - `docs/04_api.md`（已确认）
+> - `docs/05_ui.md`（阶段 5 双向确认后已转已确认）
+> - `docs/06_tasks.md`（本文件）
+> - `docs/07_decisions.md`（已确认）
+> - `docs/08_review.md` / `docs/09_test_report.md`（Stage 7/8 工作回填后已确认）
+> - `docs/10_release_notes.md`（v1.0.0 发布说明）
+> - `docs/CHANGELOG.md`（v1.0.0 变更已补）
 
 ---
 

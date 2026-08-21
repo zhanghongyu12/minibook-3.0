@@ -3,8 +3,8 @@
 > 状态：**已确认**
 > 维护者：Architect
 > 最后更新：2026-08-18
-> 依据：`docs/PRD.md`（已确认）；字段语义参考旧项目 `minibook/docs/DATA_MODEL.md`（技术栈已废弃，仅参考字段口径）。
-> 配套：`docs/ARCHITECTURE.md`（加密/导出/多账本如何落地见架构文档）。
+> 依据：`docs/01_prd.md`（已确认）；字段语义参考旧项目 `minibook/docs/DATA_MODEL.md`（技术栈已废弃，仅参考字段口径）。
+> 配套：`docs/02_architecture.md`（加密/导出/多账本如何落地见架构文档）。
 
 ---
 
@@ -48,7 +48,7 @@
 |------|-----|
 | 库名 | `minibook-encrypted.db` |
 | 当前版本 | **1** |
-| 加密 | SQLCipher（全库），密钥见 `ARCHITECTURE.md §7` |
+| 加密 | SQLCipher（全库），密钥见 `02_architecture.md §7` |
 | 表数量 | 6（ledgers / categories / transactions / debts / budgets / sync_changes） |
 | ORM | Room，`exportSchema = true`（schema JSON 入 VCS，用于迁移测试） |
 
@@ -295,7 +295,7 @@ data class LedgerEntity(
 )
 ```
 
-> - 默认账本在首次 DB 打开时引导创建（`ARCHITECTURE.md §8.4`）。
+> - 默认账本在首次 DB 打开时引导创建（`02_architecture.md §8.4`）。
 > - 默认账本禁止删除；删除非默认账本 = 连同其全部业务行删除（`withTransaction` 内按 `ledgerId` 批量删 4 表）。
 
 ---
@@ -336,7 +336,7 @@ data class BudgetEntity(
 )
 ```
 
-> **UNIQUE 语义补充（对应 `ARCHITECTURE.md` D-7）**：SQLite 中 `(ledgerId, month, NULL)` 的 NULL 彼此视为不同，月度总预算（categoryId=NULL）理论上可插多行。解决：Repository 层对「总预算」走「先删后插」保证业务唯一，并配代码注释；DB 不加触发器。分类预算天然被 UNIQUE 约束保护。
+> **UNIQUE 语义补充（对应 `02_architecture.md` D-7）**：SQLite 中 `(ledgerId, month, NULL)` 的 NULL 彼此视为不同，月度总预算（categoryId=NULL）理论上可插多行。解决：Repository 层对「总预算」走「先删后插」保证业务唯一，并配代码注释；DB 不加触发器。分类预算天然被 UNIQUE 约束保护。
 
 ---
 
@@ -605,7 +605,7 @@ SQLCipher 在版本升级时使用 `PRAGMA cipher_version` / `PRAGMA key` 在同
 
 ## 8. 内置分类种子数据
 
-首次打开每个账本时克隆内置集（`BootstrapUseCase` / 新账本创建流程，`ARCHITECTURE.md §8.4`）。`order` 为展示顺序，「其他」固定 99 恒末尾；`isBuiltIn=true`。
+首次打开每个账本时克隆内置集（`BootstrapUseCase` / 新账本创建流程，`02_architecture.md §8.4`）。`order` 为展示顺序，「其他」固定 99 恒末尾；`isBuiltIn=true`。
 
 ### 8.1 内置支出分类（12）
 
@@ -701,7 +701,7 @@ fun formatFen(fen: Long, withSymbol: Boolean = true): String {
 | `date`（发生日期） | `yyyy-MM-dd` | 本地日；字符串字典序=时间序 |
 | `createdAt/updatedAt/timestamp` | `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`（UTC） | 审计用UTC，展示本地化 |
 | `month`（预算） | `yyyy-MM` | 与 `substr(date,1,7)` 约定一致 |
-| legacy 导入 | 时间戳/日期归一化为 `yyyy-MM-dd` | 见 `ARCHITECTURE.md §10.2` |
+| legacy 导入 | 时间戳/日期归一化为 `yyyy-MM-dd` | 见 `02_architecture.md §10.2` |
 
 生成时间统一用 `DateTimeFormatter`（所依赖的 `java.time.*` 在 minSdk 26 已可用），不重复造轮子。
 

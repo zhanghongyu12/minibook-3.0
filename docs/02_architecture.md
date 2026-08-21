@@ -3,7 +3,7 @@
 > 状态：**已确认**（8 项决策已闭环，见 §14）
 > 维护者：Architect
 > 最后更新：2026-08-18
-> 依据：`docs/PRD.md`（已确认，唯一需求事实来源）；旧项目 `minibook/docs/ARCHITECTURE.md`、`minibook/docs/DATA_MODEL.md` 仅供数据字段语义参考，旧技术栈（Taro/Dexie）已废弃。
+> 依据：`docs/01_prd.md`（已确认，唯一需求事实来源）；旧项目 `minibook/docs/ARCHITECTURE.md`、`minibook/docs/DATA_MODEL.md` 仅供数据字段语义参考，旧技术栈（Taro/Dexie）已废弃。
 
 ---
 
@@ -339,7 +339,7 @@ interface SyncChangeDataSource {
    - 变更推送：Room 写路径在事务内调用 `SyncChangeDataSource.enqueue()`，后台 `SyncWorker`（WorkManager）消费队列。
    - 冲突解决：优先后台行级 `updatedAt` LWW（Last-Write-Wins），复杂冲突进 UI「conflict 列表」人工选择（对应 `syncStatus=conflict`）。
 3. **切换处只有一个**：`DataSourceModule` 的 `@Binds` 绑定换成混合实现，Repository 不动。
-4. 预留字段：所有业务实体带 `syncStatus`（`local/syncing/synced/conflict`）；`SyncChange` 表（详见 DATABASE.md §3.6）。
+4. 预留字段：所有业务实体带 `syncStatus`（`local/syncing/synced/conflict`）；`SyncChange` 表（详见 03_database.md §3.6）。
 
 > 本期 **不实现、不接线** SyncChange 写入。表与字段先落库，仅保证未来不迁移数据即接入。
 
@@ -389,7 +389,7 @@ Room.databaseBuilder(context, MiniBookDatabase::class.java, "minibook-encrypted.
 
 1. **首次启动（First Run）**：
    - 检查 DB 文件是否存在；不存在 → 生成 32 字节随机 master key → 用当前锁状态对应的 Keystore key 做 GCM 加密 → 写 `minibook_key.bin`。
-   - 随后打开 DB、`BootstrapUseCase` 种子：默认账本 + 12 支出 + 6 收入分类（见 §8.4 / DATABASE.md §7）。
+   - 随后打开 DB、`BootstrapUseCase` 种子：默认账本 + 12 支出 + 6 收入分类（见 §8.4 / 03_database.md §7）。
 2. **每次冷启动 / 重锁解锁**（读取流程）：
    - 读 `minibook_key.bin`（密文）。
    - **锁开启**：BiometricPrompt 验证通过拿到 CryptoObject（内含可用的 Cipher）→ 用 auth 后的 `_auth` key 解密 master key（**解密动作绑定在 CryptoObject 上，Keystore 才会放行 auth-gated key**）。
@@ -458,7 +458,7 @@ onStop（后台）/ ON_STOP → 启动闲置计时（立即/30s/1min/5min/永不
 | `Budget` | ✔ | 预算按账本 + 月份 |
 | `SyncChange` | ✔ | 变更追踪带账本维度（本期建表不写数据） |
 
-所有业务 DAO 查询第一过滤条件统一为 `WHERE ledgerId = :ledgerId`；数据表复合索引一律以 `ledgerId` 打头（DATABASE.md §5）。
+所有业务 DAO 查询第一过滤条件统一为 `WHERE ledgerId = :ledgerId`；数据表复合索引一律以 `ledgerId` 打头（03_database.md §5）。
 
 ### 8.2 当前账本的提供方式
 
@@ -614,7 +614,7 @@ val monthSummary = ledgerProvider.currentLedgerId()
 |------|------|
 | 冷启动 ≤ 2s（含解锁） | 安全路径后置：首帧先出 LockScreen UI，DB 打开耗时不影响首帧；DB 打开为 3.x 毫秒级（本机小库） |
 | 千条级列表流畅 | `LazyColumn` + `key=id` + 稳定 Diff；汇总用 DB 端 SQL 聚合（不拉全量内存算）；Phase 2 若上搜索/报表可引入 Paging 3 |
-| 金额整数分 | `Long` 存分；`util/MoneyFormatter` 统一元↔分转换与格式化（DATABASE.md §8） |
+| 金额整数分 | `Long` 存分；`util/MoneyFormatter` 统一元↔分转换与格式化（03_database.md §8） |
 | 离线可用 | 无网络依赖；网络仅出在未来的 RemoteDataSource |
 | 兼容 API 26+ | minSdk 26；Biometric/Keystore 低版本分支按 §7.5 处理；Compose 编译目标 36 |
 | 可测试性 | domain 纯 Kotlin 无 Android 依赖；DataSource/Repository 接口便于 Fake；UseCase 单测覆盖金额与净额口径 |
@@ -632,8 +632,8 @@ val monthSummary = ledgerProvider.currentLedgerId()
 | D-3 | 旧版（Taro）导出 JSON 兼容导入 | 支持 legacy 检测（缺 `ledgers` 字段），导入到默认账本 | §10.2 |
 | D-4 | 导出文件是否加密 | **明文 JSON**（SAF 用户自管文件）；加密导出留待 Phase 2 可选增强 | §10.1 |
 | D-5 | 换机/云备份路径 | `allowBackup=false` + `dataExtractionRules` 排除库与 key 文件；换机走「导出→导入 JSON」（密钥无法随备份迁移的必然选择） | §7.5 |
-| D-6 | 内置分类是否允许改名 | 允许改图标/颜色/名称，但**不可删、不可改 type/isBuiltIn**；「其他」兜底分类保持默认名 | DATABASE.md §8 |
-| D-7 | 预算表唯一约束策略 | Repository 层事务内「先删后插」保证语义唯一，DB 不加冗重约束 | DATABASE.md §4 |
+| D-6 | 内置分类是否允许改名 | 允许改图标/颜色/名称，但**不可删、不可改 type/isBuiltIn**；「其他」兜底分类保持默认名 | 03_database.md §8 |
+| D-7 | 预算表唯一约束策略 | Repository 层事务内「先删后插」保证语义唯一，DB 不加冗重约束 | 03_database.md §4 |
 | D-8 | 多模块拆分时机 | MVP 单模块；包边界已预留，出现双依赖方再拆 | §3.1 |
 
 > D-1 衍生实现要点：密钥体系需同时维护两个 Keystore 别名——`minibook_master_key_auth`（`setUserAuthenticationRequired(true)`，锁开启时用）+ `minibook_master_key_plain`（无认证要求，锁关闭时自动开库用）；两者均加密同一 SQLCipher master key，切换锁状态时重加密并落盘新 blob。§7 的「两层密钥」图据此扩展为「一个 master key、两把包裹 key」。
