@@ -952,3 +952,262 @@
   - [ ] 三占位页可渲染，无业务交互
   - [ ] 导航注册编译通过、默认不可达
 - 需测试覆盖点：无（静态占位）。
+
+---
+
+> Phase 2 任务拆分（Architect 产出，2026-08-21）。覆盖 F-06 搜索 / F-07 报表 / F-08 预算 + 收支页分类联表收尾；对齐 DEC-011/012/013 与 DEC-008。分层概览：
+> - **搜索**（3）：数据层 TASK-031 → 业务层 TASK-032 → UI 层 TASK-033
+> - **报表**（3）：数据层 TASK-034 → 组件 TASK-035 → 业务层 + UI 层 TASK-036
+> - **预算**（2）：业务层 TASK-037 → UI 层 TASK-038
+> - **收尾**（1）：TASK-039 收支页分类联表
+> 公共约定同前（版本锁定 / ledgerId 首参 / Long 分 / 测例归属）；Phase 2 无新表无新索引（DATABASE §10），无第三方依赖（DEC-001/DEC-011）。
+
+---
+
+### TASK-031: 搜索数据层扩展（DAO 加参 + filter 模型 + DataSource 转发）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层 / 领域契约层
+- 关联需求：F-06；DEC-013
+- 估算：0.5 天
+- 依赖关系：TASK-003、TASK-006、TASK-008
+- 涉及文件：
+  - `domain/model/TransactionFilter.kt`（加 remark/amountMin/amountMax）
+  - `domain/model/DebtFilter.kt`（加 partyName）
+  - `data/local/db/dao/TransactionDao.kt`（observeFiltered 扩 3 参）
+  - `data/local/db/dao/DebtDao.kt`（observeFiltered 扩 1 参）
+  - `data/local/datasource/RoomDataSourceImpl.kt`（transaction/debt 两处 observeByLedger 转发新字段）
+- 描述：
+  - DEC-013「扩展 observeFiltered 加参，不新建 search 方法」：SQL 用既有参数化写法追加 `remark LIKE '%'||:remark||'%'`、`amount>=:amountMin`、`amount<=:amountMax`（交易）与 `partyName LIKE`（债务），见 DATABASE §10.2。
+  - `TransactionFilter` 默认 7 字段全 null == 原缺省行为；`DebtFilter` 默认 3 字段全 null == 原缺省行为；`TransactionDataSource.observeByLedger`/`DebtDataSource.observeByLedger` 签名不变（Repository 零改动）。
+  - 金额区间 `amountMin/amountMax` 单位「分」、含端点。
+- 验收标准：
+  - [ ] `observeFiltered` 加参后 SQL 与 DATABASE §10.2 一致（LIKE '%'||:remark||'%'、amount>=:amountMin、amount<=:amountMax、partyName LIKE）
+  - [ ] filter 新字段可空、默认不过滤；原 null 调用结果与改前一致（回归：收支页/债务页行为不变）
+  - [ ] Repository/DataSource 接口签名无变化（diff 只动 filter data class 与 DAO 实现）
+  - [ ] 编译通过
+- 需测试覆盖点：模糊 LIKE 与金额区间参数化正确性（instrumented，Tester）。
+
+---
+
+### TASK-032: 搜索业务 UseCase
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层
+- 关联需求：F-06；DEC-013
+- 估算：0.5 天
+- 依赖关系：TASK-031、TASK-013、TASK-014
+- 涉及文件：
+  - `domain/usecase/search/SearchTransactionsUseCase.kt`
+  - `domain/usecase/search/SearchDebtsUseCase.kt`
+- 描述：
+  - `SearchTransactionsUseCase(filter)`：`currentLedgerId().flatMapLatest { transactionRepository.observeByLedger(it, filter) }`，复用 `TransactionFilter` 扩展字段（remark/金额区间/分类/日期/类型）。
+  - `SearchDebtsUseCase(filter)`：同径，`DebtFilter`（partyName/direction/kind）。
+- 验收标准：
+  - [ ] 两 UseCase 经 `LedgerProvider` 取当前账本，随切账本自动重订阅
+  - [ ] 首参 `ledgerId` 贯穿（ARCHITECTURE §8.1）
+  - [ ] amountMin/amountMax 语义为「分、含端点」
+- 需测试覆盖点：搜索组合过滤（Fake DataSource 单测）。
+
+---
+
+### TASK-033: 搜索页（替换 SearchPlaceholder）+ 只读明细
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：UI 层
+- 关联需求：F-06；DEC-013
+- 估算：1.5 天
+- 依赖关系：TASK-032、TASK-020、TASK-021
+- 涉及文件：
+  - `ui/search/SearchScreen.kt`、`ui/search/SearchViewModel.kt`
+  - 只读明细（`ui/search/TransactionDetail.kt` / `DebtDetail.kt`，或复用 `TransactionSheet`/`DebtSheet` 的只读态）
+  - `ui/navigation/MiniBookNavHost.kt`（Search 路由替换 `SearchPlaceholder` → `SearchScreen`）
+  - 首页顶部搜索入口接线（F-06 从首页顶部搜索入口进入）
+- 描述：
+  - 条件字段分两组：交易（备注关键词、金额 min/max、分类、日期区间、类型）+ 债务（姓名关键词、方向）；分类/日期/类型选择复用现有组件（CategoryPickerSheet/DatePickerField/TransactionTypeTab）；搜索词防抖（`debounce`）+ `flatMapLatest` 重订阅。
+  - 结果分「交易 / 债务」两组、按时间倒序；点击展示**只读明细**（不可编辑）；无结果显示空态（PRD F-06）；金额区间 min > max 视为无效并提示（ViewModel 校验）。
+  - 替换 `ui/reserved/SearchPlaceholder.kt` 接线（route `search` 已有，接首页入口后可达）。
+- 验收标准：
+  - [ ] 交易按备注模糊 + 金额区间 + 分类 + 日期区间 + 类型组合过滤可命中且互不干扰
+  - [ ] 债务按姓名模糊 + 方向过滤可命中
+  - [ ] 结果分两组，组内时间倒序
+  - [ ] 点击弹只读明细（无保存/编辑入口）
+  - [ ] 空态提示；min > max 视为无效并提示
+  - [ ] 切账本搜索重跑、仅当前账本
+- 需测试覆盖点：搜索 UI 流（UI 可选；核心过滤在 TASK-031/032）。
+
+---
+
+### TASK-034: 报表聚合数据层（DAO 3 查询 + DataSource/Repository + 报表模型）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层 / 领域契约层
+- 关联需求：F-07；DEC-011
+- 估算：1 天
+- 依赖关系：TASK-003、TASK-006、TASK-007、TASK-008、TASK-009
+- 涉及文件：
+  - `data/local/db/dao/TransactionDao.kt`（新增 observeDailyTrend / observeMonthlyTrend / observeCategoryAgg）
+  - `data/local/db/QueryRow.kt`（新增 PeriodTrendRow / CategoryAggRow DTO）
+  - `domain/model/PeriodTrend.kt`、`domain/model/CategoryAgg.kt`
+  - `data/datasource/TransactionDataSource.kt`（新增 3 方法）
+  - `data/local/datasource/RoomDataSourceImpl.kt`（实现 3 方法与行→domain 映射）
+  - `domain/repository/TransactionRepository.kt` + `TransactionRepositoryImpl.kt`（新增 3 方法委托）
+- 描述：
+  - 三条聚合 SQL 对齐 DATABASE §10.3（趋势按天/按月、分类占比），命中 `(ledgerId, date)` / `(ledgerId, categoryId)` 索引。
+  - `observeCategoryAgg` 同时供 F-07 占比与 F-08「已用」复用（`type=expense` 当月）。
+  - `PeriodTrend` 派生 `balanceFen = incomeFen - expenseFen`（供结余走势，domain 层整数跑表）。
+  - DataSource/Repository 方法签名对齐 API §12.2；金额 `Long` 分、返回 `Flow`。
+- 验收标准：
+  - [ ] 3 聚合 SQL 与 DATABASE §10.3 一致，返回 `Flow`
+  - [ ] `observeDailyTrend` 月度按天、`observeMonthlyTrend` 年度按月（`substr(date,1,7)`）分组正确
+  - [ ] `observeCategoryAgg` 按 type + categoryId 分组、`totalFen` 为 `Long` 分
+  - [ ] DataSource/Repository 新增方法委托正确、接口与实现一致
+  - [ ] 编译通过
+- 需测试覆盖点：聚合正确性（收支分桶、分类占比；instrumented，Tester）。
+
+---
+
+### TASK-035: 报表图表组件（Compose 原生 Canvas）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：UI 层（组件）
+- 关联需求：F-07；DEC-011
+- 估算：1.5 天
+- 依赖关系：TASK-019、TASK-020、TASK-034
+- 涉及文件：
+  - `ui/reports/components/LineChart.kt`（收支趋势/结余走势折线，drawPath/drawLine）
+  - `ui/reports/components/BarChart.kt`（柱状，drawRoundRect，可选）
+  - `ui/reports/components/DonutChart.kt`（环形占比，drawArc）
+  - `ui/reports/components/ChartLegend.kt`（图例）
+  - `ui/reports/components/ChartEmptyState.kt`（空态）
+- 描述：
+  - 零第三方图表库（DEC-011），按 ARCHITECTURE §15.4 图表「五要素」实现：数据口径（吃 `PeriodTrend`/`CategoryAgg`，不算术）、坐标系与刻度（时间桶 X 轴 + 分→元 Y 轴，tabular figures）、图元绘制、图例与交互、主题配色（`colorScheme` 语义 token，暗色适配）。
+  - 折线/柱状 X 轴 = 天（月视图）/月（年视图）等距序列，Y 轴自适应最大刻度 + 网格线；环形 `sweep` 按占比映射 360°，收入/支出分开。
+  - 空态与单点降级（1 桶/0 数据不崩，画点或占位）。
+- 验收标准：
+  - [ ] Canvas 自绘，无第三方图表库、无 toml/build.gradle 改动（DEC-011）
+  - [ ] 折线/环形/柱状三图可渲染，色值走 token 随暗色切换
+  - [ ] 单数据点 / 空数据不崩溃（空态）
+  - [ ] 金额展示经 MoneyFormatter（分→元），无手写 float
+- 需测试覆盖点：图表纯渲染 + 空态（UI 可选）。
+
+---
+
+### TASK-036: 报表页（替换 ReportsPlaceholder）+ 报表 UseCase
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层 + UI 层
+- 关联需求：F-07；DEC-011
+- 估算：1 天
+- 依赖关系：TASK-034、TASK-035、TASK-021
+- 涉及文件：
+  - `domain/usecase/report/ObserveTrendUseCase.kt`、`ObserveCategoryBreakdownUseCase.kt`、`ObserveBalanceTrendUseCase.kt`
+  - `ui/reports/ReportsViewModel.kt`、`ui/reports/ReportsScreen.kt`
+  - `ui/navigation/MiniBookNavHost.kt`（Reports 路由替换 `ReportsPlaceholder` → `ReportsScreen`）
+- 描述：
+  - 三个 report UseCase（业务层，本任务一并落地）：`ObserveTrendUseCase`（按天/月）、`ObserveCategoryBreakdownUseCase`（type 入参）、`ObserveBalanceTrendUseCase`（每桶 balanceFen + 累计结余整数跑表），均为 `currentLedgerId().flatMapLatest { repository.observe... }` 薄封装。
+  - 页面：月/年切换 + 三图（①收支趋势折线/柱状 ②分类占比环形收入/支出分开切换 ③结余走势折线）；统计范围限定当前账本（`flatMapLatest`）。
+  - 无数据显示空态（PRD F-07）；替换占位页接线。
+- 验收标准：
+  - [ ] 月视图按天、年视图按月切换正确
+  - [ ] 三图数据与数据源一致（金额分口径、分类占比分开展示）
+  - [ ] 该账本无任何数据显示空态
+  - [ ] 切账本整页重算、仅当前账本
+  - [ ] 替换 ReportsPlaceholder 完成（route `reports` 可达）
+- 需测试覆盖点：报表 UI 流（UI 可选；聚合正确性在 TASK-034）。
+
+---
+
+### TASK-037: 预算业务 UseCase + 超支口径
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层
+- 关联需求：F-08；DEC-008、DEC-012
+- 估算：1 天
+- 依赖关系：TASK-009、TASK-034、TASK-015
+- 涉及文件：
+  - `domain/usecase/budget/SetTotalBudgetUseCase.kt`
+  - `domain/usecase/budget/SetCategoryBudgetUseCase.kt`
+  - `domain/usecase/budget/ClearCategoryBudgetUseCase.kt`
+  - `domain/usecase/budget/ObserveBudgetProgressUseCase.kt`
+  - `domain/model/BudgetProgress.kt`
+- 描述：
+  - `SetTotalBudgetUseCase`/`SetCategoryBudgetUseCase`：校验金额 ≥0 分、月份合法 → 委托 `BudgetRepository`（总额「先删后插」已在 Impl 事务内闭合，DEC-008；分类走 DB UNIQUE）。
+  - `ObserveBudgetProgressUseCase(ledgerId, month)`：`combine(budgetRepository.observeByMonth, transactionRepository.observeCategoryAgg(type=expense, 当月), categories.observeByLedger)` → `Flow<BudgetProgress>`；总额已用 = 各分类 `totalFen` 之和（等价 monthSummary.expenseFen）。
+  - `BudgetProgress` 派生 `remainingFen`（预算−已用）、`overBudget`（已用>预算）、`hasOverBudget`（总额或任一分类超支），口径 = PRD F-08（已用/剩余/超支）。
+  - 超支提醒形态 = App 内告警（DEC-012），本任务只算 `hasOverBudget`，展示在 TASK-038。
+- 验收标准：
+  - [ ] 总额/分类预算写入口径与 DEC-008 一致（总额先删后插，分类 UNIQUE）
+  - [ ] 已用 = 当月支出累计（分）；剩余 = 预算 − 已用；超支 = 已用 > 预算
+  - [ ] `hasOverBudget` 在总额或任一分类超支时为 true
+  - [ ] 金额 ≤0 / 未选月份拒绝保存（PRD F-08 异常处理）
+  - [ ] Flow 随交易/预算/账本变化自动重算
+- 需测试覆盖点：**预算超支口径单测**（重点，总额/分类/剩余/超支边界、已用与 monthSummary 等价性；Fake DataSource）。
+
+---
+
+### TASK-038: 预算页（替换 BudgetsPlaceholder）+ 超支页内告警与入口提示
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：UI 层
+- 关联需求：F-08；DEC-012
+- 估算：1.5 天
+- 依赖关系：TASK-037、TASK-020、TASK-021、TASK-023
+- 涉及文件：
+  - `ui/budgets/BudgetsViewModel.kt`、`ui/budgets/BudgetsScreen.kt`
+  - `ui/budgets/BudgetEditorSheet.kt`（总预算/分类预算编辑）
+  - `ui/home/HomeScreen.kt`（首页/入口超支提示标记，可选增强）
+  - `ui/navigation/MiniBookNavHost.kt`（Budgets 路由替换 `BudgetsPlaceholder` → `BudgetsScreen`）
+- 描述：
+  - 月度总预算 + 分类预算两区；进度条展示已用/剩余；**超支标红 + 超支文案**（DEC-012 页内告警）。
+  - 编辑 sheet：总额（先删后插）与分类（UNIQUE）设置；金额元↔分经 MoneyFormatter。
+  - 首页/入口提示（可选增强）：当前月 `hasOverBudget` → 入口展示醒目标记，点击进预算页；不引入通知栏/`POST_NOTIFICATIONS`。
+  - 替换占位页接线。
+- 验收标准：
+  - [ ] 总预算与分类预算进度「已用/剩余」正确展示
+  - [ ] 超支时进度条标红 + 超支文案（页内告警）
+  - [ ] 编辑保存/删除生效（总额先删后插、分类 UNIQUE）
+  - [ ] 首页入口提示在超支月展示、未超支隐藏（若有）
+  - [ ] 无 POST_NOTIFICATIONS 申请、无通知栏（DEC-012）
+  - [ ] 切账本/切月份重算，仅当前账本
+- 需测试覆盖点：预算页 UI 流（UI 可选；口径在 TASK-037）。
+
+---
+
+### TASK-039: 收支页分类联表收尾
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：UI 层
+- 关联需求：F-01（展示）；DEC-001
+- 估算：0.5 天
+- 依赖关系：TASK-015、TASK-024
+- 涉及文件：
+  - `ui/transactions/TransactionsViewModel.kt`
+  - `ui/transactions/TransactionsScreen.kt`
+- 描述：
+  - 收尾 `TransactionsScreen.kt` 分类联表 TODO（现 `categoryName/categoryIcon/categoryColor` 传 null 走 ❔/outline fallback）：ViewModel 注入 `ObserveCategoriesUseCase`（TASK-015），`TransactionsUiState.Success` 携带 `categoriesById: Map<String, Category>`，页面按 `tx.categoryId` 取真实分类名/图标/色传入 `TransactionListItem`。
+  - 对齐首页同类收尾（`HomeViewModel` 注入 ObserveCategoriesUseCase 的既有模式，协调日志 2026-08-21 commit 0c041a3）。
+- 验收标准：
+  - [ ] 收支列表每条交易显示真实分类名/图标/色（无 ❔ fallback）
+  - [ ] 分类信息随分类改名/换色实时联动（同源 `observeByLedger` 流）
+  - [ ] 分类已删（边缘态）不崩溃，回退 id 或空占位
+  - [ ] 复用 `ObserveCategoriesUseCase`，不新增查询/不扩展 DAO
+- 需测试覆盖点：分类名映射（UI 可选）。

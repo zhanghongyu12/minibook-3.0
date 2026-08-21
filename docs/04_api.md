@@ -402,4 +402,100 @@ interface RemoteDataSource {
 
 ---
 
+## 12. Phase 2 契约：搜索 / 报表 / 预算方法签名
+
+> 依据：DEC-011 / DEC-012 / DEC-013 / DEC-008；配合 `03_database.md §10`、`02_architecture.md §15`。
+> 原则延续 §1：金额一律 `Long`「分」；观察用 `Flow`；所有业务查询首参 `ledgerId`（仅当前账本）。
+
+### 12.1 filter 模型扩展（DEC-013，DataSource/Repository 签名不变）
+
+**`TransactionFilter` 由 4 字段扩为 7 字段**（`domain/model` 与 `data/datasource` 消费侧一致）：
+
+```kotlin
+data class TransactionFilter(
+    val type: TransactionType? = null,       // 全部(null)/expense/income
+    val categoryId: String? = null,          // null=不限分类
+    val dateFrom: String? = null,            // "yyyy-MM-dd"
+    val dateTo: String? = null,
+    val remark: String? = null,              // Phase 2：备注模糊（LIKE %remark%）
+    val amountMin: Long? = null,             // Phase 2：金额下限（分，含端点）
+    val amountMax: Long? = null,             // Phase 2：金额上限（分，含端点）
+)
+```
+
+**`DebtFilter` 由 2 字段扩为 3 字段**：
+
+```kotlin
+data class DebtFilter(
+    val kind: DebtKind? = null,              // 全部(null)/lend/repay
+    val direction: DebtDirection? = null,    // 全部(null)/owe_me/i_owe
+    val partyName: String? = null,           // Phase 2：姓名模糊（LIKE %partyName%）
+)
+```
+
+> `TransactionDataSource.observeByLedger(ledgerId, filter)` / `DebtDataSource.observeByLedger(ledgerId, filter)` 签名**不变**（filter 为引用透明对象）；`RoomDataSourceImpl` 转发新增字段（§3/§4「Phase 2 搜索复用同一过滤器扩展」留白至此落定）。`TransactionRepository`/`DebtRepository` 零改动。
+
+### 12.2 TransactionDataSource / TransactionRepository 新增聚合方法（F-07 报表 + F-08 预算「已用」）
+
+```kotlin
+// 报表/预算聚合 DTO（domain/model，字段对齐 SQL 别名，§1 分口径）
+data class PeriodTrend(val bucket: String, val expenseFen: Long, val incomeFen: Long)
+data class CategoryAgg(val categoryId: String, val totalFen: Long)
+```
+
+```kotlin
+// TransactionDataSource（§3）与 TransactionRepository（domain）同步新增：
+fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>>
+fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>>
+fun observeCategoryAgg(ledgerId: String, type: TransactionType, start: String, end: String): Flow<List<CategoryAgg>>
+```
+
+| 方法 | 返回 | 语义 |
+|------|------|------|
+| `observeDailyTrend` | `Flow<List<PeriodTrend>>` | 月度视图按天收支趋势（`bucket=date`），`start/end` 为当月首/末日 |
+| `observeMonthlyTrend` | `Flow<List<PeriodTrend>>` | 年度视图按月收支趋势（`bucket=yyyy-MM`），`start/end` 为当年首/末日 |
+| `observeCategoryAgg` | `Flow<List<CategoryAgg>>` | 按分类分组金额合计（`type` 区分收入/支出，`start/end` 区间）；报表占比 + 预算「已用」（`type=expense`，当月）共用 |
+
+### 12.3 预算进度契约（UseCase 产物，DEC-012 / DEC-008）
+
+预算读写沿用 §7 `BudgetDataSource` 与 `BudgetRepository` 既有方法（`setTotalBudget`/`setCategoryBudget`/`clearTotalBudget`/`clearCategoryBudget`/`observeByMonth`，已接线）；「已用/剩余/超支」为 **UseCase 层 combine 产物**（跨 Transaction + Budget + Category 三源，属「跨实体聚合走专用 UseCase」，§1 原则）：
+
+```kotlin
+// domain/model/BudgetProgress.kt（Phase 2 UseCase 产物）
+data class BudgetLineProgress(
+    val budget: Budget?,          // null = 该维度未设预算
+    val spentFen: Long,           // 已用（分）
+) {
+    val remainingFen: Long get() = (budget?.amount ?: 0L) - spentFen                 // 剩余 = 预算 − 已用
+    val overBudget: Boolean get() = budget != null && spentFen > budget.amount       // 超支 = 已用 > 预算
+}
+
+data class BudgetCategoryProgress(
+    val budget: Budget,
+    val category: Category?,      // 分类元信息（name/icon/color）；分类已删则 null（UI 以 id 兜底展示）
+    val spentFen: Long,
+)
+
+data class BudgetProgress(
+    val month: YearMonth,
+    val total: BudgetLineProgress?,                    // 月度总预算进度；null=未设
+    val categoryLines: List<BudgetCategoryProgress>,   // 分类预算进度
+) {
+    val hasOverBudget: Boolean get() =
+        (total?.overBudget == true) || categoryLines.any { it.spentFen > it.budget.amount }
+}
+```
+
+- `ObserveBudgetProgressUseCase(ledgerId, month)`：`combine(budgetRepository.observeByMonth(...), transactionRepository.observeCategoryAgg(type=expense, 当月...), categories.observeByLedger(...))` → `Flow<BudgetProgress>`；总额已用 = 各分类 `totalFen` 之和（等价 `monthlySummary.expenseFen`，`categoryId` 恒非空）。
+- 超支提醒只见 `BudgetProgress.hasOverBudget` 派生：页内标红 + 入口提示（DEC-012 App 内告警）；无通知栏、无 `POST_NOTIFICATIONS`。
+
+### 12.4 通用约定重申
+
+- `PeriodTrend`/`CategoryAgg`/`Budget*` 均为纯 Kotlin data class（`domain/model`，不 import Android 类，§10）。
+- 金额全程 `Long` 分；「剩余」「超支」为整数减法/比较、无浮点；展示经 `MoneyFormatter`（DATABASE §9）。
+- 所有新方法首参 `ledgerId`，仅作用于「当前账本」（F-11 隔离，`currentLedgerId().flatMapLatest`）。
+- 报表/已用聚合为 `Flow`（随交易/预算增删自动重算，无需手动刷新）；预算写操作为 `suspend`。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

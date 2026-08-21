@@ -640,4 +640,49 @@ val monthSummary = ledgerProvider.currentLedgerId()
 
 ---
 
+## 15. Phase 2 设计：搜索 / 报表 / 预算（F-06 / F-07 / F-08）
+
+> 依据：`docs/01_prd.md §6 F-06/F-07/F-08`（已确认）+ `docs/07_decisions.md` DEC-011/012/013 与 DEC-008。
+> 定位：Phase 2 三项延展功能**复用既有 MVVM + Repository + UseCase + DataSource 分层**（§4.1 职责表不变），**不新起架构范式、不加 Gradle 模块（DEC-009）、不加第三方依赖（DEC-001）**。仅做「层内加法」：扩 DAO SQL → 扩 filter 模型与 DataSource/Repository 方法 → 新增 UseCase / ViewModel / 页面，逐一替换三个占位页（`ui/reserved/SearchPlaceholder` / `ReportsPlaceholder` / `BudgetsPlaceholder`）。
+
+### 15.1 落地总览
+
+| 功能 | 数据层（DAO / DataSource / Repository） | 业务层（UseCase） | UI 层（ViewModel / 页面） | 替换占位 |
+|------|------|------|------|------|
+| F-06 搜索 | 扩 `TransactionDao.observeFiltered`（remark/金额区间）、`DebtDao.observeFiltered`（partyName）；扩 `TransactionFilter`/`DebtFilter`（DEC-013） | `SearchTransactionsUseCase` / `SearchDebtsUseCase` | `ui/search/SearchViewModel` + `SearchScreen`（交易/债务双组结果 + 只读明细） | SearchPlaceholder |
+| F-07 报表 | `TransactionDao` 新增 `observeDailyTrend` / `observeMonthlyTrend` / `observeCategoryAgg`；`TransactionDataSource`/`TransactionRepository` 同增 3 方法；新增 domain `PeriodTrend`/`CategoryAgg`（DEC-011） | `ObserveTrendUseCase` / `ObserveCategoryBreakdownUseCase` / `ObserveBalanceTrendUseCase` | `ui/reports/ReportsViewModel` + `ReportsScreen` + 自绘图表组件（§15.4 五要素） | ReportsPlaceholder |
+| F-08 预算 | 复用已接线的 `BudgetDataSource`/`BudgetRepository`；「已用」复用 `observeCategoryAgg(type=expense)`；新增 domain `BudgetProgress` 模型（DEC-012 / DEC-008） | `SetTotalBudgetUseCase` / `SetCategoryBudgetUseCase` / `ClearCategoryBudgetUseCase` / `ObserveBudgetProgressUseCase` | `ui/budgets/BudgetsViewModel` + `BudgetsScreen`（进度/超支标红）+ 首页入口提示 | BudgetsPlaceholder |
+
+### 15.2 搜索（F-06）
+
+- 数据源：沿用 §8 账本作用域（`ledgerId` 首参），`observeFiltered` 为既有参数化查询；搜索只是「filter 字段扩展」，不新增查询路径（DEC-013）。金额区间 `amountMin/amountMax` 单位「分」，备注/姓名走 `LIKE '%kw%'` 模糊。
+- 页面：`search` 路由已注册（§12），默认不可达；接线首页顶部搜索入口后可达。搜索词防抖（`debounce`）+ `flatMapLatest` 重订阅（§8.2 切账本模式）；结果分「交易 / 债务」两组、按时间倒序；点击弹**只读明细**（复用现有 sheet 的展示部分、去掉保存路径）。
+- 账本切换：搜索条件服务「当前账本」，切账本重跑查询（`currentLedgerId().flatMapLatest`），不跨账本（F-11）。
+
+### 15.3 报表（F-07）
+
+- 聚合在 DB 端完成（§13「汇总用 DB 端 SQL 聚合，不拉全量内存算」），UI 只渲染：月度视图按「天」、年度视图按「月」输出桶序列（`date` / `substr(date,1,7)`），每桶 `expenseFen/incomeFen`；分类占比按 `categoryId + type` 分组 `SUM(amount)`。
+- 三类图：①收支趋势（折线/柱状，月度按天、年度按月）②分类占比（环形，收入/支出分开展示）③结余走势（折线，`incomeFen - expenseFen` 按桶 + 累计）。空态（该账本无任何数据）显示占位（PRD F-07 异常处理）。
+- 图表渲染复用 §11 主题（语义 token：收入绿/支出红/neutral）与 `MoneyFormatter`（分→元）。
+
+### 15.4 图表「五要素」（DEC-011 原生 Canvas 落地点）
+
+1. **数据口径与聚合**：金额全程 `Long`「分」（DATABASE §9）；数据已由 DB 端 SQL 聚合成 `PeriodTrend`/`CategoryAgg`，Canvas 不参与任何算术，只画「既得数据点」。
+2. **坐标系与刻度**：X 轴 = 时间桶（月度=天 / 年度=月，等距）；Y 轴 = 金额（分→元经 `MoneyFormatter`，tabular figures）；自适应最大刻度 + 网格分隔线，刻度标签不溢出。
+3. **图元绘制**：折线 `drawPath`/`drawLine`；柱状 `drawRoundRect`；环形 `drawArc`（sweep 按占比映射 360°，收入/支出分开一张）。
+4. **图例与交互**：环形旁图例（分类名 + 色块 + 占比%）；数据点选中高亮为增强（本期可静态渲染）；空态与单桶降级（1 个点/0 数据不崩）。
+5. **主题与配色**：色值一律引用 `MaterialTheme.colorScheme.*` 与语义 token（收入绿/支出红/neutral），随暗色模式软切换（§11）；Canvas 颜色取自 `colorScheme` 派生 `Color`。
+
+### 15.5 预算（F-08）
+
+- 口径（对齐 DEC-008）：预算表 `budgets` 已建表（6 表之一，version 1，见 03_database §4.5）；月度总预算 `categoryId=NULL`（Repository 层「先删后插」保证唯一），分类预算 `UNIQUE(ledgerId, month, categoryId)`。
+- 进度：`已用 = 当月该分类（或总额）实际支出累计（分）`；`剩余 = 预算 − 已用`；`超支 = 已用 > 预算`（剩余 < 0）。「已用」由 `observeCategoryAgg(type=expense, 当月)` 提供（按分类分组；总额已用 = 各分类之和，等价 `monthSummary.expenseFen`，因 `categoryId` 恒非空）。
+- 提醒形态（DEC-012）：**App 内告警**——页内进度条超支标红 + 超支文案；首页/入口轻量提示当前月超支。系统通知栏为可选、本期不实现（`POST_NOTIFICATIONS` 权限 API33+ + 后台触发时机权衡）。
+
+### 15.6 无新表 / 无新索引
+
+Phase 2 三项功能均**不新增表、不新增索引**：预算表已存在（03_database §4.5）；搜索/报表/预算全部复用既有 `(ledgerId, date)` / `(ledgerId, categoryId)` / `(ledgerId, partyName)` / `(ledgerId, month)` 复合索引，只扩 DAO SQL。数据库版本仍为 **1**，`fallbackToDestructiveMigration(false)` 不变。详见 `03_database.md §10`。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

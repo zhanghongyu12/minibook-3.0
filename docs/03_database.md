@@ -712,4 +712,115 @@ fun formatFen(fen: Long, withSymbol: Boolean = true): String {
 
 ---
 
+## 10. Phase 2 数据设计：搜索过滤 / 报表聚合 / 预算口径
+
+> 依据：DEC-011 / DEC-012 / DEC-013 / DEC-008；配合 `02_architecture.md §15`。
+
+### 10.1 结论：无新表 / 无新索引
+
+- **不新增表**：Phase 2 所需预算表 `budgets` 已随 version 1 建表（§4.5，6 表之一）；搜索/报表/预算均不引入新实体。
+- **不新增索引**：搜索/报表/预算全部复用既有复合索引——`(ledgerId, date)`、`(ledgerId, categoryId)`、`(ledgerId, partyName)`、`(ledgerId, month)`（§5.1）。
+- **只扩 DAO SQL**：改动集中在 `TransactionDao.observeFiltered` 加参（搜索）、`DebtDao.observeFiltered` 加参（搜索）、`TransactionDao` 新增三条聚合查询（报表 + 预算「已用」）。
+- 数据库版本维持 **1**，无迁移（§7.1：version 1 即含全部 6 表，`fallbackToDestructiveMigration(false)` 不变）。
+
+### 10.2 搜索过滤 SQL（DEC-013 扩展 observeFiltered）
+
+**transactions**（`TransactionDao.observeFiltered` 由 5 参扩为 8 参）：
+
+```sql
+SELECT * FROM transactions
+WHERE ledgerId=:ledgerId
+  AND (type = :type OR :type IS NULL)
+  AND (categoryId = :categoryId OR :categoryId IS NULL)
+  AND (date >= COALESCE(:dateFrom, date))
+  AND (date <= COALESCE(:dateTo, date))
+  AND (:remark IS NULL OR description LIKE '%' || :remark || '%')
+  AND (:amountMin IS NULL OR amount >= :amountMin)
+  AND (:amountMax IS NULL OR amount <= :amountMax)
+ORDER BY date DESC, createdAt DESC
+```
+
+**debts**（`DebtDao.observeFiltered` 由 3 参扩为 4 参）：
+
+```sql
+SELECT * FROM debts
+WHERE ledgerId=:ledgerId
+  AND (:kind IS NULL OR kind=:kind)
+  AND (:direction IS NULL OR direction=:direction)
+  AND (:partyName IS NULL OR partyName LIKE '%' || :partyName || '%')
+ORDER BY date DESC
+```
+
+> 备注/姓名模糊为 `LIKE '%kw%'`（前置通配），无法走 B-tree 索引；但查询先按 `ledgerId` 首滤 + 范围谓词收窄，千条级规模下余集扫描可接受，**不需为「模糊」与「金额区间」单独建索引**（§5.2 数据量判断）。金额区间 `amountMin/amountMax` 单位「分」、含端点；`min > max` 由 ViewModel/UseCase 层拒绝或视为无效（PRD F-06 异常处理）。
+
+### 10.3 报表聚合 SQL（F-07）
+
+**收支趋势 / 结余走势（按桶）**——DTO `PeriodTrend(bucket, expenseFen, incomeFen)`：
+
+```sql
+-- 月度视图：按天（GROUP BY date）
+SELECT date AS bucket,
+       COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) AS expenseFen,
+       COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END), 0) AS incomeFen
+FROM transactions
+WHERE ledgerId=:ledgerId AND date BETWEEN :start AND :end
+GROUP BY date
+ORDER BY bucket ASC
+
+-- 年度视图：按月（GROUP BY substr(date,1,7)，与 month 'yyyy-MM' 口径一致，§9.5）
+SELECT substr(date,1,7) AS bucket,
+       COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) AS expenseFen,
+       COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END), 0) AS incomeFen
+FROM transactions
+WHERE ledgerId=:ledgerId AND date BETWEEN :start AND :end
+GROUP BY substr(date,1,7)
+ORDER BY bucket ASC
+```
+
+> 结余走势不另写 SQL：每桶 `balanceFen = incomeFen - expenseFen`，累计结余做 domain 层整数跑表（桶数 ≤ 366/年、31/月，非全量内存聚合，§13 可测试性成立）。
+
+**分类占比（收入/支出分开）**——DTO `CategoryAgg(categoryId, totalFen)`：
+
+```sql
+SELECT categoryId,
+       COALESCE(SUM(amount), 0) AS totalFen
+FROM transactions
+WHERE ledgerId=:ledgerId AND type=:type AND date BETWEEN :start AND :end
+GROUP BY categoryId
+ORDER BY totalFen DESC
+```
+
+> `type` 参数区分收入/支出（占比分开展示，PRD F-07）；分类名/图标/色由 UI 经既有分类流做 id→元信息映射，**不在 SQL 内 JOIN**（与首页分类联表同径，避免跨表聚合复杂度）。
+
+### 10.4 预算「已用 / 剩余 / 超支」口径 SQL（F-08 + DEC-008）
+
+- **已用（按分类）**：复用 §10.3 的 `observeCategoryAgg(type='expense', start=当月首日, end=当月末日)`：
+
+```sql
+SELECT categoryId, COALESCE(SUM(amount), 0) AS totalFen
+FROM transactions
+WHERE ledgerId=:ledgerId AND type='expense' AND date BETWEEN :start AND :end
+GROUP BY categoryId
+```
+
+- **已用（总额）**：`= COALESCE(SUM(各分类 totalFen), 0)` —— 等价复用 §6.1 `monthSummary.expenseFen`（因 `categoryId` 列 `NOT NULL`，每笔支出必属某分类，分组求和 == 全量求和）。
+- **预算额度**：`BudgetDao.observeByMonth(ledgerId, month)` 取 `budgets` 行（总预算 `categoryId=NULL` + 分类预算），命中 `(ledgerId, month)` 索引。
+- **逐行口径（domain 层算，非 SQL）**：
+  - `剩余 = budget.amount − spentFen`
+  - `超支 = spentFen > budget.amount`（即 `剩余 < 0`）
+- 总额口径与 DEC-008 完全一致：总额唯一靠 Repository「先删后插」（`deleteTotal` + `upsert` 事务内成对），分类唯一靠 `UNIQUE(ledgerId, month, categoryId)`；「已用」只读 `transactions`，预算写操作不触碰交易表。
+
+### 10.5 索引命中对照（Phase 2 增量）
+
+| 场景 | 命中索引 |
+|------|----------|
+| 搜索 transactions（remark/金额区间/分类/日期/类型组合） | `(ledgerId, date)` / `(ledgerId, categoryId)` / `(ledgerId, type)`；remark、amount 为非索引谓词（首滤 ledgerId 后扫描可接受） |
+| 搜索 debts（partyName 模糊 + kind/direction） | 前置通配 `partyName` LIKE 不用索引；其余走 `(ledgerId, kind)` / `(ledgerId, direction)` |
+| 报表趋势（按天/按月 GROUP BY date/substr） | `(ledgerId, date)` 范围扫描 |
+| 分类占比（GROUP BY categoryId） | `(ledgerId, date)`（范围）+ 结果分组计数走 `(ledgerId, categoryId)` |
+| 预算已用（GROUP BY categoryId 当月支出） | `(ledgerId, date)`（范围）+ `(ledgerId, categoryId)` |
+| 预算额度（按 ledgerId+month） | `(ledgerId, month)` |
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）
