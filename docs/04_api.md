@@ -462,31 +462,30 @@ fun observeCategoryAgg(ledgerId: String, type: TransactionType, start: String, e
 
 ```kotlin
 // domain/model/BudgetProgress.kt（Phase 2 UseCase 产物）
-data class BudgetLineProgress(
-    val budget: Budget?,          // null = 该维度未设预算
-    val spentFen: Long,           // 已用（分）
+data class BudgetProgress(
+    val month: String,                                  // 目标月份 yyyy-MM（对齐 Budget.month / TIME §9.5）
+    val totalBudgetFen: Long,                           // 月度总预算（分）；未设置 = 0
+    val totalUsedFen: Long,                             // 总额已用（分）= 各分类 CategoryAgg.totalFen 之和
+    val categoryProgress: List<CategoryBudgetProgress>, // 分类预算进度（仅「已设分类预算且分类仍存在」的行）
 ) {
-    val remainingFen: Long get() = (budget?.amount ?: 0L) - spentFen                 // 剩余 = 预算 − 已用
-    val overBudget: Boolean get() = budget != null && spentFen > budget.amount       // 超支 = 已用 > 预算
+    val remainingFen: Long get() = totalBudgetFen - totalUsedFen                    // 总额剩余 = 预算 − 已用；可为负（超支）
+    val overBudget: Boolean get() = totalBudgetFen > 0 && totalUsedFen > totalBudgetFen // 已设预算(>0)且已用>预算才算超支
+    val hasOverBudget: Boolean get() = overBudget || categoryProgress.any { it.overBudget } // 总额或任一分类超支（DEC-012 入口提示触发条件）
 }
 
-data class BudgetCategoryProgress(
-    val budget: Budget,
-    val category: Category?,      // 分类元信息（name/icon/color）；分类已删则 null（UI 以 id 兜底展示）
-    val spentFen: Long,
-)
-
-data class BudgetProgress(
-    val month: YearMonth,
-    val total: BudgetLineProgress?,                    // 月度总预算进度；null=未设
-    val categoryLines: List<BudgetCategoryProgress>,   // 分类预算进度
+data class CategoryBudgetProgress(
+    val category: Category,   // 分类元信息（name/icon/color；observeByLedger 已按 order 升序，UI 无需再映射）
+    val budgetFen: Long,      // 该分类当月预算（分）
+    val usedFen: Long,        // 该分类当月实际支出累计（分）= CategoryAgg.totalFen
 ) {
-    val hasOverBudget: Boolean get() =
-        (total?.overBudget == true) || categoryLines.any { it.spentFen > it.budget.amount }
+    val remainingFen: Long get() = budgetFen - usedFen     // 分类剩余 = 预算 − 已用；可为负（超支）
+    val overBudget: Boolean get() = usedFen > budgetFen    // 分类超支 = 已用 > 预算
 }
 ```
 
-- `ObserveBudgetProgressUseCase(ledgerId, month)`：`combine(budgetRepository.observeByMonth(...), transactionRepository.observeCategoryAgg(type=expense, 当月...), categories.observeByLedger(...))` → `Flow<BudgetProgress>`；总额已用 = 各分类 `totalFen` 之和（等价 `monthlySummary.expenseFen`，`categoryId` 恒非空）。
+- `ObserveBudgetProgressUseCase.observe(month: YearMonth)`：`combine(budgetRepository.observeByMonth(ledgerId, month), transactionRepository.observeCategoryAgg(type=expense, 当月首/末日), categoryRepository.observeByLedger(ledgerId, type=expense))` → `Flow<BudgetProgress>`；`ledgerId` 取自 `LedgerDataStore.currentLedgerId`（切账本即 `flatMapLatest` 重订阅，§8.3），`month` 经 `TimeFormatter.formatYearMonth` 转 `yyyy-MM` 存入 `BudgetProgress.month`（域模型 `month` 为 `String`，非 `YearMonth`）；总额已用 = 各分类 `totalFen` 之和（等价 `monthlySummary.expenseFen`）。
+- 总额预算取 `budgets` 中 `categoryId == null` 的总预算行，未设则为 0；`overBudget` 以「已设预算(>0)」为守卫——**未设总额预算(0)不算超支**。
+- 分类预算进度只收录「已设分类预算且分类仍存在」的行：**分类已删除的孤儿预算被跳过（不入 `categoryProgress`）**，`CategoryBudgetProgress.category` 恒非空、UI 无需兜底展示（P1-1 已在删分类时事务内级联 `deleteByCategoryId` 清预算；此处跳过为 observe 路径对历史/竞态孤儿的兜底）。
 - 超支提醒只见 `BudgetProgress.hasOverBudget` 派生：页内标红 + 入口提示（DEC-012 App 内告警）；无通知栏、无 `POST_NOTIFICATIONS`。
 
 ### 12.4 通用约定重申
