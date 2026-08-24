@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用图标前景：白色 ¥ 符号（描边绘制，位于自适应图标 66dp 安全区内居中）。
+     结构：中心竖线 + 上方 V 分叉（Y 主体）+ 两条横线（人民币符号上下两横）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Y 主体：竖线 + 向上分叉的两斜线 -->
+    <path
+        android:pathData="M54,74 L54,48 M54,48 L40,34 M54,48 L68,34"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 上横线 -->
+    <path
+        android:pathData="M38,34 L70,34"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round" />
+    <!-- 下横线 -->
+    <path
+        android:pathData="M40,43 L68,43"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round" />
+</vector>
