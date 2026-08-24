@@ -154,15 +154,16 @@ class AppLockController(
      * 静默开库直达（§7.4 分诊 A）。
      *
      * @param activity 当前 [FragmentActivity]（BiometricPrompt）。
-     * @param onResult 切换结果回调（true=已重加密为 plain 包裹；false=认证取消/失败或
-     *                 DEC-003 设备无锁屏）。
+     * @param onResult 切换结果回调（[LockSwitchResult.SUCCESS]=已重加密为 plain 包裹；
+     *                 [LockSwitchResult.AUTH_FAILED]=认证取消/失败或 DEC-003 设备无锁屏；
+     *                 [LockSwitchResult.REWRAP_FAILED]=认证通过但重包裹落盘失败）。
      */
     fun downgradeToPlainKey(
         activity: FragmentActivity,
-        onResult: ((Boolean) -> Unit)? = null,
+        onResult: ((LockSwitchResult) -> Unit)? = null,
     ) {
         if (!biometricHelper.isDeviceSecure()) {
-            onResult?.invoke(false)
+            onResult?.invoke(LockSwitchResult.AUTH_FAILED)
             return
         }
         val cipher = keyManager.createDecryptCipher(useAuth = true)
@@ -171,81 +172,85 @@ class AppLockController(
             cipher = cipher,
             onSuccess = { authorizedCipher ->
                 applicationScope.launch {
-                    val success = withContext(Dispatchers.IO) {
+                    val result = withContext(Dispatchers.IO) {
                         try {
                             val masterKey = keyManager.decryptBlobWith(authorizedCipher)
                             try {
                                 keyManager.persistMasterKey(masterKey, useAuth = false)
-                                true
+                                LockSwitchResult.SUCCESS
                             } finally {
                                 Arrays.fill(masterKey, 0) // ARCHITECTURE §7.2 密钥清零审查点
                             }
                         } catch (e: Exception) {
-                            false
+                            LockSwitchResult.REWRAP_FAILED
                         }
                     }
-                    onResult?.invoke(success)
+                    onResult?.invoke(result)
                 }
             },
-            onError = { _, _ -> onResult?.invoke(false) },
+            onError = { _, _ -> onResult?.invoke(LockSwitchResult.AUTH_FAILED) },
         )
     }
 
     /**
      * 锁状态切换（关→开，DEC-002）：把 master key blob 从 plain 包裹重加密为 auth 包裹。
      *
-     * 用户在设置页开启应用锁时调用（TASK-027 设置页消费）：先经 [BiometricHelper] 认证解出
-     * master key，再 [KeyManager.persistMasterKey]（`useAuth=true`）覆盖 blob，master key 用后
-     * 立即清零（ARCHITECTURE §7.2 审查点）；成功后旧 blob 失效，此后冷启动走 auth key 认证开库。
-     * 幂等：若 blob 已是 auth 包裹（[KeyManager.decryptBlobWith] 直接成功），视为成功返回。
+     * 用户在设置页开启应用锁时调用（TASK-027 设置页消费）：认证成功后从 plain 包裹解出
+     * master key，再以**已被认证授权**的 auth ENCRYPT cipher 经
+     * [KeyManager.persistMasterKeyWithCipher] 覆盖 blob（对齐 [authFirstLaunchOpen] 的正确
+     * 实现），master key 用后立即清零（ARCHITECTURE §7.2 审查点）；成功后旧 blob 失效，此后
+     * 冷启动走 auth key 认证开库。**绝不**在认证后新建 auth-key cipher（会抛
+     * [android.security.keystore.UserNotAuthenticatedException]，KEY_USER_NOT_AUTHENTICATED）。
+     *
+     * 说明：正常「关→开」流程中 blob 恒为 plain 包裹（DEC-002：锁关闭 ⟹ plain 包裹），故本
+     * 方法从 plain 包裹解出 master key 后再重包为 auth 包裹；两包裹始终指向同一 32B master key。
      *
      * @param activity 当前 [FragmentActivity]（BiometricPrompt）。
-     * @param onResult 切换结果回调（true=已重加密为 auth 包裹；false=认证取消/失败或
-     *                 DEC-003 设备无锁屏）。
+     * @param onResult 切换结果回调（[LockSwitchResult.SUCCESS]=已重加密为 auth 包裹；
+     *                 [LockSwitchResult.AUTH_FAILED]=认证取消/失败或 DEC-003 设备无锁屏；
+     *                 [LockSwitchResult.REWRAP_FAILED]=认证通过但重包裹落盘失败）。
      */
     fun upgradeToAuthKey(
         activity: FragmentActivity,
-        onResult: ((Boolean) -> Unit)? = null,
+        onResult: ((LockSwitchResult) -> Unit)? = null,
     ) {
         if (!biometricHelper.isDeviceSecure()) {
-            onResult?.invoke(false)
+            onResult?.invoke(LockSwitchResult.AUTH_FAILED)
             return
         }
         if (!keyManager.hasMasterKeyBlob()) {
             // 防御：正常流程下设置页可达时 blob 必已生成（解锁首启路径已落盘）；缺失时失败不崩溃。
-            onResult?.invoke(false)
+            onResult?.invoke(LockSwitchResult.AUTH_FAILED)
             return
         }
-        val cipher = keyManager.createDecryptCipher(useAuth = true)
+        // 绑定一把 auth-gated ENCRYPT cipher 到 BiometricPrompt（对齐 authFirstLaunchOpen）：
+        // 认证通过后 Keystore 才对这把 cipher 放行 doFinal；复用回调返回的 authorizedCipher
+        // 重加密 master key 落盘，绝不新建未授权 cipher（会抛 UserNotAuthenticatedException）。
+        val encryptCipher = keyManager.createMasterKeyEncryptCipher(useAuth = true)
         biometricHelper.authenticate(
             activity = activity,
-            cipher = cipher,
+            cipher = encryptCipher,
             onSuccess = { authorizedCipher ->
                 applicationScope.launch {
-                    val success = withContext(Dispatchers.IO) {
+                    val result = withContext(Dispatchers.IO) {
                         try {
-                            val masterKey = try {
-                                // auth 解包成功 → blob 已是 auth 包裹（幂等），确认后直接成功、不重写。
-                                keyManager.decryptBlobWith(authorizedCipher).also { Arrays.fill(it, 0) }
-                                return@withContext true
-                            } catch (e: Exception) {
-                                // auth 解包失败 → blob 仍是 plain 包裹（正常「关→开」）→ 解出后重包裹。
-                                keyManager.getMasterKey(useAuth = false)
-                            }
+                            // 从 plain 包裹静默解出 master key（DEC-002 双钥：plain 包裹无需认证）。
+                            val masterKey = keyManager.getMasterKey(useAuth = false)
                             try {
-                                keyManager.persistMasterKey(masterKey, useAuth = true)
-                                true
+                                // 复用已授权 cipher（authorizedCipher）重加密落盘，不新建 cipher。
+                                keyManager.persistMasterKeyWithCipher(masterKey, authorizedCipher)
+                                LockSwitchResult.SUCCESS
                             } finally {
                                 Arrays.fill(masterKey, 0) // ARCHITECTURE §7.2 密钥清零审查点
                             }
                         } catch (e: Exception) {
-                            false
+                            LockSwitchResult.REWRAP_FAILED
                         }
                     }
-                    onResult?.invoke(success)
+                    onResult?.invoke(result)
                 }
             },
-            onError = { _, _ -> onResult?.invoke(false) },
+            onError = { _, _ -> onResult?.invoke(LockSwitchResult.AUTH_FAILED) },
         )
     }
 
@@ -348,4 +353,18 @@ private fun LockTimeout.toLockDelayMillis(): Long = when (this) {
     LockTimeout.ONE_MINUTE -> 60_000L
     LockTimeout.FIVE_MINUTES -> 300_000L
     LockTimeout.NEVER -> -1L
+}
+
+/**
+ * 应用锁开/关切换结果（TASK-027 设置页消费）。
+ *
+ * 区分两类失败，供 UI 精确播报（P2：原「认证取消或未通过」文案与真实失败原因不符）：
+ * - [AUTH_FAILED]：用户取消 / 生物特征未通过 / DEC-003 设备无锁屏 / 缺 blob 等认证前置失败；
+ * - [REWRAP_FAILED]：认证已通过，但 master key 重包裹（重加密落盘）失败；
+ * - [SUCCESS]：重包裹成功。
+ */
+enum class LockSwitchResult {
+    SUCCESS,
+    AUTH_FAILED,
+    REWRAP_FAILED,
 }

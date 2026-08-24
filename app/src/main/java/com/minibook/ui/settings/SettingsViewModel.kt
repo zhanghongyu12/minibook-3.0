@@ -9,6 +9,7 @@ import com.minibook.data.local.datastore.LockTimeout
 import com.minibook.data.local.datastore.SettingsDataStore
 import com.minibook.data.local.security.AppLockController
 import com.minibook.data.local.security.BiometricHelper
+import com.minibook.data.local.security.LockSwitchResult
 import com.minibook.domain.usecase.export.ExportAllUseCase
 import com.minibook.domain.usecase.export.ImportAllUseCase
 import com.minibook.domain.usecase.export.ImportResult
@@ -154,14 +155,18 @@ class SettingsViewModel @Inject constructor(
                 _snackbar.value = "开启失败：缺少页面上下文"
                 return
             }
-            appLockController.upgradeToAuthKey(host) { success ->
-                if (success) {
-                    viewModelScope.launch {
-                        settingsDataStore.setAppLockEnabled(true)
-                        _snackbar.value = "应用锁已开启，下次进入应用需生物识别解锁"
+            appLockController.upgradeToAuthKey(host) { result ->
+                when (result) {
+                    LockSwitchResult.SUCCESS -> {
+                        viewModelScope.launch {
+                            settingsDataStore.setAppLockEnabled(true)
+                            _snackbar.value = "应用锁已开启，下次进入应用需生物识别解锁"
+                        }
                     }
-                } else {
-                    _snackbar.value = "开启失败：认证取消或未通过"
+                    LockSwitchResult.AUTH_FAILED ->
+                        _snackbar.value = "开启失败：用户取消或认证未通过"
+                    LockSwitchResult.REWRAP_FAILED ->
+                        _snackbar.value = "开启失败：重包裹失败，请重试"
                 }
             }
         } else {
@@ -171,14 +176,18 @@ class SettingsViewModel @Inject constructor(
                 _snackbar.value = "关闭失败：缺少页面上下文"
                 return
             }
-            appLockController.downgradeToPlainKey(host) { success ->
-                if (success) {
-                    viewModelScope.launch {
-                        settingsDataStore.setAppLockEnabled(false)
-                        _snackbar.value = "应用锁已关闭，数据仍保持加密"
+            appLockController.downgradeToPlainKey(host) { result ->
+                when (result) {
+                    LockSwitchResult.SUCCESS -> {
+                        viewModelScope.launch {
+                            settingsDataStore.setAppLockEnabled(false)
+                            _snackbar.value = "应用锁已关闭，数据仍保持加密"
+                        }
                     }
-                } else {
-                    _snackbar.value = "关闭失败：认证取消或未通过"
+                    LockSwitchResult.AUTH_FAILED ->
+                        _snackbar.value = "关闭失败：用户取消或认证未通过"
+                    LockSwitchResult.REWRAP_FAILED ->
+                        _snackbar.value = "关闭失败：重包裹失败，请重试"
                 }
             }
         }
