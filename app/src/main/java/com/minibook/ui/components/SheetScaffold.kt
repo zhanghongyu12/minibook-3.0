@@ -62,16 +62,16 @@ fun SheetFormScaffold(
             )
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                ) { Text("取消") }
+                Spacer(Modifier.width(12.dp))
                 Button(
                     onClick = onConfirm,
                     enabled = confirmEnabled,
                     modifier = Modifier.weight(1f),
                 ) { Text(confirmLabel) }
-                Spacer(Modifier.width(12.dp))
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
-                ) { Text("取消") }
             }
         }
     }
