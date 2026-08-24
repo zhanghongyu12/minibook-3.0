@@ -194,4 +194,77 @@
 
 ---
 
+## DEC-016: F-12 微信账单 XLSX 解析路线（手动 zip+XML，不引 Apache POI）
+
+- 日期：2026-08-24
+- 决定：微信 `.xlsx` 账单解析**手动解析 zip 容器 + XML**：用 JDK 内置 `java.util.zip.ZipFile` 打开 xlsx（本质 zip），读 `xl/sharedStrings.xml`（`t="s"` 单元格反查共享字符串）与 `xl/worksheets/sheet1.xml`，用 `XmlPullParser`（`android.util.Xml.newPullParser()`，`org.xmlpull.v1` Android 内置）流式解析，**不引入 Apache POI 或任何第三方 xlsx 库**。
+- 原因：① xlsx 是「zip + OOXML」公开格式，本需求只读 `sheet1` 首表 + `sharedStrings` 这一条窄路径，`ZipFile + XmlPullParser` 足够；② Apache POI（poi-ooxml，约 10MB+、全量解析模型）体积大、方法数多（对 method count 有压力），引入即构成 DEC-001「技术栈不可改」的依赖变更；③ 与 DEC-011（F-07 报表零图表库）同「能原生就不引第三方」风格，本地记账应用不值得为单一窄格式引入重库。代价：需自行处理 OOXML 细节（命名空间、sharedStrings 反查、inlineStr、日期序列数），属有限可控复杂度，以下列要点收敛并强制单测覆盖。
+- 实现要点与风险（TASK-042 落地 + fixture 单测覆盖）：
+  1. **命名空间**：`sheet1.xml` 根 `<worksheet xmlns=".../spreadsheetml/2006/main" ...>` 带默认命名空间。`XmlPullParser` 应一致按 localName 匹配（无前缀的 `<row>`/`<c>`/`<v>`/`<is>`/`<t>` 等 `getName()` 即 localName；属性用 `getAttributeValue(null, "r")`/`getAttributeValue(null, "t")` 取），避免被默认命名空间/前缀干扰。不要用 `r:id` 这类带前缀名匹配。
+  2. **sharedStrings 反查**：`xl/sharedStrings.xml` 的 `<si><t>文本</t></si>` 单文字节点 + 富文本 `<si><r><t>text</t></r>…</si>`（需拼接多个 `<r><t>`）；`xml:space="preserve"` 的空格须保留。建立 `List<String>`（index = `<si>` 顺序），`t="s"` 单元格的 `<v>` 存下标 → 反查。微信账单表头与中文文本多走 sharedStrings。
+  3. **inlineStr 兼容**：单元格可能 `t="inlineStr"`，文本直接在 `<is><t>…</t></is>`；`t="str"`（公式结果字符串）也按 `<v>` 直读。三种 cell 类型都要支持，**不能只写死 `t="s"`**。
+  4. **日期序列数（PRD DEC-015）**：微信「交易时间」为 Excel 序列数（如 `46257.7435...`）。取小数点**左侧整数部分**（字符串 `substringBefore('.')`），`LocalDate.of(1899, 12, 30).plusDays(整数天数)` 得 `yyyy-MM-dd`，时分秒丢弃；全程字符串/整数拆分，**禁 Double**。序列数以 `<v>` 文本字面量读入（不 `toDouble`）。
+  5. **金额**：`<v>` 数值单元格按文本字面量读入（如 `8.7`/`6.50`），交 `MoneyFormatter.toFen`（BigDecimal setScale(2)，§9.2），**不 parse 为 Double**。
+  6. **列定位与稀疏 cell**：`<c r="A1" t="s"><v>…</v></c>` 的 `r` 属性前缀字母 = 列（A/B/C…）。动态表头探测（同 CSV，§16）：首行表头 cell 按列名关键词（交易时间 / 收 / 支 / 金额(元) / 交易对方 / 收付款方式 / 商品 / 备注 / 交易单号 / 交易类型 等）记列偏移。**cell 可能稀疏**（空 cell 缺 `<c>`），按 `r` 前缀列字母计算绝对列偏移，不能假设每 row 有相同数量 `<c>`。
+  7. **版本漂移风险**：微信「账单明细」不同版本导出件的列名/列序可能微调——**动态表头探测不写死列序**，只匹配关键词（与 CSV 同径）。
+- 影响：新增 `data/local/import/WechatXlsxParser.kt`（ZipFile+XmlPullParser）+ 单测 fixture `.xlsx`；不改 `gradle/libs.versions.toml`/`app/build.gradle.kts`（零新依赖，DEC-001 不变）。
+- 替代方案：引 Apache POI（poi-ooxml，弃：体积/method count 压力 + 构成 DEC-001 依赖变更，换取一条窄路径解析不划算）；引轻量 `fastexcel`/`xlsx-streamer`（弃：仍是第三方依赖，OOXML 窄路径 ZipFile+Xml 足够）。
+- 最终选择：**手动 zip+XML（ZipFile + XmlPullParser），零第三方 xlsx 库，DEC-001 技术栈不变**（不构成 DEC-001 变更，无需用户拍板）。
+
+---
+
+## DEC-017: F-12 账单文件读取与临时文件生命周期
+
+- 日期：2026-08-24
+- 决定：
+  1. **读取口径**：XLSX 需可重入/随机读（`ZipFile` 要求可 seek 的 `File`/fd），而 SAF 返回的是 `content://` Uri（可能来自云端/外部存储 provider，不可稳定重读）→ **先经 `ContentResolver.openInputStream(uri)` 把内容流式拷贝到 `context.cacheDir` 下临时文件**（`minibook_import_<uuid>.xlsx`），再 `ZipFile(tempFile)` 打开；CSV 是顺序读，**直接 `openInputStream(uri)` 流式逐行读**（GBK `InputStreamReader`），不落临时文件。
+  2. **临时文件生命周期**：仅 XLSX 产生 tempFile；无论成功/失败/用户取消，编排方在 `finally` 删除该 tempFile（`tempFile.delete()`）；前缀 `minibook_import_` 供识别，极端残留（进程被杀）不敏感（cacheDir 系统可回收）。
+  3. **格式探测**：优先取 SAF `displayName` 扩展名（`.csv`→支付宝、`.xlsx`→微信）分发 `BillParserFactory`；扩展名缺失/失配时按内容嗅探兜底——文件头 `PK\x03\x04`（zip 魔数）→ xlsx，否则按文本（首行含「交易时间」等关键词）按 CSV 试解；探测失败 → 报「未识别账单格式」，零落库。
+- 原因：`ZipFile` 构造需要可 seek 的本地 `File`（或 fd），SAF content Uri 不稳定可重读，落盘 cacheDir 最稳；CSV 无需 seek，流式零额外拷贝、内存友好（千条级逐行）；临时文件严格清理防 cache 膨胀。
+- 影响：新增域接口 `domain/usecase/import/BillFilePreparer`（纯 Kotlin：`prepare(uriString): PreparedBillFile`，含 `displayName` + 关闭钩子）与数据层实现 `data/local/import/SafBillFilePreparer`（Android 依赖 ContentResolver/Context，是解析栈唯一触碰 Android 框架的一环，与 CSV/XLSX 解析核心解耦）；`ImportBillUseCase` 编排 finally 清理；`BillParserFactory` 接收探测结果。
+- 替代方案：XLSX 用 `ContentResolver.openFileDescriptor(uri,"r")` 直接 `ZipFile(fd)`（弃：远端 provider 可能不支持 fd、生命周期难管）；CSV 也落临时文件（弃：多余 IO，顺序读无需 seek）；只认扩展名不做内容嗅探（弃：用户改后缀/无扩展名直接失败，体验差）。
+- 最终选择：**XLSX 落 cacheDir 临时文件 + CSV 流式 + finally 清理 + 扩展名主/内容嗅探兜底**。
+
+---
+
+## DEC-018: F-12 transactions 加列与 DB version 2 迁移基线
+
+- 日期：2026-08-24
+- 决定：
+  1. `transactions` 新增 4 列：`externalId TEXT NULL`、`counterparty TEXT NULL`、`paymentMethod TEXT NULL`、`source TEXT NOT NULL DEFAULT 'manual'`；新增唯一索引 `UNIQUE(ledgerId, externalId)`（索引名 `index_transactions_ledgerId_externalId`）。
+  2. **数据库版本 1 → 2**：本项目**首个破坏性 schema 变更**（此前 Phase 2 搜索/报表/预算「无新表无新索引」、版本维持 1），显式 `MIGRATION_1_2` 落地，`fallbackToDestructiveMigration(false)` 不变。
+  3. `source` 枚举落 `domain/model/Enums.kt` 新增 `TransactionSource{ MANUAL("manual"), WECHAT_IMPORT("wechat_import"), ALIPAY_IMPORT("alipay_import") }`，Entity 以 String 存（mapper 互转，同 type/syncStatus 既有约定）；手动记账路径 `source=manual`、`externalId/counterparty/paymentMethod=null`（domain 默认值即自动满足，`AddTransactionUseCase` 零改动）。
+  4. **SQLite 唯一索引对 NULL 的语义（幂等关键）**：SQLite 中 UNIQUE 索引把 NULL 视为互异（任意多条 NULL 均不冲突）→ 手动记录 `externalId=NULL` 天然不参与 `UNIQUE(ledgerId, externalId)` 冲突，**无需部分索引（`WHERE externalId IS NOT NULL`）或触发器**，即满足 PRD「手动记录 externalId=null 不参与冲突」。
+  5. 迁移 SQL（`MIGRATION_1_2` 顺序：先 4 列 `ADD COLUMN`，再 `CREATE UNIQUE INDEX`）：
+     ```sql
+     ALTER TABLE transactions ADD COLUMN externalId TEXT;
+     ALTER TABLE transactions ADD COLUMN counterparty TEXT;
+     ALTER TABLE transactions ADD COLUMN paymentMethod TEXT;
+     ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+     CREATE UNIQUE INDEX index_transactions_ledgerId_externalId
+         ON transactions(ledgerId, externalId);
+     ```
+     > `ADD COLUMN ... NOT NULL DEFAULT 'manual'`：SQLite 允许对既有行加 NOT NULL 列，前提是提供非空默认（`'manual'` 满足）。
+  6. Entity 侧 `@ColumnInfo(defaultValue = "'manual'")`（source 列）+ `@Index(value=["ledgerId","externalId"], unique=true, name="index_transactions_ledgerId_externalId")`；`exportSchema=true` 生成 `2.json`，配 `MigrationTestHelper` 迁移测试。
+- 原因：PRD/DEC-015 已锁「4 列 + 唯一索引」口径，本条把「落库表达」与「SQLite NULL 语义」固化，消除「唯一索引对 NULL 是否去重」的实现歧义；版本 2 是事实上的首个迁移（此前全功能叠在 version 1）。
+- 影响：DATABASE §2/§4.1/§5.1/§7.5、`MiniBookDatabase`（version=2 + MIGRATION_1_2）、Entity/Domain/Mapper/Enums 四层贯通、`RoomDataSourceImpl.getById` 的 Cursor 映射补新列。
+- 替代方案：externalId 用哨兵空串替代 NULL（弃：污染语义、无法与「无 externalId」区分）；部分唯一索引 `WHERE externalId IS NOT NULL`（弃：SQLite 需单独部分索引 DDL，而 NULL 本就互异、无必要）；破坏性重建（弃：违反 `fallbackToDestructiveMigration(false)`）。
+- 最终选择：**加 4 列 + 普通唯一索引（NULL 互异天然达标）+ 版本 2 + 显式 MIGRATION_1_2**。
+
+---
+
+## DEC-019: F-12 自动分类映射与幂等计数机制
+
+- 日期：2026-08-24
+- 决定：
+  1. **映射表落 domain 常量** `domain/model/BillCategoryMapping`（键 = `(platform, platformCategory 子串, type)`，值 = 目标内置分类名），内容与 PRD §F-12 表逐行一致；`platformCategory` 原始串只在解析中间模型 `ParsedBillRow` 暂存、**不落库**。
+  2. **解析机制**：映射产出「目标内置分类名」→ 在**导入开始时一次性快照**「当前账本全部分类」（复用既有 `CategoryDataSource.observeByLedger(ledgerId, null).first()`）建 `Map<(type, name) → categoryId`，按 `(type, name)` 精确匹配解析；查不到 → 回退该 `type` 的「其他」内置分类（DEC-007 锁定默认名，恒可定位兜底锚点）。一次快照避免千条级逐条查库。分类为**预填**，用户可事后改名/改分类。
+  3. **幂等计数机制（单事务内，配合 DEC-015「逐行过滤 + 单事务整批写入」）**：`ImportBillUseCase` 在 `TransactionRunner.runInTransaction` 事务内——① 先 `SELECT externalId ... WHERE ledgerId=? AND externalId IS NOT NULL` 取既有集合；② 有效行按文件序去重（同一 externalId 首次入列、后续计「已存在」）；③ 与既有集合相交的行计「已存在」不入列；④ 剩余行经新增 `TransactionDao.insertAll(entities)`（`@Insert(OnConflictStrategy.IGNORE)`，返回 `List<Long>`，`-1` 即被忽略）批量插入，`-1` 数量追加计「已存在」。既有集合预查与批量插入同处一个事务（SQLite 单写者无竞态），IGNORE 作残余竞态/文件内重复的最后防线。
+- 原因：自动分类需可扩展且不依赖「分类名永不变」（用户可改名内置），故走「映射→内置名→(type,name) 匹配快照→兜底其他」；幂等计数需「行级语义 + 整批单事务」，事务内预查 + IGNORE 批量插入既保证计数确定、又无半导入中间态（延续 DEC-015）。
+- 影响：`domain/model/BillCategoryMapping`、`TransactionDao.insertAll(IGNORE)`/`getAllExternalIds`、`TransactionDataSource.insertBatch`/`getExistingExternalIds`、`ImportBillUseCase`。
+- 替代方案：逐行 insert 并 try/catch `SQLiteConstraintException`（弃：事务内逐行异常处理繁琐，且异常打断 Room 事务流程）；只预查不 IGNORE（可，但 IGNORE 作竞态/文件内重复最后防线更稳）；映射表放数据层（弃：映射是纯业务规则，domain 常量可单测、UI 可复用）。
+- 最终选择：**domain 常量映射表 + (type,name) 快照匹配 + 「其他」兜底 + 事务内预查去重 + IGNORE 批量插入计数**。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

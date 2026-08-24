@@ -2,8 +2,8 @@
 
 > 项目：MiniBook Android 重构版（本地优先记账应用）
 > 维护者：全员可更新（项目状态区块由当前阶段负责角色更新）
-> 最后更新：2026-08-21
-> 状态：阶段 9 已完成（v1.0.0 MVP 发布）
+> 最后更新：2026-08-24
+> 状态：阶段 9 已完成（v1.0.0 MVP 发布）；Phase 2 F-12 架构设计完成待编码
 >
 > 文档编号映射（已对齐 AI-work-model 编号规范，document_rules §文档编号体系）：
 > - `docs/00_idea.md`（已归档，被 01_prd 取代）
@@ -23,9 +23,9 @@
 ## 项目状态区块
 
 - 运行模式：**编排模式**
-- 当前阶段：**Phase 2 已完成（编码 + 测试 + 评审闭环，待发布 push）**
-- 当前任务：Phase 2 F-06 搜索 / F-07 报表 / F-08 预算全部落地（17 commit：需求/架构/UI/编码九任务/测试/评审/P1-1 修复），全量单测 95 例全绿
-- 下一步行动：Phase 2 待 push（需人工批准，领先 origin 18 commit）；遗留待办挂账（① release 签名 keystore ② instrumented 真机执行 ③ P2 技术债：导航风格并存 / 三文件超 300 行 / GRANULARITY 命名 / BudgetProgress 与 04§12.3 契约漂移 ④ Phase 3 云端同步）
+- 当前阶段：**Phase 2（F-06/07/08 编码+测试+评审闭环；F-12 架构设计完成，待 Designer/Developer）**
+- 当前任务：Phase 2 F-06 搜索 / F-07 报表 / F-08 预算全部落地（17 commit，全量单测 95 例全绿）；**F-12 微信/支付宝账单导入架构/DB/API 设计 + TASK-040~044 拆分完成**（DEC-015~019 + 02/03/04/06/07/CHANGELOG 落盘），待 Developer 实现
+- 下一步行动：Phase 2 待 push（需人工批准，领先 origin 18 commit）；F-12 待 Designer（入口/提示页 UI，PRD 只锁入口层级）+ Developer（TASK-040~044）接力；遗留待办挂账（① release 签名 keystore ② instrumented 真机执行 ③ P2 技术债：导航风格并存 / 三文件超 300 行 / GRANULARITY 命名 / BudgetProgress 与 04§12.3 契约漂移 ④ Phase 3 云端同步）
 - 阻塞项：无
 
 ---
@@ -39,6 +39,7 @@
 - 2026-08-20（阶段 6~9 收尾）：阶段 6 编码（TASK-001~030 + UI 接线 + 连接债务收尾）全部完成；阶段 7 测试落地（4 JVM 单测全绿 + 3 instrumented 骨架）；阶段 8 评审（3 层并行 Reviewer）发现并修复 2 个严重安全 bug（DEC-002 双钥系统：缺失关→开重包裹路径 + 首启 master key 生成未接线 + unlock 兜底）+ 9 个高价值警告项（错误分类/Update 校验/Bootstrap 事务/数据源原子/圈账本/三页 Error 态/重试/snackbar 重放）；阶段 9 发布——修复 release lintVital 拦截（data_extraction_rules.xml 非法 domain）、assembleRelease 成功产出 `app-release-unsigned.apk`、发布说明落盘 `docs/RELEASE_NOTES.md`。v1.0.0 MVP 交付，全部提交推送 GitHub。
 - 2026-08-21（v1.0.0 收尾补漏，编排者调度）：① 修复首页最近交易分类联表 TODO——HomeViewModel 注入 ObserveCategoriesUseCase、HomeUiState.Success 携带 categoriesById、HomeScreen 传真实分类名/图标/色（替代 null 占位 ❔），commit 0c041a3；② 可测性改造——DatabaseGate 提炼 DatabaseProvider 接口（加密语义零改动），RoomTransactionRunner/RoomDataSourceImpl 依赖接口化，commit 3f042b6；③ Tester 补全 TransactionRunnerAtomicityTest 三个空骨架用例为真实断言（内存库 + DatabaseProvider 替身：deleteById 三表分发 / runInTransaction 回滚 / deleteByLedger 四表批删），commit ab7214c；④ 构建验证全绿（compileDebugKotlin + testDebugUnitTest 56 例 + compileDebugAndroidTestKotlin）；⑤ 任务清单 TASK-001~030 状态统一翻转为「已完成」。instrumented 用例仍待设备执行（标注待人工，见 09_test_report.md / 10_release_notes.md）。
 - 2026-08-21（Phase 2 全线落地，编排者调度）：PM DEC-010 + PRD F-06/07/08 细化（fc28d98）→ 协调者需求确认（2818aa0）→ Architect DEC-011~013 + 架构/DB/API 设计 + TASK-031~039 拆分（e9aa4ee）→ Designer 三页 UI + C-27~C-32（306ed7b）→ 编码九任务（数据层 3fbe724、搜索 UseCase d7e8d0b、收支页联表 911f6ed、预算 UseCase+BudgetProgress 守卫 5ba92e4、图表组件 fb63970、搜索页 ccff71a、报表页 efbe338、预算页 07154fe、接线收口 8b0588e）→ Tester 补测 56→95 例全绿 + 09_test_report（a3764b4）→ Reviewer 评审 08_review（20cea82，P1-1 孤儿预算 + P2 六项）→ Developer 修 P1-1 删除分类级联清理预算（ac5579d）。三大技术口径落地：DEC-011 Canvas 自绘零第三方图表、DEC-012 App 内告警无通知栏、DEC-013 扩展 observeFiltered 零 Repository 改。全量 95 例单测 + compileDebugAndroidTestKotlin 全绿，未 push（待人工批准）。
+- 2026-08-24（F-12 架构设计，Architect 调度，无人值守自决）：PM DEC-015 + PRD F-12 落盘（15cfc7a）→ Architect 补 DEC-016~019（XLSX 零依赖手动解析 / 文件读取与临时文件 / DB version 2 迁移 / 自动分类与幂等计数）+ 02/03/04 设计（transactions 加 4 列 + UNIQUE(ledgerId,externalId)、MIGRATION_1_2、BillParser 抽象、ImportBillUseCase、import 路由）+ TASK-040~044 拆分。口径：DB 1→2 首个迁移、UNIQUE 对 NULL 互异（手动记录不参与去重）、过滤行级+单事务整批写入（延续 DEC-015）、解析纯 Kotlin 可单测（SafBillFilePreparer 为唯一 Android 边界）。
 
 ---
 
@@ -1212,3 +1213,173 @@
   - [ ] 分类已删（边缘态）不崩溃，回退 id 或空占位
   - [ ] 复用 `ObserveCategoriesUseCase`，不新增查询/不扩展 DAO
 - 需测试覆盖点：分类名映射（UI 可选）。
+
+---
+
+> **F-12 账单导入任务拆分**（Architect 产出，2026-08-24）。覆盖微信/支付宝账单导入 + 自动分类 + 幂等去重；对齐 DEC-015/016/017/018/019（详见 02_architecture §16 / 03_database §4.1·§7.5 / 04_api §13）。分层概览：
+> - **数据层 migration/模型**（1）：TASK-040
+> - **解析器**（2）：TASK-041 支付宝 CSV、TASK-042 微信 XLSX
+> - **UseCase**（1）：TASK-043 编排 + 自动分类 + 数据访问增量
+> - **UI**（1）：TASK-044 入口/提示/文件选择/结果
+> 公共约定同前（版本锁定 / ledgerId 首参 / Long 分 / 测例归属）；**零第三方依赖**（DEC-016 手动解析 XLSX）；**首个 DB 迁移 1→2**（DEC-018），`fallbackToDestructiveMigration(false)` 不变。
+
+---
+
+### TASK-040: F-12 数据层 migration + 模型四层贯通（DB version 2 / 4 新列 / 唯一索引）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层 / 领域契约层
+- 关联需求：F-12；DEC-018
+- 估算：1 天
+- 依赖关系：TASK-002、TASK-003、TASK-006、TASK-008
+- 涉及文件：
+  - `data/local/db/entity/TransactionEntity.kt`（加 4 字段 + 唯一索引 + `ColumnInfo`）
+  - `data/local/db/MiniBookDatabase.kt`（`version = 2` + `MIGRATION_1_2`）
+  - `domain/model/Transaction.kt`（加 4 字段）
+  - `domain/model/Enums.kt`（加 `TransactionSource`）
+  - `data/mapper/TransactionMapper.kt`（4 字段互转）
+  - `data/local/datasource/RoomDataSourceImpl.kt`（`Cursor.toTransactionEntity` 补读新列）
+- 描述：
+  - DB version 1→2 + `MIGRATION_1_2`，SQL 逐字对齐 03_database §7.5：4 条 `ADD COLUMN`（`externalId TEXT`/`counterparty TEXT`/`paymentMethod TEXT`/`source TEXT NOT NULL DEFAULT 'manual'`）+ `CREATE UNIQUE INDEX index_transactions_ledgerId_externalId ON transactions(ledgerId, externalId)`。
+  - `TransactionEntity` 加 `externalId/counterparty/paymentMethod`（可空，默认 null）+ `source`（默认 `"manual"`，`@ColumnInfo(defaultValue = "'manual'")`），`@Index(value=["ledgerId","externalId"], unique=true, name="index_transactions_ledgerId_externalId")`。
+  - `Transaction` 领域模型加同名字段（`source: TransactionSource = MANUAL`）；`Enums.kt` 加 `TransactionSource{ MANUAL/wechat_import/alipay_import }`；mapper 双向转码（source 同 type 以 value 串落盘）。
+  - `RoomDataSourceImpl.getById` 的 Cursor 映射补读 4 新列（否则回读丢列）。
+  - 手动记账路径零改动：domain 默认值 + entity 默认值即保证 `source=manual`、三列 null（`AddTransactionUseCase` 不感知新列）。
+- 验收标准：
+  - [ ] `MIGRATION_1_2` SQL 与 03_database §7.5 逐字一致（索引名 `index_transactions_ledgerId_externalId` 与实体注解一致）
+  - [ ] `exportSchema=true` 编译导出 `2.json`；`fallbackToDestructiveMigration(false)` 不变
+  - [ ] 既有手动记账编译通过、行为不变（source=manual，其余三列 null）
+  - [ ] mapper 往返含 4 新字段不丢（source 枚举 value 串一致）
+  - [ ] `getById` 回读 4 新列正确
+- 需测试覆盖点：迁移往返（instrumented，MigrationTestHelper：version 1 旧库升级、新列可读、唯一索引生效）。
+
+---
+
+### TASK-041: F-12 解析器抽象 + 支付宝 CSV 解析器
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层（解析器，纯 Kotlin）
+- 关联需求：F-12；DEC-015、DEC-017
+- 估算：1 天
+- 依赖关系：TASK-040、TASK-010
+- 涉及文件：
+  - `domain/model/ParsedBillRow.kt`、`domain/model/BillParseResult.kt`
+  - `domain/usecase/import/BillParser.kt`、`BillSourceInput.kt`
+  - `domain/model/Enums.kt`（加 `ImportSkipReason`，或并入 TASK-040 一并落）
+  - `data/local/import/AlipayCsvParser.kt`
+  - `data/local/import/BillParserFactory.kt`（骨架：仅 CSV 分支，TASK-042 补 XLSX）
+- 描述：
+  - 定义统一中间模型 `ParsedBillRow`+`BillParseResult(Success/Unrecognized)`+`ParseSkippedRow(rowNumber, reason, detail)` 与 `ImportSkipReason{ EXISTS/NEUTRAL/CLOSED/PARSE_ERROR }`，字段对齐 PRD §F-12 字段映射表（02_architecture §16.3）。
+  - `BillParser` 接口（`format + parse(BillSourceInput)`）+ `BillSourceInput{ Csv(Reader)/Xlsx(File) }`（纯 Kotlin，JVM 可测）。
+  - `AlipayCsvParser`：`InputStreamReader(GBK)`；动态表头探测（逐行至同含「交易时间」「收/支」及「金额/金额(元)」记列索引）；字段尾 `\t` trim；金额 `MoneyFormatter.toFen`（非法/0/负 → PARSE_ERROR）；`收/支` → expense/income，不计收支/「/」/空 → NEUTRAL、交易状态「交易关闭」→ CLOSED；`externalId=alipay:<交易订单号>`（单号空→PARSE_ERROR）；`description` = 商品说明 + 备注拼接（DEC-015）。
+  - 工厂按 `resolve(displayName, magicBytes)` 分发 CSV 分支。
+- 验收标准：
+  - [ ] GBK 解码中文正确；前导说明行增减不影响表头定位
+  - [ ] `\t` 尾随被 trim（交易订单号/商家订单号）
+  - [ ] 金额 8.70→870、6.5→650（`MoneyFormatter.toFen`）；0/负/非数字 → PARSE_ERROR 计数
+  - [ ] 过滤规则计数正确（NEUTRAL/CLOSED/PARSE_ERROR 分原因，含行号）
+  - [ ] `externalId` 前缀 `alipay:`、空单号计 PARSE_ERROR
+- 需测试覆盖点：CSV fixture（造小样本）、动态表头、金额转分、过滤计数（JVM，tests/unit，重点）。
+
+---
+
+### TASK-042: F-12 微信 XLSX 解析器（手动 zip+XML）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层（解析器，纯 Kotlin）
+- 关联需求：F-12；DEC-016
+- 估算：1.5 天
+- 依赖关系：TASK-041
+- 涉及文件：
+  - `data/local/import/WechatXlsxParser.kt`
+  - `data/local/import/BillParserFactory.kt`（补 XLSX 分支 + 内容嗅探）
+  - `app/src/test/resources` 或代码内构造 `.xlsx` fixture（zip：`[Content_Types].xml`+`xl/sharedStrings.xml`+`xl/worksheets/sheet1.xml`）
+- 描述：
+  - `ZipFile(file)` 读 `xl/sharedStrings.xml`（`<si>` 顺序建 `List<String>`，拼接富文本 `<r><t>`，保留 `xml:space`）+ `xl/worksheets/sheet1.xml`（`XmlPullParser` localName 匹配）。
+  - cell 类型兼容 `t="s"`（`<v>` 下标反查 sharedStrings）/`t="inlineStr"`（`<is><t>`）/`t="str"`；列定位按 `r` 前缀列字母，稀疏 cell 不假设等量。
+  - 表头行动态探测（交易时间/收/支/金额(元)/交易对方/收付款方式/商品/备注/交易单号/交易类型 等关键词记列偏移）。
+  - 日期序列数：`substringBefore('.')` → `LocalDate.of(1899,12,30).plusDays(n)` 得 `yyyy-MM-dd`，禁 Double；金额 `<v>` 字面量 → `MoneyFormatter.toFen`；`收/支` 中性「/」/空 → NEUTRAL。
+  - `externalId=wechat:<交易单号>`；`source=wechat_import` 由 UseCase 装配（本任务只出 ParsedBillRow）。
+- 验收标准：
+  - [ ] sharedStrings 反查正确（含富文本拼接、`xml:space` 空格）；inlineStr 兼容
+  - [ ] 日期序列数换算正确（如 46257 → 2026-08-… 仅取日期）；禁 Double（代码审查点）
+  - [ ] 金额转分无精度损失；列定位/稀疏 cell 正确
+  - [ ] 表头动态探测不依赖列序（换列仍命中）
+  - [ ] 「当前状态/对方账号/商户单号」不落库（不产出 field）
+- 需测试覆盖点：构造 `.xlsx` fixture 单测（sharedStrings/inlineStr/日期/金额/稀疏 cell；JVM 写临时 zip）。
+
+---
+
+### TASK-043: F-12 数据访问增量 + ImportBillUseCase + 自动分类
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层 + 数据层（增量）
+- 关联需求：F-12；DEC-015、DEC-019
+- 估算：1.5 天
+- 依赖关系：TASK-041、TASK-042、TASK-009、TASK-012
+- 涉及文件：
+  - `data/local/db/dao/TransactionDao.kt`（`insertAll(IGNORE)` + `getAllExternalIds`）
+  - `data/datasource/TransactionDataSource.kt`（`insertBatch` + `getExistingExternalIds`）
+  - `data/local/datasource/RoomDataSourceImpl.kt`（实现两方法）
+  - `domain/repository/TransactionRepository.kt` + `TransactionRepositoryImpl.kt`（委托两方法）
+  - `domain/model/BillCategoryMapping.kt`、`domain/model/BillImportResult.kt`
+  - `domain/usecase/import/BillFilePreparer.kt`（域接口）+ `data/local/import/SafBillFilePreparer.kt`（Android 实现）
+  - `domain/usecase/import/ImportBillUseCase.kt`
+- 描述：
+  - `TransactionDao.insertAll(@Insert(onConflict = IGNORE)): List<Long>`（`-1`=冲突忽略）+ `getAllExternalIds(ledgerId)`；DataSource/Repository 增 `insertBatch`（返回实插数）/`getExistingExternalIds`（Set）。
+  - `BillFilePreparer.prepare(uriString): PreparedBillFile`（域接口）；`SafBillFilePreparer`（数据层 Android）：XLSX 落 `cacheDir/minibook_import_<uuid>.xlsx` 再 `ZipFile`、CSV 直接 GBK Reader；`close()` 关流 + 删 tempFile（DEC-017）。
+  - `BillCategoryMapping`：键 `(platform, platformCategory, type) → 内置分类名`，与 PRD §F-12 表逐行一致，未列入 → null（DEC-019）。
+  - `ImportBillUseCase.invoke(uriString, ledgerId): BillImportResult`（`withContext(IO)`）：preparer.prepare().use → factory.resolve → parser.parse → 快照分类建 `(type,name)→categoryId` map → 逐行装配 `Transaction`（UUID + source + 4 新列 + 自动分类，兜底「其他」；「其他」亦缺→整体 Failure）→ `transactionRunner.runInTransaction { 预查既有 externalId → 去重 → insertBatch → 补 -1 计数 }` → 聚合 `BillImportResult`。过滤行级、写入整批单事务（DEC-015）。
+  - `parseErrors: List<ParseSkippedRow>` 携带行号+原因；`unrecognized` 标识未识别格式（零落库）。
+- 验收标准：
+  - [ ] `insertAll` IGNORE 冲突返回 `-1` 且不落重复行；`insertBatch` 实插数正确
+  - [ ] 幂等：重复导入同一账单，已存在行全部跳过（计 existing），无重复行；手动记录（externalId=null）不受影响
+  - [ ] 自动分类：PRD 映射表逐行正确；未映射归该 type「其他」；预填可事后改
+  - [ ] 事务原子性：注入写入异常 → 整体回滚零落库（复用 F-04 原子口径）
+  - [ ] 临时文件 finally 清理；未识别格式/全部跳过 → 正确反馈，零落库
+  - [ ] UseCase 不 import android.*（uri 走 String，可 JVM 单测）
+- 需测试覆盖点：ImportBillUseCase 聚合（Fake DataSource：各跳过原因计数、文件内重复、外部冲突、IGNORE -1 聚合、快照分类兜底）、BillCategoryMapping 映射（JVM）。
+
+---
+
+### TASK-044: F-12 UI 接线（入口 / 提示页 / 文件选择 / 结果反馈）
+
+- 状态：待办
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：UI 层
+- 关联需求：F-12；DEC-015
+- 估算：1.5 天
+- 依赖关系：TASK-043、TASK-020、TASK-021、TASK-024
+- 涉及文件：
+  - `ui/navigation/Destinations.kt`（`data object Import : Destination("import")`）
+  - `ui/navigation/MiniBookNavHost.kt`（注册根图 `import` 全屏页，顶栏返回）
+  - `ui/import/ImportScreen.kt`、`ui/import/ImportViewModel.kt`
+  - `ui/home/HomeScreen.kt` 或 `ui/transactions/TransactionsScreen.kt`（入口接线，位置 Designer 定）
+  - `ui/components/TransactionListItem.kt`（`source` 中文标签展示：手动记录/微信/支付宝）
+- 描述：
+  - `ImportViewModel` 状态机 `ImportUiState = Idle | Busy | Result(summary) | Error(msg)`；事件 `pickFile()`/`onFilePicked(uri)`/`retry()`/`done()`；SAF `ActivityResultContracts.OpenDocument`（`application/vnd.ms-excel`+`text/csv`+`*/*`），**不唤起第三方 App**。
+  - 提示页（Idle）：宣导微信/支付宝手动导出路径（PRD §F-12 入口层级）+「选择账单文件」。
+  - Busy：`FullScreenBusyOverlay` 锁数据入口（禁返回/禁 Tab，对齐 F-04 导入交互）。
+  - Result：一次性反馈「成功 N / 跳过 M（分原因：已存在/不计收支/交易关闭）」，解析失败逐条行号+原因；全部跳过提示「本次无新增交易」；Error：未识别格式/文件损坏/事务回滚。
+  - 入口：首页或收支页顶栏「导入账单」（具体位置 Designer 定）+ 设置「数据」区可选。
+  - `source` 列表行展示中文标签（可选增强：按 source 筛选可后续扩 `TransactionFilter`，DEC-013 同径，本期可不做）。
+- 验收标准：
+  - [ ] `import` 路由可达、返回正常；提示页展示两平台导出路径
+  - [ ] 文件选择器只选文件、不跳第三方 App；选后可触发解析
+  - [ ] Busy 期间锁入口；Result 分原因计数正确、解析失败给行号
+  - [ ] 错误态（未识别/损坏/回滚）提示且不落库
+  - [ ] 切账本导入落入当前账本（`ledgerId` 贯穿）
+- 需测试覆盖点：ImportViewModel 状态机（JVM，Fake UseCase）；SAF/真账单走真机（Tester）。
+
+---
+
+（本文件为任务清单，随实现对细节的差分由后续修订更新；版本历史见 CHANGELOG.md。）

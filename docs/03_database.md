@@ -47,7 +47,7 @@
 | 属性 | 值 |
 |------|-----|
 | 库名 | `minibook-encrypted.db` |
-| 当前版本 | **1** |
+| 当前版本 | **2**（version 1 → 2 迁移见 §7.5；F-12 账单导入加列 + 唯一索引） |
 | 加密 | SQLCipher（全库），密钥见 `02_architecture.md §7` |
 | 表数量 | 6（ledgers / categories / transactions / debts / budgets / sync_changes） |
 | ORM | Room，`exportSchema = true`（schema JSON 入 VCS，用于迁移测试） |
@@ -128,8 +128,13 @@
 | `createdAt` | String | TEXT | NOT NULL | 创建时间，`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`，不可改 |
 | `updatedAt` | String | TEXT | NOT NULL | 修改时间，每次修改刷新 |
 | `syncStatus` | String | TEXT | NOT NULL 默认 `'local'` | `local/syncing/synced/conflict` |
+| `externalId` | String? | TEXT | NULL | 账单单号 `alipay:<交易订单号>` / `wechat:<交易单号>`；手动记录恒 null；参与 `UNIQUE(ledgerId, externalId)` 幂等去重（NULL 互异，§7.5） |
+| `counterparty` | String? | TEXT | NULL | 交易对方/商家（列表行/详情展示） |
+| `paymentMethod` | String? | TEXT | NULL | 支付方式（花呗/零钱/银行储蓄卡等；账单空/全空白→null） |
+| `source` | String | TEXT | NOT NULL 默认 `'manual'` | `manual`/`wechat_import`/`alipay_import`（`TransactionSource`，展示 + 可筛选） |
 
 索引：`[ledgerId, date]`、`[ledgerId, type]`、`[ledgerId, categoryId]`、`[ledgerId, syncStatus]`
+唯一索引：`[ledgerId, externalId]` **UNIQUE**（F-12 幂等去重；SQLite 对 NULL 视为互异 ⇒ 手动记录不冲突，§7.5）
 
 ```kotlin
 @Entity(
@@ -139,6 +144,7 @@
         Index(value = ["ledgerId", "type"]),
         Index(value = ["ledgerId", "categoryId"]),
         Index(value = ["ledgerId", "syncStatus"]),
+        Index(value = ["ledgerId", "externalId"], unique = true, name = "index_transactions_ledgerId_externalId"),
     ],
 )
 data class TransactionEntity(
@@ -152,6 +158,10 @@ data class TransactionEntity(
     val createdAt: String,
     val updatedAt: String,
     val syncStatus: String = "local",
+    val externalId: String? = null,
+    val counterparty: String? = null,
+    val paymentMethod: String? = null,
+    @ColumnInfo(defaultValue = "'manual'") val source: String = "manual",
 )
 ```
 
@@ -387,6 +397,7 @@ data class SyncChangeEntity(
 | transactions | `(ledgerId, date)` | 复合 | 账本内按日期范围/排序（首页、月结余） |
 | transactions | `(ledgerId, type)` | 复合 | 账本内按支出/收入筛选 |
 | transactions | `(ledgerId, categoryId)` | 复合 | 账本内按分类筛选（含删除前统计） |
+| transactions | `(ledgerId, externalId)` | 复合 **UNIQUE** | F-12 账单导入幂等去重（`externalId` 允许 NULL，NULL 互异 ⇒ 手动记录不冲突，§7.5） |
 | transactions | `(ledgerId, syncStatus)` | 复合 | Phase 3 查询未同步 |
 | debts | `(ledgerId, date)` | 复合 | 账本内按时间排序/明细视图 |
 | debts | `(ledgerId, partyName)` | 复合 | 账本内按对象汇总（净额） |
@@ -601,6 +612,33 @@ SQLCipher 在版本升级时使用 `PRAGMA cipher_version` / `PRAGMA key` 在同
 - `transactions` / `debts` 若引入软删除，加 `deletedAt` 列并调整 `syncStatus` 语义。
 - 统一走 §7.3 的显式 Migration + 测试，不破坏已加密库。
 
+### 7.5 迁移 1 → 2（F-12 transactions 加列 + 唯一索引）
+
+首个 schema 变更（DEC-018）：`transactions` 加 4 列 + 唯一索引。显式 `MIGRATION_1_2`，`fallbackToDestructiveMigration(false)` 不变。
+
+```kotlin
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE transactions ADD COLUMN externalId TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN counterparty TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN paymentMethod TEXT")
+        db.execSQL("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        db.execSQL(
+            "CREATE UNIQUE INDEX index_transactions_ledgerId_externalId " +
+                "ON transactions(ledgerId, externalId)",
+        )
+    }
+}
+```
+
+要点：
+
+- **`ADD COLUMN ... NOT NULL DEFAULT 'manual'`**：SQLite 允许对既有行加 NOT NULL 列，前提是提供非空默认值（`'manual'` 满足）。既有手动记录迁移后 `source='manual'`、其余三列 NULL，语义正确。
+- **唯一索引命名必须与 Room 实体一致**：Entity 声明 `Index(..., unique=true, name="index_transactions_ledgerId_externalId")`，迁移 SQL 创建的索引名须**逐字一致**，否则 Room `MigrationTestHelper` 校验 schema 比对会报「索引名失配」。
+- **NULL 互异（幂等关键，DEC-018）**：SQLite 的 UNIQUE 索引把 NULL 视为彼此不同——任意多条 `externalId=NULL` 的行（手动记录）都不触发冲突，无需部分索引（`WHERE externalId IS NOT NULL`）或触发器。
+- **顺序**：先 `ADD COLUMN`（4 条）再 `CREATE UNIQUE INDEX`，不可颠倒。
+- 迁移测试：`MigrationTestHelper` 覆盖「version 1 旧库（含既有手动交易）→ 打开后升级到 2 → 新列可读、唯一索引可查、手动记录不冲突、重复 externalId 报冲突」。旧库 schema JSON 需基线 `1.json` 已在 VCS（TASK-003），`2.json` 由 `exportSchema=true` 编译导出。
+
 ---
 
 ## 8. 内置分类种子数据
@@ -710,6 +748,8 @@ fun formatFen(fen: Long, withSymbol: Boolean = true): String {
 `enums ↔ String`、`Boolean ↔ Int`、`LocalDate?`（如需要）全部经 Room `TypeConverter` 转码；`amount` 直接 `Long`，**不做**浮点类型。
 `SummaryRow` / `NetByPartyRow` 为 DAO 查询 DTO（data class，字段名与 SQL 别名对齐）。
 
+> F-12 补充：`transactions.source` 同 `type`/`syncStatus` 一样以 `String` 列存，`TransactionSource` ↔ String 由 domain `Enums.kt` + mapper 转码（不新增 TypeConverter）。
+
 ---
 
 ## 10. Phase 2 数据设计：搜索过滤 / 报表聚合 / 预算口径
@@ -722,6 +762,8 @@ fun formatFen(fen: Long, withSymbol: Boolean = true): String {
 - **不新增索引**：搜索/报表/预算全部复用既有复合索引——`(ledgerId, date)`、`(ledgerId, categoryId)`、`(ledgerId, partyName)`、`(ledgerId, month)`（§5.1）。
 - **只扩 DAO SQL**：改动集中在 `TransactionDao.observeFiltered` 加参（搜索）、`DebtDao.observeFiltered` 加参（搜索）、`TransactionDao` 新增三条聚合查询（报表 + 预算「已用」）。
 - 数据库版本维持 **1**，无迁移（§7.1：version 1 即含全部 6 表，`fallbackToDestructiveMigration(false)` 不变）。
+
+> 注：本 §10 仅覆盖 F-06/F-07/F-08（搜索/报表/预算）。**F-12 账单导入不属本 §10 范围**——其 `transactions` 加 4 列 + 唯一索引使数据库版本升到 **2**（见 §4.1 / §5.1 / §7.5 / ARCHITECTURE §16），两者互不冲突。
 
 ### 10.2 搜索过滤 SQL（DEC-013 扩展 observeFiltered）
 

@@ -601,8 +601,10 @@ val monthSummary = ledgerProvider.currentLedgerId()
 | 债务管理 | `debts` | 明细视图（时间排）+ 按对象视图（净额汇总） | F-02 |
 | 分类管理 | `categories` | 内置（禁删）+ 自定义增删改 | F-03 |
 | 设置 | `settings` | 安全（锁/超时/加密态）、外观（暗色）、数据（导出/导入）、账本 | F-04/05/09/11 |
+| 账单导入 | `import` | 入口提示页（微信/支付宝导出路径）+ 文件选择 + 结果反馈（F-12） | F-12 |
 
 - 预留目的地（Phase 2 注册，本期不可达或占位页）：`search`、`reports`、`budgets`。
+- Phase 2 新增 `import` 路由（F-12）：入口在首页/收支页/设置「数据」区，点入 `import` 提示页（§16.8），不进底部 `NavigationBar`、作为根图全屏页注册。
 - 弹层/全屏：`sheets`（记一笔/编辑债务/还款/分类选择）、`ledger-manage`、`app-locked`。
 - 标签切换用 `saveState + restoreState` 保留各 Tab 状态；页面间参数只传 `id` 类（UUID），大数据走共享 `LedgerProvider`。
 
@@ -682,6 +684,142 @@ val monthSummary = ledgerProvider.currentLedgerId()
 ### 15.6 无新表 / 无新索引
 
 Phase 2 三项功能均**不新增表、不新增索引**：预算表已存在（03_database §4.5）；搜索/报表/预算全部复用既有 `(ledgerId, date)` / `(ledgerId, categoryId)` / `(ledgerId, partyName)` / `(ledgerId, month)` 复合索引，只扩 DAO SQL。数据库版本仍为 **1**，`fallbackToDestructiveMigration(false)` 不变。详见 `03_database.md §10`。
+
+> 注：F-12 账单导入（Phase 2 同阶段）不属本节「无新表无新索引」结论——其 `transactions` 加 4 列 + 唯一索引使版本升到 2（见 §16 与 03_database §4.1/§7.5）。
+
+---
+
+## 16. Phase 2 设计：账单导入（F-12）
+
+> 依据：`docs/01_prd.md §F-12`（评审中，DEC-015 口径）+ DEC-016/017/018/019。
+> 定位：同 Phase 2 三项功能，**复用既有 MVVM + Repository + UseCase + DataSource 分层，不新起范式、不加 Gradle 模块、不加第三方依赖（DEC-016 零 xlsx 库）**。仅做「层内加法」：加 4 列（03_database §4.1/§7.5）→ 新增解析器 + UseCase + UI。
+
+### 16.1 落地总览
+
+| 层 | 产出 |
+|----|------|
+| 数据层 | `transactions` 4 新列 + `UNIQUE(ledgerId, externalId)`（DB version 2，MIGRATION_1_2）；`TransactionDao.insertAll(IGNORE)`/`getAllExternalIds`；`TransactionDataSource.insertBatch`/`getExistingExternalIds` |
+| 解析栈 | 域接口 `BillParser` + `BillSourceInput`、域模型 `ParsedBillRow`/`BillParseResult`/`ParseSkippedRow`；数据层 `AlipayCsvParser`/`WechatXlsxParser`/`BillParserFactory`/`SafBillFilePreparer` |
+| 业务层 | `BillCategoryMapping`（分类映射常量）+ `ImportBillUseCase`（编排/事务/聚合 `BillImportResult`） |
+| UI 层 | `import` 路由 + `ImportViewModel` 状态机 + 提示页/文件选择/结果页，入口接线 |
+
+### 16.2 目录归属
+
+```
+domain/
+  model/            ParsedBillRow.kt / BillParseResult.kt / BillImportResult.kt
+                    / BillCategoryMapping.kt（BillParser 接口也可放 domain/usecase/import）
+  usecase/import/   BillParser.kt（接口）/ BillSourceInput.kt / BillFilePreparer.kt（域接口）
+                    / ImportBillUseCase.kt
+data/
+  local/import/     AlipayCsvParser.kt / WechatXlsxParser.kt / BillParserFactory.kt
+                    / SafBillFilePreparer.kt（Android 依赖，解析栈唯一触碰框架类处）
+ui/
+  import/           ImportScreen.kt / ImportViewModel.kt
+```
+
+> 分层约束：`ParsedBillRow`/`BillParser`/`BillCategoryMapping`/`ImportBillUseCase` **纯 Kotlin（不 import android.***）**，JVM 可单测；`SafBillFilePreparer` 是 Android 依赖边界，隔离 Uri→File/Reader 的 I/O。
+
+### 16.3 统一中间模型与解析器抽象（§4 兼容）
+
+**中间模型**（`domain/model/ParsedBillRow.kt`，字段语义对齐 PRD §F-12 字段映射表）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `date` | String | `yyyy-MM-dd`（交易时间仅取日期，时分秒丢弃） |
+| `type` | TransactionType | 收/支 → expense/income |
+| `amountFen` | Long | 金额转分（>0，经 `MoneyFormatter.toFen`） |
+| `counterparty` | String? | 交易对方原样落库 |
+| `paymentMethod` | String? | 空/全空白→null |
+| `description` | String | 商品说明 + 备注（备注非空且≠「/」以 `｜` 追加；≤200 截断） |
+| `externalId` | String | `alipay:` / `wechat:` 前缀包裹原单号 |
+| `platformCategory` | String? | 原始平台分类（仅自动分类用，**不落库**） |
+
+**解析器接口**（`domain/usecase/import/BillParser.kt`，纯 Kotlin）：
+
+```kotlin
+interface BillParser {
+    val format: TransactionSource     // WECHAT_IMPORT / ALIPAY_IMPORT
+    fun parse(input: BillSourceInput): BillParseResult
+}
+
+sealed interface BillSourceInput {
+    data class Csv(val reader: java.io.Reader) : BillSourceInput   // 支付宝：GBK Reader
+    data class Xlsx(val file: java.io.File) : BillSourceInput      // 微信：已落 cacheDir 的可 seek File
+}
+
+sealed interface BillParseResult {
+    data class Success(val rows: List<ParsedBillRow>, val skipped: List<ParseSkippedRow>) : BillParseResult
+    data class Unrecognized(val reason: String) : BillParseResult  // 未识别格式，零落库
+}
+data class ParseSkippedRow(val rowNumber: Int, val reason: ImportSkipReason, val detail: String)
+```
+
+- **工厂**（`data/local/import/BillParserFactory.kt`）：`resolve(displayName: String?, magicBytes: ByteArray?): BillParser?`，按扩展名主判（`.csv`→`AlipayCsvParser`、`.xlsx`→`WechatXlsxParser`）+ 内容嗅探兜底（`PK\x03\x04` 魔数→xlsx；否则按 CSV 试解）；解析不出 → 返回 null → 「未识别账单格式」。
+- **跳过原因枚举** `ImportSkipReason{ EXISTS, NEUTRAL, CLOSED, PARSE_ERROR }` 落 `domain/model/Enums.kt`（`NEUTRAL`=不计收支/「/」/空，`CLOSED`=支付宝交易关闭，`PARSE_ERROR`=时间缺失/金额非法/单号空，数字计数对齐 PRD 过滤规则）。
+
+### 16.4 CSV 解析（支付宝，DEC-017）
+
+- **解码**：`InputStreamReader(stream, Charset.forName("GBK"))`（支付宝「交易流水证明」为 GBK）。
+- **动态表头探测**：逐行读取，直到某行**同时含**「交易时间」「收/支」及「金额」或「金额(元)」三个关键词 → 该行为表头，按关键词记列索引；其后为数据行。前导说明行（导出信息/统计/提示）数量变化不影响解析（PRD §F-12 解析规则 1）。
+- 表头用 `,` 切分（账单为逗号分隔）；字段尾 `\t` 一律 `trim()`（支付宝交易订单号/商家订单号尾随 `\t`，DEC-015/PRD）。
+- 金额：`MoneyFormatter.toFen(raw)`（BigDecimal setScale(2)→movePointRight(2)→longValueExact），**禁 float/double**；非法/0/负 → 该行 `PARSE_ERROR` 跳过。
+- `收/支` 映射：「支出」→expense、「收入」→income、「不计收支」/「/」/空 → `NEUTRAL` 跳过；支付宝「交易状态」=「交易关闭」→ `CLOSED` 跳过（先于此条，实测「退款成功/还款成功」均带「不计收支」已被 NEUTRAL 覆盖）。
+
+### 16.5 XLSX 解析（微信，DEC-016）
+
+- 实现要点（命名空间 / sharedStrings 反查 / inlineStr / 日期序列数 / 稀疏 cell / 列定位）与风险详见 **DEC-016**，简列：
+  1. `ZipFile(file)` → 读 `xl/sharedStrings.xml`（`t="s"` 反查 `List<String>`）+ `xl/worksheets/sheet1.xml`（`XmlPullParser` 流式，localName 匹配）。
+  2. 表头行动态探测：首 `<row>` 的 cell 按 `r`（A/B/C…）列字母 + 表头关键词（交易时间/收/支/金额(元)/交易对方/收付款方式/商品/备注/交易单号/交易类型）记列偏移。
+  3. 日期序列数：`substringBefore('.')` 取整数部分 → `LocalDate.of(1899,12,30).plusDays(n)` 得 `yyyy-MM-dd`，禁 Double。
+  4. 金额 `<v>` 文本字面量 → `MoneyFormatter.toFen`。
+  5. `收/支`：支出→expense、收入→income、微信中性「/」/空 → `NEUTRAL` 跳过。
+
+### 16.6 文件读取（DEC-017）
+
+- `SafBillFilePreparer`（数据层，`context: ContentResolver`）：`prepare(uriString): PreparedBillFile`。
+  - XLSX：`openInputStream(uri)` → 拷贝 `context.cacheDir/minibook_import_<uuid>.xlsx` → `ZipFile(tempFile)`；`PreparedBillFile.close()` 关闭流 + 删 tempFile。
+  - CSV：`openInputStream(uri)` → `Reader`（GBK），无 tempFile。
+- 编排方（`ImportBillUseCase`）`use { }` + `finally` 清理，保证成功/失败/取消均回收临时文件。
+
+### 16.7 自动分类（DEC-019）
+
+- 映射表 `domain/model/BillCategoryMapping`：键 `(platform, platformCategory 子串, type) → 目标内置分类名`，内容与 PRD §F-12 表一致；未列入的组合 → null（归「其他」）。
+- 解析：`ImportBillUseCase` 导入开始时 `categoryDataSource.observeByLedger(ledgerId, null).first()` 快照全部分类 → 建 `Map<Pair<CategoryType,String>, String>`（(type,name)→categoryId）；每行 `builtInName = mapping.resolve(...)` → `(type, builtInName)` 查快照 → categoryId；查不到 → 该 `type` 的「其他」内置分类（DEC-007 名锁定，恒可定位）。若「其他」兜底分类亦不存在（数据异常），整体 `Failure` 报错零落库（`categoryId NOT NULL` 无法落库）。
+- 分类为**预填**，可事后改。
+
+### 16.8 UI 接线
+
+- `Destinations.kt` 增 `data object Import : Destination("import")`；`MiniBookNavHost.kt` 注册根图全屏页（顶栏返回 `popBackStack`）。
+- 入口：首页/收支页顶栏「导入账单」入口（PRD 只锁入口层级，具体位置 Designer 定）+ 设置「数据」区可选入口。
+- `ImportViewModel` 状态机 `ImportUiState`：`Idle`（提示页，宣导两平台导出路径 + 选择文件按钮）→ `Busy`（选文件后解析/导入中，`FullScreenBusyOverlay` 锁数据入口）→ `Result(summary)`（成功 N / 跳过分原因 / 解析失败逐条行号+原因）→ `Error(msg)`（未识别格式/文件损坏/事务回滚）。
+- 文件选择：SAF `ActivityResultContracts.OpenDocument`（`ACTION_OPEN_DOCUMENT`，`application/vnd.ms-excel` + `text/csv` + `*/*` fallback），**不唤起第三方 App**（PRD）。
+- 结果反馈组件复用既有 `EmptyState`/`Dialogs`/`FullScreenBusyOverlay`；`source` 列展示中文标签（手动记录/微信/支付宝）在 `TransactionListItem`。
+
+### 16.9 导入 UseCase 编排与事务边界
+
+`ImportBillUseCase.invoke(uriString: String, ledgerId: String): BillImportResult`，`withContext(Dispatchers.IO)`：
+
+1. `SafBillFilePreparer.prepare(uriString).use { handle -> ... }`（含 finally 清理）。
+2. `factory.resolve(handle.displayName, magicBytes)` → parser；null → `Unrecognized`（零落库）。
+3. `parser.parse(handle.input)` → `BillParseResult`（失败 = 未识别/损坏，零落库）。
+4. 快照分类 + 为每个有效行装配 `Transaction`（UUID + `source=wechat_import/alipay_import` + `externalId/counterparty/paymentMethod` + 自动分类 categoryId）。
+5. `TransactionRunner.runInTransaction {`——**逐行过滤（行级）+ 单事务整批写入（DEC-015）**：预查既有 externalId 集合 → 去重（文件内重复 + 与既有相交 → 计 EXISTS）→ `insertBatch`（IGNORE，`-1` 追加 EXISTS）`}`；任一真实写入异常（非跳过）→ 整体回滚 → `Failure`。
+6. 返回 `BillImportResult(success/existing/neutral/closed/parseErrors)`；`unrecognized` 标识未识别。
+
+> 口径落地（DEC-015）：过滤/去重是**行级语义**（逐行判定、计数反馈，不算失败）；通过过滤的有效行在**单事务**内整批插入；写入用 `insertBatch(IGNORE)` 而非逐行 insert，避免事务内逐条异常处理。千条级单事务性能足够。
+
+### 16.10 测试策略（供 Tester）
+
+| 类别 | 用例 | 环境 |
+|------|------|------|
+| 解析器（可单测） | AlipayCsvParser：GBK fixture、动态表头探测（前导行增减）、`\t` trim、金额转分（8.70→870 / 6.5→650）、跳过原因计数 | JVM（tests/unit） |
+| 解析器（可单测） | WechatXlsxParser：构造 `.xlsx` fixture、sharedStrings 反查、inlineStr、日期序列数换算、稀疏 cell、列定位 | JVM（写临时 zip fixture） |
+| 金额/表头 | `MoneyFormatter.toFen` 边界（0/负/非数字/超长）；表头关键词匹配 | JVM |
+| 自动分类 | `BillCategoryMapping` 映射逐行一致（PRD 表）+ 未列入→null；快照匹配 + 「其他」兜底 | JVM |
+| ImportResult 聚合 | 各跳过原因计数、文件内重复去重、外部冲突计数、`insertBatch` 返回 -1 聚合（Fake DataSource） | JVM |
+| DB 迁移/幂等 | `MIGRATION_1_2`（旧库升级、新列可读、手动记录不冲突、重复 externalId 报冲突）；`insertAll(IGNORE)` 冲突计数 | instrumented（MigrationTestHelper + 内存库） |
+| 文件读取/SAF/真账单 | SAF Uri 读取、真实微信 XLSX / 支付宝 CSV 端到端导入、临时文件清理 | 真机/instrumented（SAF 需真实 provider/真账单需人工 export） |
 
 ---
 

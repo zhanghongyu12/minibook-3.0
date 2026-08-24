@@ -497,4 +497,145 @@ data class CategoryBudgetProgress(
 
 ---
 
+## 13. F-12 契约：账单导入（Phase 2）
+
+> 依据：DEC-015/016/017/018/019；配合 `03_database.md §4.1/§7.5`、`02_architecture.md §16`。
+> 原则延续 §1：纯契约、金额 `Long` 分、域模型纯 Kotlin；解析栈只有在 `SafBillFilePreparer` 触碰 Android 框架类。
+
+### 13.1 枚举扩展（`domain/model/Enums.kt`）
+
+```kotlin
+enum class TransactionSource(val value: String) {
+    MANUAL("manual"),
+    WECHAT_IMPORT("wechat_import"),
+    ALIPAY_IMPORT("alipay_import");
+    companion object { fun fromValue(v: String): TransactionSource? = entries.firstOrNull { it.value == v } }
+}
+
+enum class ImportSkipReason { EXISTS, NEUTRAL, CLOSED, PARSE_ERROR }
+```
+
+### 13.2 交易模型扩展（`Transaction`，DEC-018 四层贯通）
+
+```kotlin
+// domain/model/Transaction.kt 追加 4 字段（默认值保证既有手动记账/导入路径零改动）：
+//   externalId: String? = null
+//   counterparty: String? = null
+//   paymentMethod: String? = null
+//   source: TransactionSource = TransactionSource.MANUAL
+```
+
+- 手动记账：`externalId/counterparty/paymentMethod=null`、`source=MANUAL`（默认值即满足，`AddTransactionUseCase` 零改动）。
+- 账单导入：`source=WECHAT_IMPORT/ALIPAY_IMPORT`、其余三列按字段映射填充。
+
+### 13.3 解析中间模型
+
+```kotlin
+data class ParsedBillRow(
+    val date: String,               // yyyy-MM-dd
+    val type: TransactionType,      // expense/income
+    val amountFen: Long,            // >0
+    val counterparty: String?,
+    val paymentMethod: String?,     // 空/全空白→null
+    val description: String,        // 商品说明 + 备注（｜ 分隔，≤200 截断）
+    val externalId: String,         // alipay:/wechat: 前缀
+    val platformCategory: String?,  // 原始分类，仅 auto-cat，不落库
+)
+
+sealed interface BillParseResult {
+    data class Success(val rows: List<ParsedBillRow>, val skipped: List<ParseSkippedRow>) : BillParseResult
+    data class Unrecognized(val reason: String) : BillParseResult
+}
+data class ParseSkippedRow(val rowNumber: Int, val reason: ImportSkipReason, val detail: String)
+
+data class BillImportResult(
+    val success: Int,               // 实际新增
+    val existing: Int,              // 已存在（幂等去重）
+    val neutral: Int,               // 不计收支/「/」/空
+    val closed: Int,                // 支付宝「交易关闭」
+    val parseErrors: List<ParseSkippedRow>,  // 解析失败（行号+原因）
+    val unrecognized: Boolean = false,        // 未识别格式（零落库）
+)
+```
+
+### 13.4 解析器接口与工厂（DEC-016/017）
+
+```kotlin
+// domain/usecase/import/BillParser.kt
+interface BillParser {
+    val format: TransactionSource
+    fun parse(input: BillSourceInput): BillParseResult
+}
+
+sealed interface BillSourceInput {
+    data class Csv(val reader: java.io.Reader) : BillSourceInput   // 支付宝 GBK Reader
+    data class Xlsx(val file: java.io.File) : BillSourceInput      // 微信 已落 cacheDir 可 seek File
+}
+
+// domain/usecase/import/BillFilePreparer.kt（域接口）
+interface BillFilePreparer {
+    fun prepare(uriString: String): PreparedBillFile
+}
+interface PreparedBillFile : AutoCloseable {
+    val input: BillSourceInput
+    val displayName: String?
+}
+
+// data/local/import/BillParserFactory.kt
+interface BillParserFactory {
+    fun resolve(displayName: String?, magicBytes: ByteArray?): BillParser?  // null = 未识别
+}
+```
+
+- `SafBillFilePreparer`（数据层 impl）：`openInputStream(uri)` → XLSX 落 `cacheDir/minibook_import_<uuid>.xlsx` 再 `ZipFile`；CSV 直接 `Reader`；`close()` 关闭流 + 删 tempFile（DEC-017）。
+
+### 13.5 DataSource / Repository / DAO 增量方法（DEC-019）
+
+```kotlin
+// TransactionDataSource / TransactionRepository 同步新增：
+suspend fun insertBatch(txs: List<Transaction>): Int          // 实际插入行数（IGNORE 忽略冲突）
+suspend fun getExistingExternalIds(ledgerId: String): Set<String>
+
+// TransactionDao：
+@Insert(onConflict = OnConflictStrategy.IGNORE)
+suspend fun insertAll(entities: List<TransactionEntity>): List<Long>   // -1 = 被忽略（冲突）
+@Query("SELECT externalId FROM transactions WHERE ledgerId=:ledgerId AND externalId IS NOT NULL")
+suspend fun getAllExternalIds(ledgerId: String): List<String>
+```
+
+- `insertBatch` 返回「真正插入」行数（IGNORE 后统计非 `-1` 的下标数）；`getExistingExternalIds` 供幂等预查。
+- 自动分类解析复用既有 `CategoryDataSource.observeByLedger(ledgerId, null).first()` 快照，**不新增分类查询方法**（DEC-019）。
+
+### 13.6 ImportBillUseCase 契约
+
+```kotlin
+class ImportBillUseCase @Inject constructor(
+    private val transactionRunner: TransactionRunner,
+    private val filePreparer: BillFilePreparer,
+    private val parserFactory: BillParserFactory,
+    private val categoryDataSource: CategoryDataSource,      // 或 CategoryRepository
+    private val transactionDataSource: TransactionDataSource, // 或 TransactionRepository
+) {
+    suspend operator fun invoke(uriString: String, ledgerId: String): BillImportResult
+}
+```
+
+编排（`withContext(Dispatchers.IO)`，对齐 ARCHITECTURE §16.9）：
+
+1. `filePreparer.prepare(uriString).use { handle -> ... }`（`AutoCloseable` 保证 finally 清理临时文件）。
+2. `parserFactory.resolve(handle.displayName, magic)` → null 则 `unrecognized=true`（零落库）。
+3. `parser.parse(handle.input)` → `Success(rows, skipped)` 或 `Unrecognized`。
+4. 快照分类建 `(type,name)→categoryId` map；逐行装配 `Transaction`（UUID、`source`、`externalId/counterparty/paymentMethod`、自动分类 categoryId，兜底「其他」；「其他」亦缺 → 整体 `Failure` 零落库）。
+5. `transactionRunner.runInTransaction { 预查既有 externalId → 去重（文件内重复+既有相交→计 EXISTS）→ transactionDataSource.insertBatch(剩余) → 补充 -1 计数 }`；真实写入异常 → 事务回滚 → 失败（零落库）。
+6. 汇总 `BillImportResult`（`success/existing/neutral/closed/parseErrors`）。
+
+> ViewModel 侧传入 `uri.toString()`（`android.net.Uri` 的字符串化），UseCase 保持纯 Kotlin（不 import `android.net.Uri`，§1 可测试性）。
+
+### 13.7 UI 契约（Destinations/ViewModel，02_architecture §16.8）
+
+- `Destination.Import = "import"`（根图全屏页，顶栏返回）；入口「导入账单」在首页/收支页顶栏 + 设置数据区可选。
+- `ImportUiState = Idle | Busy | Result(summary) | Error(msg)`；`ImportViewModel` 事件：`pickFile()`、`onFilePicked(uri)`、`retry()`、`done()`；SAF `ActivityResultContracts.OpenDocument`。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）
