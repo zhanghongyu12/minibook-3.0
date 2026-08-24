@@ -49,7 +49,7 @@ class ReportUseCaseTest {
             )
         }
 
-        val trend = ObserveTrendUseCase(txRepo, ledger).observe(period, GRANULARITY.MONTHLY).first()
+        val trend = ObserveTrendUseCase(txRepo, ledger).observe(period, Granularity.MONTHLY).first()
 
         assertTrue("月视图应委托 observeDailyTrend", txRepo.dailyTrendInvoked)
         assertFalse("月视图不应触发 observeMonthlyTrend", txRepo.monthlyTrendInvoked)
@@ -67,7 +67,7 @@ class ReportUseCaseTest {
         val ledger = fakeLedgerDataStore("ledger-1")
         val txRepo = FakeTransactionRepository()
 
-        val trend = ObserveTrendUseCase(txRepo, ledger).observe(period, GRANULARITY.YEARLY).first()
+        val trend = ObserveTrendUseCase(txRepo, ledger).observe(period, Granularity.YEARLY).first()
 
         assertTrue("年视图应委托 observeMonthlyTrend", txRepo.monthlyTrendInvoked)
         assertFalse("年视图不应触发 observeDailyTrend", txRepo.dailyTrendInvoked)
@@ -78,7 +78,7 @@ class ReportUseCaseTest {
     @Test
     fun `当前账本未初始化 - 发空趋势保活`() = runTest {
         val trend = ObserveTrendUseCase(FakeTransactionRepository(), fakeLedgerDataStore())
-            .observe(period, GRANULARITY.MONTHLY).first()
+            .observe(period, Granularity.MONTHLY).first()
         assertTrue(trend.isEmpty)
     }
 
@@ -96,7 +96,7 @@ class ReportUseCaseTest {
         }
 
         val balance = ObserveBalanceTrendUseCase(txRepo, ledger)
-            .observe(period, GRANULARITY.MONTHLY).first()
+            .observe(period, Granularity.MONTHLY).first()
 
         assertEquals(listOf("d1", "d2", "d3"), balance.buckets)
         // runningFold(0): 0+200=200 → 200+(-400)=-200 → -200+150=-50
@@ -107,7 +107,7 @@ class ReportUseCaseTest {
     @Test
     fun `无数据时累计结余走势 isEmpty 为 true`() = runTest {
         val balance = ObserveBalanceTrendUseCase(FakeTransactionRepository(), fakeLedgerDataStore())
-            .observe(period, GRANULARITY.MONTHLY).first()
+            .observe(period, Granularity.MONTHLY).first()
         assertTrue(balance.isEmpty)
     }
 
@@ -136,7 +136,7 @@ class ReportUseCaseTest {
             observeCategories = ObserveCategoriesUseCase(ledger, catRepo),
         )
 
-        val slices = useCase.observe(TransactionType.EXPENSE, period, GRANULARITY.MONTHLY).first()
+        val slices = useCase.observe(TransactionType.EXPENSE, period, Granularity.MONTHLY).first()
 
         // 金额降序：cat-1(5000) → cat-3(3000) → cat-deleted(2000)（cat-zero 被过滤）
         assertEquals(listOf("cat-1", "cat-3", "cat-deleted"), slices.map { it.categoryId })
@@ -162,7 +162,7 @@ class ReportUseCaseTest {
                 FakeCategoryRepository(),
             ),
         )
-        val slices = useCase.observe(TransactionType.EXPENSE, period, GRANULARITY.MONTHLY).first()
+        val slices = useCase.observe(TransactionType.EXPENSE, period, Granularity.MONTHLY).first()
         assertEquals(0, slices.size)
     }
 

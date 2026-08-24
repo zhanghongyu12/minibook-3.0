@@ -37,7 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.report.BalanceTrend
 import com.minibook.domain.usecase.report.CategorySlice
-import com.minibook.domain.usecase.report.GRANULARITY
+import com.minibook.domain.usecase.report.Granularity
 import com.minibook.domain.usecase.report.ReportTrend
 import com.minibook.ui.components.SkeletonBlock
 import com.minibook.ui.reports.components.BarChart
@@ -141,8 +141,8 @@ fun ReportsScreen(
 @Composable
 private fun ReportsTopBar(
     onBack: () -> Unit,
-    viewType: GRANULARITY,
-    onViewTypeChange: (GRANULARITY) -> Unit,
+    viewType: Granularity,
+    onViewTypeChange: (Granularity) -> Unit,
 ) {
     TopAppBar(
         title = { Text("报表") },
@@ -169,20 +169,20 @@ private fun ReportsTopBar(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ViewTypeToggle(
-    viewType: GRANULARITY,
-    onChange: (GRANULARITY) -> Unit,
+    viewType: Granularity,
+    onChange: (Granularity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SingleChoiceSegmentedButtonRow(modifier = modifier) {
         SegmentedButton(
-            selected = viewType == GRANULARITY.MONTHLY,
-            onClick = { onChange(GRANULARITY.MONTHLY) },
+            selected = viewType == Granularity.MONTHLY,
+            onClick = { onChange(Granularity.MONTHLY) },
             shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
             label = { Text("月") },
         )
         SegmentedButton(
-            selected = viewType == GRANULARITY.YEARLY,
-            onClick = { onChange(GRANULARITY.YEARLY) },
+            selected = viewType == Granularity.YEARLY,
+            onClick = { onChange(Granularity.YEARLY) },
             shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
             label = { Text("年") },
         )
@@ -193,13 +193,13 @@ private fun ViewTypeToggle(
 @Composable
 private fun PeriodSwitcher(
     period: YearMonth,
-    viewType: GRANULARITY,
+    viewType: Granularity,
     onShift: (Boolean) -> Unit,
     onReset: () -> Unit,
 ) {
     val label = when (viewType) {
-        GRANULARITY.MONTHLY -> TimeFormatter.formatYearMonth(period)
-        GRANULARITY.YEARLY -> "${period.year} 年"
+        Granularity.MONTHLY -> TimeFormatter.formatYearMonth(period)
+        Granularity.YEARLY -> "${period.year} 年"
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -215,7 +215,7 @@ private fun PeriodSwitcher(
             modifier = Modifier
                 .padding(horizontal = 8.dp)
                 .clickable(onClick = onReset)
-                .semantics { contentDescription = "回到当前${if (viewType == GRANULARITY.MONTHLY) "月" else "年"}" },
+                .semantics { contentDescription = "回到当前${if (viewType == Granularity.MONTHLY) "月" else "年"}" },
         )
         IconButton(onClick = { onShift(true) }) {
             Text("›", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

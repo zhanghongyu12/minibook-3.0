@@ -140,19 +140,31 @@ class HomeViewModel @Inject constructor(
         initialValue = HomeUiState.Loading,
     )
 
-    /** 当月预算是否超支（[ObserveBudgetProgressUseCase] → [BudgetProgress.hasOverBudget]）。
-     *  仅供首页预算入口叠加 `error` 红点（DEC-012「入口轻量提示」，TASK-038 增强项）。 */
-    val budgetOverBudget: StateFlow<Boolean> = observeBudgetProgress.observe(YearMonth.now())
-        .map { it.hasOverBudget }
+    /**
+     * 预算进度观察月份（P2-4）：原为构造时固定 `YearMonth.now()`，跨月不滚动；
+     * 改为可观察的 [MutableStateFlow]，由 [refresh] 滚动到当前月，经 [flatMapLatest] 重订阅新月份。
+     */
+    private val budgetMonth = MutableStateFlow(YearMonth.now())
+
+    /**
+     * 当月预算是否超支（[ObserveBudgetProgressUseCase] → [BudgetProgress.hasOverBudget]）。
+     * 仅供首页预算入口叠加 `error` 红点（DEC-012「入口轻量提示」，TASK-038 增强项）。
+     *
+     * P2-4：月份源为 [budgetMonth]（可观察）；[refresh] 滚动其值为当前月 →
+     * [flatMapLatest] 取消旧月份订阅、重订阅新月份预算进度，避免跨月后红点停留上个月。
+     */
+    val budgetOverBudget: StateFlow<Boolean> = budgetMonth
+        .flatMapLatest { observeBudgetProgress.observe(it).map { p -> p.hasOverBudget } }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = false,
         )
 
-    /** 手动刷新：重触发 [FetchMonthSummaryUseCase]（本月结余重算）。 */
+    /** 手动刷新：重触发 [FetchMonthSummaryUseCase]（本月结余重算），并滚动预算月份到当前月（P2-4）。 */
     fun refresh() {
         refreshTrigger.value += 1
+        budgetMonth.value = YearMonth.now()
     }
 
     companion object {

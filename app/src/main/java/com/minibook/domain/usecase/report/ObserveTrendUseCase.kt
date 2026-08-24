@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
  * [MONTHLY] = 月视图（按天桶，委托 [TransactionRepository.observeDailyTrend]）；
  * [YEARLY] = 年视图（按月桶，委托 [TransactionRepository.observeMonthlyTrend]）。
  */
-enum class GRANULARITY {
+enum class Granularity {
     MONTHLY,
     YEARLY,
 }
@@ -42,7 +42,7 @@ data class ReportTrend(
 /**
  * 观察当前账本收支趋势（TASK-036，PRD F-07 / DEC-011），对齐 UI §8.2 / API §12.2。
  *
- * 按 [GRANULARITY] 委托区间聚合（月视图当月首/末日、年视图当年首/末日，见 [periodStart]/[periodEnd]），
+ * 按 [Granularity] 委托区间聚合（月视图当月首/末日、年视图当年首/末日，见 [periodStart]/[periodEnd]），
  * 返回 [ReportTrend]（X 桶 + 三序列，图表组件直接消费，Canvas 不承担算术 DEC-011）。
  *
  * **observe 特殊性（同 ObserveTransactions/ObserveCategories，TASK-013/015 方案）**：observe 路径
@@ -62,7 +62,7 @@ class ObserveTrendUseCase @Inject constructor(
      * @param period 视图目标：月视图 = 目标月份；年视图 = 目标年份（取其 [YearMonth.year]）。
      * @param granularity 月（天桶）/ 年（月桶）。
      */
-    fun observe(period: YearMonth, granularity: GRANULARITY): Flow<ReportTrend> =
+    fun observe(period: YearMonth, granularity: Granularity): Flow<ReportTrend> =
         ledgerDataStore.currentLedgerId.flatMapLatest { ledgerId ->
             if (ledgerId.isBlank()) {
                 // 首启 Bootstrap 前无当前账本：发空趋势保活；Bootstrap 写入后自动重订阅。
@@ -71,9 +71,9 @@ class ObserveTrendUseCase @Inject constructor(
                 val start = periodStart(period, granularity)
                 val end = periodEnd(period, granularity)
                 when (granularity) {
-                    GRANULARITY.MONTHLY ->
+                    Granularity.MONTHLY ->
                         transactionRepository.observeDailyTrend(ledgerId, start, end)
-                    GRANULARITY.YEARLY ->
+                    Granularity.YEARLY ->
                         transactionRepository.observeMonthlyTrend(ledgerId, start, end)
                 }.map { it.toReportTrend() }
             }
@@ -88,16 +88,16 @@ internal fun List<PeriodTrend>.toReportTrend(): ReportTrend = ReportTrend(
     balanceValues = map { it.balanceFen },
 )
 
-/** 报表区间起点（含）：[GRANULARITY.MONTHLY]=当月首日、[GRANULARITY.YEARLY]=当年首日。 */
-internal fun periodStart(period: YearMonth, granularity: GRANULARITY): String =
+/** 报表区间起点（含）：[Granularity.MONTHLY]=当月首日、[Granularity.YEARLY]=当年首日。 */
+internal fun periodStart(period: YearMonth, granularity: Granularity): String =
     when (granularity) {
-        GRANULARITY.MONTHLY -> period.atDay(1).toString()
-        GRANULARITY.YEARLY -> YearMonth.of(period.year, 1).atDay(1).toString()
+        Granularity.MONTHLY -> period.atDay(1).toString()
+        Granularity.YEARLY -> YearMonth.of(period.year, 1).atDay(1).toString()
     }
 
-/** 报表区间终点（含）：[GRANULARITY.MONTHLY]=当月末日、[GRANULARITY.YEARLY]=当年末日。 */
-internal fun periodEnd(period: YearMonth, granularity: GRANULARITY): String =
+/** 报表区间终点（含）：[Granularity.MONTHLY]=当月末日、[Granularity.YEARLY]=当年末日。 */
+internal fun periodEnd(period: YearMonth, granularity: Granularity): String =
     when (granularity) {
-        GRANULARITY.MONTHLY -> period.atEndOfMonth().toString()
-        GRANULARITY.YEARLY -> YearMonth.of(period.year, 12).atEndOfMonth().toString()
+        Granularity.MONTHLY -> period.atEndOfMonth().toString()
+        Granularity.YEARLY -> YearMonth.of(period.year, 12).atEndOfMonth().toString()
     }

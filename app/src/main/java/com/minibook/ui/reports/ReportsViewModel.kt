@@ -6,7 +6,7 @@ import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.report.BalanceTrend
 import com.minibook.domain.usecase.report.CategorySlice
-import com.minibook.domain.usecase.report.GRANULARITY
+import com.minibook.domain.usecase.report.Granularity
 import com.minibook.domain.usecase.report.ObserveBalanceTrendUseCase
 import com.minibook.domain.usecase.report.ObserveCategoryBreakdownUseCase
 import com.minibook.domain.usecase.report.ObserveTrendUseCase
@@ -81,8 +81,8 @@ class ReportsViewModel @Inject constructor(
 ) : ViewModel() {
 
     /** 视图粒度：月 / 年（默认月）。 */
-    private val _viewType = MutableStateFlow(GRANULARITY.MONTHLY)
-    val viewType: StateFlow<GRANULARITY> = _viewType.asStateFlow()
+    private val _viewType = MutableStateFlow(Granularity.MONTHLY)
+    val viewType: StateFlow<Granularity> = _viewType.asStateFlow()
 
     /** 当前选择周期（月视图 = 月份、年视图 = 该年），默认当前月/年。 */
     private val _period = MutableStateFlow(YearMonth.now())
@@ -127,7 +127,7 @@ class ReportsViewModel @Inject constructor(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChartState.Loading)
 
     /** 切换视图粒度：月 / 年。 */
-    fun setViewType(type: GRANULARITY) {
+    fun setViewType(type: Granularity) {
         _viewType.value = type
     }
 
@@ -138,8 +138,8 @@ class ReportsViewModel @Inject constructor(
      */
     fun shiftPeriod(forward: Boolean) {
         val deltaMonths = when (_viewType.value) {
-            GRANULARITY.MONTHLY -> if (forward) 1L else -1L
-            GRANULARITY.YEARLY -> if (forward) 12L else -12L
+            Granularity.MONTHLY -> if (forward) 1L else -1L
+            Granularity.YEARLY -> if (forward) 12L else -12L
         }
         _period.value = _period.value.plusMonths(deltaMonths)
     }

@@ -48,7 +48,7 @@ class ObserveBalanceTrendUseCase @Inject constructor(
      * @param period 视图目标：月视图 = 目标月份；年视图 = 目标年份（取其 [YearMonth.year]）。
      * @param granularity 月（天桶）/ 年（月桶）。
      */
-    fun observe(period: YearMonth, granularity: GRANULARITY): Flow<BalanceTrend> =
+    fun observe(period: YearMonth, granularity: Granularity): Flow<BalanceTrend> =
         ledgerDataStore.currentLedgerId.flatMapLatest { ledgerId ->
             if (ledgerId.isBlank()) {
                 flowOf(BalanceTrend(emptyList(), emptyList()))
@@ -56,9 +56,9 @@ class ObserveBalanceTrendUseCase @Inject constructor(
                 val start = periodStart(period, granularity)
                 val end = periodEnd(period, granularity)
                 when (granularity) {
-                    GRANULARITY.MONTHLY ->
+                    Granularity.MONTHLY ->
                         transactionRepository.observeDailyTrend(ledgerId, start, end)
-                    GRANULARITY.YEARLY ->
+                    Granularity.YEARLY ->
                         transactionRepository.observeMonthlyTrend(ledgerId, start, end)
                 }.map { it.toBalanceTrend() }
             }

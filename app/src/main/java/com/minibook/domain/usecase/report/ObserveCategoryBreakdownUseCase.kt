@@ -52,7 +52,7 @@ class ObserveCategoryBreakdownUseCase @Inject constructor(
     fun observe(
         type: TransactionType,
         period: YearMonth,
-        granularity: GRANULARITY,
+        granularity: Granularity,
     ): Flow<List<CategorySlice>> =
         ledgerDataStore.currentLedgerId.flatMapLatest { ledgerId ->
             if (ledgerId.isBlank()) {
