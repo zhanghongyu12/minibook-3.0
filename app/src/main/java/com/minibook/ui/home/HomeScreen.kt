@@ -1,5 +1,6 @@
 package com.minibook.ui.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,11 +9,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,8 +28,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
@@ -30,6 +39,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Category
@@ -47,6 +57,39 @@ import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.ui.theme.lightSemanticColors
+
+/**
+ * 首页跨层导航桥（TASK-033/036/038 接线收口）。
+ *
+ * `search`/`reports`/`budgets` 三个路由注册于**根图** [MiniBookNavHost]，而首页 Home 位于
+ * [MainScreen] 内嵌 5 Tab 嵌套图——嵌套图无法直达根图目的地，与 ledger-manage 同理需根图
+ * `navigate` 中转。为在不穿透 [MainScreen]（在其边界外）的前提下把首页入口接上根路由，
+ * 这里用 [LocalHomeNavigation] CompositionLocal 把根导航能力经 [MiniBookNavHost] 注入，
+ * [HomeScreen] 只读取使用（参数式回调的分发由 MainScreen 承担，改动面更大，故弃用）。
+ */
+interface HomeNavigation {
+    /** 打开搜索页（根图 `search`）。 */
+    fun openSearch()
+
+    /** 打开报表页（根图 `reports`）。 */
+    fun openReports()
+
+    /** 打开预算页（根图 `budgets`）。 */
+    fun openBudgets()
+}
+
+/**
+ * 首页根导航桥的 CompositionLocal；由 [MiniBookNavHost] 在根图内注入真实实现，
+ * 缺省提供 no-op（预览/独立 compose 不崩）。读取方 =[HomeScreen] 首页入口。
+ */
+val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<HomeNavigation> =
+    staticCompositionLocalOf {
+        object : HomeNavigation {
+            override fun openSearch() = Unit
+            override fun openReports() = Unit
+            override fun openBudgets() = Unit
+        }
+    }
 
 /**
  * 首页仪表板（TASK-023，UI §2 P-02，ARCHITECTURE §12/§8.3）。
@@ -80,9 +123,19 @@ fun HomeScreen(
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
+    // 首页跨层根导航（搜索/报表/预算）：由 MiniBookNavHost 经 LocalHomeNavigation 注入；
+    // 当月预算超支红点（DEC-012 入口轻量提示）：观察 budgetOverBudget。
+    val homeNavigation = LocalHomeNavigation.current
+    val budgetOverBudget by viewModel.budgetOverBudget.collectAsStateWithLifecycle()
 
     Scaffold(
-        topBar = { HomeTopBar(uiState, onNavigateToLedgerManage) },
+        topBar = {
+            HomeTopBar(
+                uiState = uiState,
+                onNavigateToLedgerManage = onNavigateToLedgerManage,
+                onOpenSearch = homeNavigation::openSearch,
+            )
+        },
         floatingActionButton = {
             PrimaryFAB(onClick = {
                 editingTx = null
@@ -116,6 +169,9 @@ fun HomeScreen(
                         showTransactionSheet = true
                     },
                     onNavigateToTransactions = onNavigateToTransactions,
+                    onOpenReports = homeNavigation::openReports,
+                    onOpenBudgets = homeNavigation::openBudgets,
+                    budgetOverBudget = budgetOverBudget,
                 )
                 is HomeUiState.Success -> HomeDashboardContent(
                     balance = state.balance,
@@ -132,6 +188,9 @@ fun HomeScreen(
                         showTransactionSheet = true
                     },
                     onNavigateToTransactions = onNavigateToTransactions,
+                    onOpenReports = homeNavigation::openReports,
+                    onOpenBudgets = homeNavigation::openBudgets,
+                    budgetOverBudget = budgetOverBudget,
                 )
             }
         }
@@ -147,14 +206,17 @@ fun HomeScreen(
 }
 
 /**
- * 顶部栏：左「首页」标题 + 右 [LedgerSelector]（UI §2 P-02 顶栏；状态栏 inset 自处理）。
+ * 顶部栏：左「首页」标题 + 右搜索入口（🔍）+ [LedgerSelector]（UI §2 P-02 顶栏；状态栏
+ * inset 自处理）。material-icons 缺失（TASK-020 偏差），搜索入口同全工程用 emoji 字符占位。
  *
  * @param onNavigateToLedgerManage [LedgerSelector] 点击回调（跳账本管理，P-11）。
+ * @param onOpenSearch 搜索入口回调（根图导航到 `search`，§8.6「首页顶部搜索入口」）。
  */
 @Composable
 private fun HomeTopBar(
     uiState: HomeUiState,
     onNavigateToLedgerManage: () -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val currentLedger = (uiState as? HomeUiState.Success)?.currentLedger
@@ -171,6 +233,9 @@ private fun HomeTopBar(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.weight(1f),
         )
+        IconButton(onClick = onOpenSearch) {
+            Text("🔍", fontSize = 20.sp)
+        }
         LedgerSelector(
             ledger = currentLedger,
             onClick = onNavigateToLedgerManage,
@@ -191,6 +256,9 @@ private fun HomeTopBar(
  * @param onOpenNewTransaction FAB / 空态「记一笔」回调（弹 [TransactionSheet] 新增态）。
  * @param onOpenEditTransaction 最近交易行点击回调（弹 [TransactionSheet] 编辑态，传被点 tx）。
  * @param onNavigateToTransactions 「查看全部」回调（跳 transactions 页，P-03）。
+ * @param onOpenReports 「报表」入口回调（根图导航到 `reports`，§8.6「报表/预算并排入口」）。
+ * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`，§8.6）。
+ * @param budgetOverBudget 当月预算是否超支（DEC-012 入口提示）；超支时预算入口叠加 `error` 红点。
  */
 @Composable
 private fun HomeDashboardContent(
@@ -202,6 +270,9 @@ private fun HomeDashboardContent(
     onOpenNewTransaction: () -> Unit = {},
     onOpenEditTransaction: (Transaction) -> Unit = {},
     onNavigateToTransactions: () -> Unit = {},
+    onOpenReports: () -> Unit = {},
+    onOpenBudgets: () -> Unit = {},
+    budgetOverBudget: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -222,6 +293,13 @@ private fun HomeDashboardContent(
                     NetBalanceRow(label = "收入", fen = income, semantic = MoneySemantic.INCOME),
                     NetBalanceRow(label = "支出", fen = expense, semantic = MoneySemantic.EXPENSE),
                 ),
+            )
+        }
+        item {
+            HomeQuickEntries(
+                overBudget = budgetOverBudget,
+                onOpenReports = onOpenReports,
+                onOpenBudgets = onOpenBudgets,
             )
         }
         item {
@@ -258,6 +336,86 @@ private fun HomeDashboardContent(
                     categoryIcon = category?.icon,
                     categoryColor = category?.color,
                     onClick = { onOpenEditTransaction(tx) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 首页「报表 / 预算」并排轻量入口（§8.6 设计约定）：位于本月结余卡下方。
+ *
+ * 预算入口在当月超支（[overBudget]）时叠加 `error` 色小圆点（DEC-012「入口轻量提示」，
+ * TASK-038 增强项），点击进预算页 `budgets`；报表入口点击进报表页 `reports`。
+ *
+ * @param overBudget 当月预算是否超支（决定预算入口红点显隐）。
+ * @param onOpenReports 「报表」入口回调（根图导航到 `reports`）。
+ * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`）。
+ */
+@Composable
+private fun HomeQuickEntries(
+    overBudget: Boolean,
+    onOpenReports: () -> Unit,
+    onOpenBudgets: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        HomeQuickEntry(
+            label = "报表",
+            icon = "📊",
+            onClick = onOpenReports,
+            modifier = Modifier.weight(1f),
+        )
+        HomeQuickEntry(
+            label = "预算",
+            icon = "🎯",
+            onClick = onOpenBudgets,
+            overBudget = overBudget,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * 单个首页快捷入口（Surface 轻量卡片）：图标 + 文案 +（可选）超支红点。
+ *
+ * @param label 入口文案。
+ * @param icon 入口图标（emoji 占位，material-icons 缺失同口径）。
+ * @param onClick 点击回调。
+ * @param overBudget 是否叠加 `error` 红点（仅预算入口使用）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeQuickEntry(
+    label: String,
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    overBudget: Boolean = false,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = modifier,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(icon, fontSize = 18.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.weight(1f))
+            if (overBudget) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error),
                 )
             }
         }

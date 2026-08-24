@@ -2,8 +2,10 @@ package com.minibook.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -15,11 +17,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.minibook.data.local.security.AppLockController
+import com.minibook.ui.budgets.BudgetsScreen
+import com.minibook.ui.home.HomeNavigation
+import com.minibook.ui.home.LocalHomeNavigation
 import com.minibook.ui.lock.LockScreen
 import com.minibook.ui.main.MainScreen
-import com.minibook.ui.reserved.BudgetsPlaceholder
-import com.minibook.ui.reserved.ReportsPlaceholder
-import com.minibook.ui.reserved.SearchPlaceholder
+import com.minibook.ui.reports.ReportsScreen
+import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -76,21 +80,38 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
             } else {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
                 // 中转 ledger-manage 根图跳转（MainScreen 内嵌图无法直达根图目的地）。
+                // 首页跨层根导航桥（search/reports/budgets）：Home 位于嵌套图，直达根图
+                // 目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入给 HomeScreen。
                 composable(Destination.Home.route) {
-                    MainScreen(onNavigateToLedgerManage = {
-                        rootController.navigate(Destination.LedgerManage.route)
-                    })
+                    val homeNavigation = remember(rootController) {
+                        object : HomeNavigation {
+                            override fun openSearch() {
+                                rootController.navigate(Destination.Search.route)
+                            }
+                            override fun openReports() {
+                                rootController.navigate(Destination.Reports.route)
+                            }
+                            override fun openBudgets() {
+                                rootController.navigate(Destination.Budgets.route)
+                            }
+                        }
+                    }
+                    CompositionLocalProvider(LocalHomeNavigation provides homeNavigation) {
+                        MainScreen(onNavigateToLedgerManage = {
+                            rootController.navigate(Destination.LedgerManage.route)
+                        })
+                    }
                 }
 
-                // Phase 2 占位页（P-12~14，TASK-030 真实占位 composable，默认不可达）。
+                // Phase 2 真实页（P-12~14，TASK-033/036/038 落地）：顶栏返回 → 根图 popBackStack。
                 composable(Destination.Search.route) {
-                    SearchPlaceholder(onBack = { rootController.popBackStack() })
+                    SearchScreen(onBack = { rootController.popBackStack() })
                 }
                 composable(Destination.Reports.route) {
-                    ReportsPlaceholder(onBack = { rootController.popBackStack() })
+                    ReportsScreen(onBack = { rootController.popBackStack() })
                 }
                 composable(Destination.Budgets.route) {
-                    BudgetsPlaceholder(onBack = { rootController.popBackStack() })
+                    BudgetsScreen(onBack = { rootController.popBackStack() })
                 }
 
                 // 账本管理（P-11，TASK-029 真实页面）：顶栏返回 → 根图 popBackStack。

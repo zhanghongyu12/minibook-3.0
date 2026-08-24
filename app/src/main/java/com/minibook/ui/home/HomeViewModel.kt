@@ -7,6 +7,7 @@ import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.usecase.budget.ObserveBudgetProgressUseCase
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.ledger.ObserveLedgersUseCase
 import com.minibook.domain.usecase.transaction.FetchMonthSummaryUseCase
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -75,6 +77,7 @@ sealed interface HomeUiState {
  * @param observeTransactions 当前账本交易流（filter=null 全部，时间倒序）。
  * @param observeLedgers 全部账本流（按 position 升序，含 isDefault）。
  * @param observeCategories 当前账本分类流（filter=null 全部，用于 id→[Category] 联表）。
+ * @param observeBudgetProgress 当月预算进度流（用于首页预算入口超支红点，DEC-012）。
  * @param ledgerDataStore 当前账本 id DataStore（用于解析当前账本对象与空串兜底）。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -84,6 +87,7 @@ class HomeViewModel @Inject constructor(
     private val observeTransactions: ObserveTransactionsUseCase,
     private val observeLedgers: ObserveLedgersUseCase,
     private val observeCategories: ObserveCategoriesUseCase,
+    private val observeBudgetProgress: ObserveBudgetProgressUseCase,
     private val ledgerDataStore: LedgerDataStore,
 ) : ViewModel() {
 
@@ -135,6 +139,16 @@ class HomeViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = HomeUiState.Loading,
     )
+
+    /** 当月预算是否超支（[ObserveBudgetProgressUseCase] → [BudgetProgress.hasOverBudget]）。
+     *  仅供首页预算入口叠加 `error` 红点（DEC-012「入口轻量提示」，TASK-038 增强项）。 */
+    val budgetOverBudget: StateFlow<Boolean> = observeBudgetProgress.observe(YearMonth.now())
+        .map { it.hasOverBudget }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = false,
+        )
 
     /** 手动刷新：重触发 [FetchMonthSummaryUseCase]（本月结余重算）。 */
     fun refresh() {
