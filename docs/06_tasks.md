@@ -23,9 +23,9 @@
 ## 项目状态区块
 
 - 运行模式：**编排模式**
-- 当前阶段：**Phase 2 开发中（设计完成，编码进行中）**
-- 当前任务：Phase 2 设计三阶段完成（PRD/架构/UI 已确认，DEC-010~013），进入编码 TASK-031~039
-- 下一步行动：Phase 2 进行中——Architect 完成 §Phase 2 架构/数据库/API 设计 + DEC-011~013（图表/通知/搜索技术口径）+ 任务拆分 TASK-031+；遗留待办挂账（① release 签名 keystore ② instrumented 真机执行 ③ transactions 页分类联表 TODO ④ Phase 3 云端同步）
+- 当前阶段：**Phase 2 已完成（编码 + 测试 + 评审闭环，待发布 push）**
+- 当前任务：Phase 2 F-06 搜索 / F-07 报表 / F-08 预算全部落地（17 commit：需求/架构/UI/编码九任务/测试/评审/P1-1 修复），全量单测 95 例全绿
+- 下一步行动：Phase 2 待 push（需人工批准，领先 origin 18 commit）；遗留待办挂账（① release 签名 keystore ② instrumented 真机执行 ③ P2 技术债：导航风格并存 / 三文件超 300 行 / GRANULARITY 命名 / BudgetProgress 与 04§12.3 契约漂移 ④ Phase 3 云端同步）
 - 阻塞项：无
 
 ---
@@ -38,6 +38,7 @@
 - 2026-08-18（Architect 阶段 5）：完成 Designer 三项契约外假设 A-1/A-2/A-3 双向确认（全部确认、无契约推翻、未新增决策）；A-2 的 `DebtFilter{ kind?, direction? }` 契约补充直接落 API.md §4；UI.md 状态由「草稿」转「已确认」（§6.3 标注确认结论）；任务清单填充 **TASK-001~TASK-030**（构建骨架 2 / 数据层 4 / 领域契约层 4 / 业务层 8 / UI 层 12），版本锁定写入 TASK-001（与 DEC-001 既定栈完全一致）。
 - 2026-08-20（阶段 6~9 收尾）：阶段 6 编码（TASK-001~030 + UI 接线 + 连接债务收尾）全部完成；阶段 7 测试落地（4 JVM 单测全绿 + 3 instrumented 骨架）；阶段 8 评审（3 层并行 Reviewer）发现并修复 2 个严重安全 bug（DEC-002 双钥系统：缺失关→开重包裹路径 + 首启 master key 生成未接线 + unlock 兜底）+ 9 个高价值警告项（错误分类/Update 校验/Bootstrap 事务/数据源原子/圈账本/三页 Error 态/重试/snackbar 重放）；阶段 9 发布——修复 release lintVital 拦截（data_extraction_rules.xml 非法 domain）、assembleRelease 成功产出 `app-release-unsigned.apk`、发布说明落盘 `docs/RELEASE_NOTES.md`。v1.0.0 MVP 交付，全部提交推送 GitHub。
 - 2026-08-21（v1.0.0 收尾补漏，编排者调度）：① 修复首页最近交易分类联表 TODO——HomeViewModel 注入 ObserveCategoriesUseCase、HomeUiState.Success 携带 categoriesById、HomeScreen 传真实分类名/图标/色（替代 null 占位 ❔），commit 0c041a3；② 可测性改造——DatabaseGate 提炼 DatabaseProvider 接口（加密语义零改动），RoomTransactionRunner/RoomDataSourceImpl 依赖接口化，commit 3f042b6；③ Tester 补全 TransactionRunnerAtomicityTest 三个空骨架用例为真实断言（内存库 + DatabaseProvider 替身：deleteById 三表分发 / runInTransaction 回滚 / deleteByLedger 四表批删），commit ab7214c；④ 构建验证全绿（compileDebugKotlin + testDebugUnitTest 56 例 + compileDebugAndroidTestKotlin）；⑤ 任务清单 TASK-001~030 状态统一翻转为「已完成」。instrumented 用例仍待设备执行（标注待人工，见 09_test_report.md / 10_release_notes.md）。
+- 2026-08-21（Phase 2 全线落地，编排者调度）：PM DEC-010 + PRD F-06/07/08 细化（fc28d98）→ 协调者需求确认（2818aa0）→ Architect DEC-011~013 + 架构/DB/API 设计 + TASK-031~039 拆分（e9aa4ee）→ Designer 三页 UI + C-27~C-32（306ed7b）→ 编码九任务（数据层 3fbe724、搜索 UseCase d7e8d0b、收支页联表 911f6ed、预算 UseCase+BudgetProgress 守卫 5ba92e4、图表组件 fb63970、搜索页 ccff71a、报表页 efbe338、预算页 07154fe、接线收口 8b0588e）→ Tester 补测 56→95 例全绿 + 09_test_report（a3764b4）→ Reviewer 评审 08_review（20cea82，P1-1 孤儿预算 + P2 六项）→ Developer 修 P1-1 删除分类级联清理预算（ac5579d）。三大技术口径落地：DEC-011 Canvas 自绘零第三方图表、DEC-012 App 内告警无通知栏、DEC-013 扩展 observeFiltered 零 Repository 改。全量 95 例单测 + compileDebugAndroidTestKotlin 全绿，未 push（待人工批准）。
 
 ---
 
