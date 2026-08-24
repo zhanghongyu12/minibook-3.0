@@ -76,6 +76,9 @@ interface HomeNavigation {
 
     /** 打开预算页（根图 `budgets`）。 */
     fun openBudgets()
+
+    /** 打开账单导入页（根图 `import`，F-12）。 */
+    fun openImport()
 }
 
 /**
@@ -88,6 +91,7 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
             override fun openSearch() = Unit
             override fun openReports() = Unit
             override fun openBudgets() = Unit
+            override fun openImport() = Unit
         }
     }
 
@@ -171,6 +175,7 @@ fun HomeScreen(
                     onNavigateToTransactions = onNavigateToTransactions,
                     onOpenReports = homeNavigation::openReports,
                     onOpenBudgets = homeNavigation::openBudgets,
+                    onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
                 )
                 is HomeUiState.Success -> HomeDashboardContent(
@@ -190,6 +195,7 @@ fun HomeScreen(
                     onNavigateToTransactions = onNavigateToTransactions,
                     onOpenReports = homeNavigation::openReports,
                     onOpenBudgets = homeNavigation::openBudgets,
+                    onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
                 )
             }
@@ -258,6 +264,7 @@ private fun HomeTopBar(
  * @param onNavigateToTransactions 「查看全部」回调（跳 transactions 页，P-03）。
  * @param onOpenReports 「报表」入口回调（根图导航到 `reports`，§8.6「报表/预算并排入口」）。
  * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`，§8.6）。
+ * @param onOpenImport 「导入账单」入口回调（根图导航到 `import`，§9.1 TASK-044 第三格）。
  * @param budgetOverBudget 当月预算是否超支（DEC-012 入口提示）；超支时预算入口叠加 `error` 红点。
  */
 @Composable
@@ -272,6 +279,7 @@ private fun HomeDashboardContent(
     onNavigateToTransactions: () -> Unit = {},
     onOpenReports: () -> Unit = {},
     onOpenBudgets: () -> Unit = {},
+    onOpenImport: () -> Unit = {},
     budgetOverBudget: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -300,6 +308,7 @@ private fun HomeDashboardContent(
                 overBudget = budgetOverBudget,
                 onOpenReports = onOpenReports,
                 onOpenBudgets = onOpenBudgets,
+                onOpenImport = onOpenImport,
             )
         }
         item {
@@ -343,20 +352,24 @@ private fun HomeDashboardContent(
 }
 
 /**
- * 首页「报表 / 预算」并排轻量入口（§8.6 设计约定）：位于本月结余卡下方。
+ * 首页「报表 / 预算 / 导入账单」并排轻量入口（§8.6 设计约定 + §9.1 TASK-044 增设第三格）：
+ * 位于本月结余卡下方，三者 `weight(1f)` 均分。
  *
  * 预算入口在当月超支（[overBudget]）时叠加 `error` 色小圆点（DEC-012「入口轻量提示」，
- * TASK-038 增强项），点击进预算页 `budgets`；报表入口点击进报表页 `reports`。
+ * TASK-038 增强项），点击进预算页 `budgets`；报表入口点击进报表页 `reports`；「导入账单」
+ * 入口（📥，F-12）点击进根图 `import`。
  *
  * @param overBudget 当月预算是否超支（决定预算入口红点显隐）。
  * @param onOpenReports 「报表」入口回调（根图导航到 `reports`）。
  * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`）。
+ * @param onOpenImport 「导入账单」入口回调（根图导航到 `import`）。
  */
 @Composable
 private fun HomeQuickEntries(
     overBudget: Boolean,
     onOpenReports: () -> Unit,
     onOpenBudgets: () -> Unit,
+    onOpenImport: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -374,6 +387,12 @@ private fun HomeQuickEntries(
             icon = "🎯",
             onClick = onOpenBudgets,
             overBudget = overBudget,
+            modifier = Modifier.weight(1f),
+        )
+        HomeQuickEntry(
+            label = "导入账单",
+            icon = "📥",
+            onClick = onOpenImport,
             modifier = Modifier.weight(1f),
         )
     }

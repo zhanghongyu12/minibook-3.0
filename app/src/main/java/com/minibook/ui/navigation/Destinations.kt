@@ -42,6 +42,9 @@ sealed class Destination(val route: String) {
     /** 预算（P-14 占位）。 */
     data object Budgets : Destination("budgets")
 
+    /** 账单导入（P-15，F-12）：根图全屏页（不进底部 NavigationBar），顶栏返回 popBackStack。 */
+    data object Import : Destination("import")
+
     // —— 账本管理（P-11） ——
 
     /** 账本管理（P-11：账本列表/切换/新增/重命名/删除）。 */

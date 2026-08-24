@@ -20,6 +20,7 @@ import com.minibook.data.local.security.AppLockController
 import com.minibook.ui.budgets.BudgetsScreen
 import com.minibook.ui.home.HomeNavigation
 import com.minibook.ui.home.LocalHomeNavigation
+import com.minibook.ui.billimport.ImportScreen
 import com.minibook.ui.lock.LockScreen
 import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
@@ -94,12 +95,20 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             override fun openBudgets() {
                                 rootController.navigate(Destination.Budgets.route)
                             }
+                            override fun openImport() {
+                                rootController.navigate(Destination.Import.route)
+                            }
                         }
                     }
                     CompositionLocalProvider(LocalHomeNavigation provides homeNavigation) {
-                        MainScreen(onNavigateToLedgerManage = {
-                            rootController.navigate(Destination.LedgerManage.route)
-                        })
+                        MainScreen(
+                            onNavigateToLedgerManage = {
+                                rootController.navigate(Destination.LedgerManage.route)
+                            },
+                            onNavigateToImport = {
+                                rootController.navigate(Destination.Import.route)
+                            },
+                        )
                     }
                 }
 
@@ -112,6 +121,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 }
                 composable(Destination.Budgets.route) {
                     BudgetsScreen(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.Import.route) {
+                    ImportScreen(onBack = { rootController.popBackStack() })
                 }
 
                 // 账本管理（P-11，TASK-029 真实页面）：顶栏返回 → 根图 popBackStack。

@@ -54,9 +54,13 @@ private val mainTabs = listOf(
  * [Destination.Transactions]（同 Tab 语义）。内部 Tab 切换复用 [navigateToTab]。
  *
  * @param onNavigateToLedgerManage 账本管理导航回调（根图跳转，MiniBookNavHost 接线传入）。
+ * @param onNavigateToImport 账单导入导航回调（根图跳转到 `import`，MiniBookNavHost 接线传入）。
  */
 @Composable
-fun MainScreen(onNavigateToLedgerManage: () -> Unit = {}) {
+fun MainScreen(
+    onNavigateToLedgerManage: () -> Unit = {},
+    onNavigateToImport: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -104,7 +108,10 @@ fun MainScreen(onNavigateToLedgerManage: () -> Unit = {}) {
             composable(Destination.Debts.route) { DebtsScreen() }
             composable(Destination.Categories.route) { CategoriesScreen() }
             composable(Destination.Settings.route) {
-                SettingsScreen(onNavigateToLedgerManage = onNavigateToLedgerManage)
+                SettingsScreen(
+                    onNavigateToLedgerManage = onNavigateToLedgerManage,
+                    onNavigateToImport = onNavigateToImport,
+                )
             }
         }
     }

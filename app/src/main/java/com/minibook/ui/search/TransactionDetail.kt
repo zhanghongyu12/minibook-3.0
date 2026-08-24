@@ -26,6 +26,7 @@ import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.MoneySemantic
 import com.minibook.ui.components.MoneyText
+import com.minibook.ui.components.chineseLabel
 import com.minibook.util.TimeFormatter
 
 /**
@@ -96,6 +97,32 @@ fun TransactionDetailSheet(
             }
             DetailRow(label = "日期") {
                 Text(TimeFormatter.formatDate(tx.date), style = MaterialTheme.typography.bodyLarge)
+            }
+            // 导入字段信息块（§9.3.2）：于「日期」后、「备注」前聚簇插入，空值用「—」弱化。
+            DetailRow(label = "对方") {
+                Text(
+                    text = tx.counterparty?.takeIf { it.isNotBlank() } ?: "—",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (tx.counterparty.isNullOrBlank()) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+            DetailRow(label = "支付方式") {
+                Text(
+                    text = tx.paymentMethod?.takeIf { it.isNotBlank() } ?: "—",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (tx.paymentMethod.isNullOrBlank()) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+            DetailRow(label = "来源") {
+                Text(tx.source.chineseLabel, style = MaterialTheme.typography.bodyLarge)
             }
             DetailRow(label = "备注") {
                 Text(

@@ -67,11 +67,13 @@ import kotlinx.coroutines.withContext
  *
  * @param viewModel 设置页 VM；默认经 [hiltViewModel] 解析。
  * @param onNavigateToLedgerManage 账本管理入口回调（MainScreen 中转根图导航到 ledger-manage）。
+ * @param onNavigateToImport 账单导入入口回调（MainScreen 中转根图导航到 `import`，§9.1 可选入口）。
  */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateToLedgerManage: () -> Unit = {},
+    onNavigateToImport: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // 改父类为 FragmentActivity 后成立；取不到则记为不可操作态（防御，正常不出现）。
@@ -241,6 +243,12 @@ fun SettingsScreen(
                             subtitle = "从备份文件恢复，将覆盖全部现有数据",
                             trailing = { TrailingChevron() },
                             onClick = { importLauncher.launch(arrayOf("application/json")) },
+                        )
+                        SettingRow(
+                            title = "导入账单",
+                            subtitle = null,
+                            trailing = { TrailingChevron() },
+                            onClick = onNavigateToImport,
                         )
                     })
                 }

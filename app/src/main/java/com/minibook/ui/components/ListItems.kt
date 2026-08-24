@@ -30,17 +30,19 @@ import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtDirection
 import com.minibook.domain.model.DebtKind
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.util.TimeFormatter
 import kotlin.math.absoluteValue
 
 /**
- * 交易列表行（UI §4 C-13）。
+ * 交易列表行（UI §4 C-13，§9.3.1 F-12 增强）。
  *
- * 分类 emoji 圆底 + 分类名 + 备注摘要 + ±金额（语义色，经 [MoneyText]）+ 日期。
- * 分类展示字段（名称/图标/颜色）由调用方从分类表联表后注入；金额符号由
- * `tx.type` 决定语义色（收入绿/支出红）。
+ * 分类 emoji 圆底 + 分类名（尾部 [SourceBadge]，仅 `source ≠ MANUAL`）+ 0~2 行副文本
+ * （先 `counterparty` 交易对方、后 `description`，各自空则不渲染；§9.3.1）+ ±金额
+ * （语义色，经 [MoneyText]）+ 日期。分类展示字段（名称/图标/颜色）由调用方从分类表联表后注入；
+ * 金额符号由 `tx.type` 决定语义色（收入绿/支出红）。金额/日期/语义色右列与分类圆底色规则不变。
  */
 @Composable
 fun TransactionListItem(
@@ -69,16 +71,35 @@ fun TransactionListItem(
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                categoryName ?: "",
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            tx.description?.let {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    categoryName ?: "",
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                // source 徽标：仅账单导入（微信/支付宝）显示，手动记录零噪音（§9.3.1）。
+                if (tx.source != TransactionSource.MANUAL) {
+                    Spacer(Modifier.width(6.dp))
+                    SourceBadge(source = tx.source)
+                }
+            }
+            // 副文本 0~2 行：先交易对方、后退为描述（§9.3.1；均 isNotBlank 才渲染）。
+            tx.counterparty?.takeIf { it.isNotBlank() }?.let { counterparty ->
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    it,
+                    counterparty,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            tx.description?.takeIf { it.isNotBlank() }?.let { description ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
