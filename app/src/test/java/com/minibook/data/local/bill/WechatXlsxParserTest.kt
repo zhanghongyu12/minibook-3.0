@@ -80,6 +80,7 @@ class WechatXlsxParserTest {
 
         // 行 2：序列数带小数（整数部分）+ t=s 共享串 + t=str 字面量。
         val r0 = success.rows[0]
+        assertEquals("2026-08-23", r0.date) // 46257.7435 → 整数 46257 → 1899-12-30 + 46257 = 2026-08-23
         assertEquals(LocalDate.of(1899, 12, 30).plusDays(46257L).toString(), r0.date)
         assertEquals(TransactionType.EXPENSE, r0.type)
         assertEquals(870L, r0.amountFen)
@@ -91,6 +92,7 @@ class WechatXlsxParserTest {
 
         // 行 3：序列数无小数 + 微信红包收入。
         val r1 = success.rows[1]
+        assertEquals("2026-08-24", r1.date) // 46258 → 1899-12-30 + 46258 = 2026-08-24
         assertEquals(LocalDate.of(1899, 12, 30).plusDays(46258L).toString(), r1.date)
         assertEquals(TransactionType.INCOME, r1.type)
         assertEquals(650L, r1.amountFen)

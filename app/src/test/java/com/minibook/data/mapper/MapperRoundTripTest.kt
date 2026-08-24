@@ -14,6 +14,7 @@ import com.minibook.domain.model.DebtKind
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.SyncStatus
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -69,6 +70,51 @@ class MapperRoundTripTest {
             )
             assertEquals(domain, TransactionMapper.toDomain(TransactionMapper.toEntity(domain)))
         }
+    }
+
+    @Test
+    fun `Transaction 四新字段与来源枚举往返全等`() {
+        // F-12 导入交易：source 非 MANUAL + 三可空字段非空。
+        val imported = Transaction(
+            id = "tx-alipay",
+            ledgerId = "ledger-1",
+            type = TransactionType.EXPENSE,
+            amount = 870L,
+            categoryId = "cat-eat",
+            description = "拿铁",
+            date = "2026-08-23",
+            createdAt = "2026-08-23T06:14:30.123Z",
+            updatedAt = "2026-08-23T06:14:30.123Z",
+            syncStatus = SyncStatus.LOCAL,
+            externalId = "alipay:2026082323001",
+            counterparty = "星巴克",
+            paymentMethod = "花呗",
+            source = TransactionSource.ALIPAY_IMPORT,
+        )
+        val entity = TransactionMapper.toEntity(imported)
+        assertEquals("alipay:2026082323001", entity.externalId)
+        assertEquals("星巴克", entity.counterparty)
+        assertEquals("花呗", entity.paymentMethod)
+        assertEquals("alipay_import", entity.source)
+        assertEquals(imported, TransactionMapper.toDomain(entity))
+
+        // 手动记录：source 默认 MANUAL、三列默认 null 往返不丢失（DEC-018 / TASK-040）。
+        val manual = Transaction(
+            id = "tx-manual",
+            ledgerId = "ledger-1",
+            type = TransactionType.EXPENSE,
+            amount = 100L,
+            categoryId = "cat-1",
+            date = "2026-08-18",
+            createdAt = "2026-08-18T06:14:30.123Z",
+            updatedAt = "2026-08-18T06:14:30.123Z",
+        )
+        val manualEntity = TransactionMapper.toEntity(manual)
+        assertEquals("manual", manualEntity.source)
+        assertEquals(null, manualEntity.externalId)
+        assertEquals(null, manualEntity.counterparty)
+        assertEquals(null, manualEntity.paymentMethod)
+        assertEquals(manual, TransactionMapper.toDomain(manualEntity))
     }
 
     @Test

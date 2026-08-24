@@ -50,6 +50,13 @@ class EnumRoundTripTest {
         }
     }
 
+    @Test
+    fun `TransactionSource fromValue 往返一致`() {
+        TransactionSource.entries.forEach { e ->
+            assertEquals(e, TransactionSource.fromValue(e.value))
+        }
+    }
+
     // ---- 非法串 / 空串 → null ----
 
     @Test
@@ -73,6 +80,10 @@ class EnumRoundTripTest {
         assertNull(SyncStatus.fromValue("非法串"))
         assertNull(SyncStatus.fromValue(""))
         assertNull(SyncStatus.fromValue("unknown-status"))
+
+        assertNull(TransactionSource.fromValue("非法串"))
+        assertNull(TransactionSource.fromValue(""))
+        assertNull(TransactionSource.fromValue("unknown-source"))
     }
 
     // ---- value 常量精确匹配 DATABASE §4 ----
@@ -109,6 +120,13 @@ class EnumRoundTripTest {
         assertEquals("conflict", SyncStatus.CONFLICT.value)
     }
 
+    @Test
+    fun `TransactionSource value 常量匹配 DEC-018`() {
+        assertEquals("manual", TransactionSource.MANUAL.value)
+        assertEquals("wechat_import", TransactionSource.WECHAT_IMPORT.value)
+        assertEquals("alipay_import", TransactionSource.ALIPAY_IMPORT.value)
+    }
+
     // ---- 枚举数量守卫（防增删导致漏测） ----
 
     @Test
@@ -118,5 +136,7 @@ class EnumRoundTripTest {
         assertEquals(2, DebtKind.entries.size)
         assertEquals(2, DebtDirection.entries.size)
         assertEquals(4, SyncStatus.entries.size)
+        assertEquals(3, TransactionSource.entries.size)
+        assertEquals(4, ImportSkipReason.entries.size)
     }
 }

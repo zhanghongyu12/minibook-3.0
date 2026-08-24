@@ -286,4 +286,18 @@
 
 ---
 
+## DEC-021: F-12 测试口径自决（补测边界 / 迁移测试基建 / 真机降级与已知观察）
+
+- 日期：2026-08-24
+- 决定：
+  1. **补测边界**：Developer 已交付 F-12 单测 16 例覆盖主路径；Tester 补测聚焦 PRD §F-12 验收中「Original 未覆盖分支」——DEC-017 格式探测（`BillParserFactory`）、纯文本转义（`BillText` 金额/日期/备注）、动态表头容错与列序重排（`BillHeaderMatcher`）、`TransactionSource` 枚举与 `Transaction` 新字段映射往返，共 +21 例，JVM 单测 111→132 全绿（`gradlew :app:testDebugUnitTest`）。
+  2. **迁移测试基建**：`room-testing` 仅 `testImplementation`（JVM 源集）属错位——`MigrationTestHelper` 是 instrumented 依赖，故补 `androidTestImplementation(libs.androidx.room.testing)` + `androidTest` assets `srcDir("schemas")`（Room 导出的 `1.json`/`2.json` 需入测试 APK assets），并新增 `MigrationV1To2Test`；本阶段验收口径为 `:app:compileDebugAndroidTestKotlin` 绿（已绿），instrumented 执行留设备验证。
+  3. **真机三项降级**：设备 MEIZU 21 未连接（`adb devices` 空），迁移保数据 / UI 结构 / 端到端导入转「遗留手动验证清单」（`09_test_report.md §F-12`），含精确点击路径与支付宝（成功 206 / 跳过 28）、微信（成功 297 / 跳过 2）预期计数；不阻塞提交。
+  4. **已知观察（只报告，报 Developer 定夺）**：① androidTest 14 个反引号含空格方法名无法 DEX（D8 `Space characters in SimpleName`，P2，阻断 `connectedAndroidTest`，需重命名为无空格 ASCII）；② `BillColumn.COUNTERPARTY` 匹配用 `contains("对方")` 使「对方账号」亦命中（P3，当前靠「交易对方」列序在前而正确）；③ `SafBillFilePreparer` XLSX 临时文件名固定 `import_bill.xlsx`，与 DEC-017 设计 `minibook_import_<uuid>.xlsx` 不符（P3）。
+- 原因：无人值守下明确「补测到何程度算完成」以免过度/漏测；Room 迁移只能在 instrumented 环境跑，无设备 + 存在 DEX 阻断时按「编译绿 + 设备执行留清单」闭环；真机项不可在无设备时伪造通过。
+- 影响：`09_test_report.md §F-12`、`CHANGELOG.md`、`app/build.gradle.kts`、`app/src/androidTest/java/com/minibook/data/local/db/MigrationV1To2Test.kt`。
+- 替代方案：JVM 用 Robolectric 跑迁移（弃：项目未引入、引入超补测边界）；真机未连仍标「已验证」（弃：造假）；Tester 直接重命名 androidTest 方法名（弃：属修复范畴，保留观察报 Developer）。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

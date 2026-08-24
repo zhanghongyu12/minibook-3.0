@@ -43,6 +43,12 @@ android {
             )
         }
     }
+
+    // Room MigrationTestHelper 迁移测试：把导出的 schema JSON（app/schemas/）打包进 androidTest assets，
+    // 供 createDatabase(v1)/runMigrationsAndValidate(v2) 读取（F-12 Tester 补迁移测试基建）。
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 // Room schema 导出目录（TASK-003 起在 @Database 上 exportSchema=true 后首次编译生成 1.json 并入库）
@@ -91,4 +97,6 @@ dependencies {
 
     // Instrumented 测试（Tester 阶段 7 基线）
     androidTestImplementation(libs.androidx.test.ext.junit)
+    // Room MigrationTestHelper（F-12 迁移测试 1→2，Tester 补）
+    androidTestImplementation(libs.androidx.room.testing)
 }
