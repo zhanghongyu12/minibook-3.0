@@ -93,7 +93,79 @@ Stage 6~7 产出整体质量良好。业务层分层清晰（domain / data / UI 
 
 ---
 
+## Phase 2 审查报告（搜索 / 报表 / 预算 F-06 / F-07 / F-08，2026-08-21）
+
+### 审查信息
+
+| 项目 | 内容 |
+|------|------|
+| 审查日期 | 2026-08-21 |
+| 审查人 | Reviewer |
+| 审查范围 | **Phase 2 全部代码提交** `git diff 4e1d55e..HEAD -- app/src/main`（48 文件）+ 测试 `app/src/test`（8 文件 / 新增 36 例）——数据层（搜索过滤 DEC-013 + 报表聚合）、领域层（搜索/报表/预算 UseCase + BudgetProgress 模型）、UI 层（搜索/报表/预算三页 + 自绘图表组件 + 首页入口 + 导航桥） |
+| 代码版本 | 编码 14 commit（`fc28d98`→`8b0588e`，含 5 个 Phase 2 设计文档 commit）+ 测试 1 commit（`a3764b4`，92 例全绿）；工作区干净（`git status` 无改动） |
+| 依据 | `docs/07_decisions.md` DEC-010~013、`docs/02_architecture.md §15`、`docs/03_database.md §10`、`docs/04_api.md §12`、`docs/05_ui.md §8`、`.ai/rules/*` |
+
+### 逐大类结论
+
+> 文件路径均相对 `app/src/main/java/com/minibook/`。
+
+**1. DEC 合规 —— 通过（三项全部合规，grep 佐证）**
+
+- **DEC-011（图表纯 Compose Canvas、零第三方）**：`ui/reports/components/` 五组件（LineChart/BarChart/DonutChart/ChartLegend/ChartEmptyState）全部 `Canvas`/`DrawScope` 自绘（`drawPath`/`drawLine`/`drawRoundRect`/`drawArc`）。`grep -rniE "vico|mpandroidchart|compose-charts" gradle` 无命中；`git diff 4e1d55e..HEAD -- gradle libs.versions.toml app/build.gradle.kts` 为空——依赖与版本清单零变更。
+- **DEC-012（仅 App 内告警）**：`grep -rn "POST_NOTIFICATIONS\|WorkManager" app/src/main` 无命中（通知栏未实现）。页内超支 = `BudgetsScreen` `OverBudgetLabel`「已超支 ¥X」+ 进度条 `semanticExpense` 红（`BudgetsScreen.kt:283-285`）；首页入口 = `HomeQuickEntry` 叠加 `error` 色红点（`HomeScreen.kt` + `HomeViewModel.budgetOverBudget`）。
+- **DEC-013（扩展 observeFiltered 加参，Repository 签名不变）**：`TransactionDao.observeFiltered` 5→8 参（`remark`/`amountMin`/`amountMax`）、`DebtDao.observeFiltered` 3→4 参（`partyName`），SQL 与 03 §10.2 逐行一致；`TransactionFilter` 4→7 字段、`DebtFilter` 2→3 字段；`RoomDataSourceImpl` 两处转发新字段（`RoomDataSourceImpl` diff +remark/amountMin/amountMax、+partyName）；`TransactionDataSource/DebtDataSource.observeByLedger(ledgerId, filter)` 与 `TransactionRepository/DebtRepository` 观察方法**签名未变**（filter 引用透明）。
+
+**2. 架构一致性 —— 通过（1 处例外计入问题清单）**
+
+- **分层依赖方向**：ui→domain→data 无逆向新增。Phase 2 的 9 个新 UseCase（`domain/usecase/{search,report,budget}`）依赖 domain 模型 + 既有 Repository 契约；ViewModels 只依赖 domain.usecase/model；Screens 只依赖 domain.model + ui 组件。**注**：观察类 UseCase 直注 `data.local.datastore.LedgerDataStore`（domain→data 一例）是**延续 Phase 1** `ObserveTransactionsUseCase`（TASK-013）的既有范式，KotlinDoc 已显式留痕并注明待 `LedgerProvider.observeCurrentLedgerId()` 落地后替换，非本阶段新增。
+- **金额全程 Long 分**：`grep -rnE "double|float|toDouble|toFloat" app/src/main/java/com/minibook` 仅命中 3 处 UI 展示几何（`BudgetsScreen.kt:456` 进度条比例、`DonutChart.kt:103` 扫描角、`LineChart.kt:131/207` 刻度步长与坐标归一），**domain 层零命中**。金额存取/比较/超支判定全部 Long 分整数运算（`BudgetProgress.overBudget` 等派生属性为 Long 比较/减法）。
+- **observe / 取值路径统一**：6 个 observe UseCase（Search×2 / Report×3 / Budget×1）均 `LedgerDataStore.currentLedgerId.flatMapLatest` 切账本重订阅 + 空串保活；取值路径 Set/SetCategory/Clear Budget UseCase 均 `LedgerProvider.currentLedgerId()`。口径统一。
+- **方法契约与 03/04 一致**：DAO→DataSource→Repository 新聚合方法（`observeDailyTrend`/`observeMonthlyTrend`/`observeCategoryAgg`）三签一致，SQL 与 03 §10.3 相符；`BudgetRepository.setTotalBudget` 在 `transactionRunner.runInTransaction` 内「先删后插」（DEC-008）。**例外**：`BudgetProgress` 模型形状与 04 §12.3 漂移（见问题清单 P1-1 / P2-1）。
+
+**3. 编码规范 —— 通过为主 + 建议**
+
+- KDoc 完整（类头职责/参数/决策引用/observe 特殊性留痕），命名清晰，文件头注释齐全，无空 catch、无调试残留。
+- 软限制（单文件 ≤300 行）：**3 文件超限**——`ui/budgets/BudgetsScreen.kt`（647）、`ui/search/SearchScreen.kt`（685）、`ui/search/SearchViewModel.kt`（429），详见待审项 (b)；`ui/search/TransactionDetail.kt` 与 `DebtDetail.kt` 因边界约束（不可改 `ui/sheets/*`）合理新建只读 Sheet。
+- 小瑕疵：`GRANULARITY` 枚举类名全大写（`domain/usecase/report/ObserveTrendUseCase.kt:20`），违反「类名大驼峰」，建议改 `Granularity`（P2）。
+
+**4. 测试覆盖 —— 通过（闭环，遗留可接受）**
+
+- Tester 交付 92 例全绿 = Phase 1 基线 56 + 本阶段新增 36（`BudgetProgressTest` 11 / `ObserveBudgetProgressUseCaseTest` 5 / `ReportUseCaseTest` 9 / `SearchTransactionsUseCaseTest` 3 / `SearchDebtsUseCaseTest` 4 / `SearchViewModelAmountRangeTest` 4）。核对 TASK-031~039「需测试覆盖点」：JVM 可覆盖项（预算超支口径、搜索 filter 透传、报表委托/区间/累计跑表/已删分类兜底、min>max 校验）**全部闭环**。
+- 遗留可接受：instrumented 真机（DAO SQL / 迁移原子性）仍挂账、UI 交互流未单测——与 Phase 1 口径一致，见 09 §已知遗留，不阻塞。
+
+### 问题清单（按严重度）
+
+| 编号 | 严重度 | 文件 | 位置 | 描述 | 结论 |
+|------|--------|------|------|------|------|
+| P1-1 | 应改 | `domain/usecase/budget/ObserveBudgetProgressUseCase.kt`、`domain/usecase/category/DeleteCategoryUseCase.kt`、`DeleteCategoryWithMigrationUseCase.kt`、`data/local/db/entity/BudgetEntity.kt` | `ObserveBudgetProgressUseCase.kt:93-104`（`mapNotNull` 跳过孤儿）、删除链路仅删分类/迁交易、`BudgetEntity.categoryId` 无 `@ForeignKey` | **删除分类不清其预算 → 孤儿预算静默丢失**。`budgets.categoryId` 无外键/级联，`DeleteCategoryUseCase`/`DeleteCategoryWithMigrationUseCase` 只删分类/迁交易、不清 budgets；`ObserveBudgetProgressUseCase` 又把「分类不在分类流内」的预算整行 `mapNotNull` 静默跳过。三者叠加 = 用户删除一个已设预算的分类后，该分类预算在页面**凭空消失、无任何提示**（预算行仍留库，但不可见）。与 04 §12.3 原文设计「`category: Category?`，分类已删 null 兜底展示」相悖。 | 转 Developer 修复：推荐在分类删除事务内**级联删除/迁移其 budgets**（最彻底）；或回退为 §12.3 的 null 兜底展示（以 categoryId 显示「已删分类」）。二者择一即可闭合。 |
+| P2-1 | 建议 | `domain/model/BudgetProgress.kt`（54 行） vs `docs/04_api.md §12.3`（464-487） | 模型整体形状 | `BudgetProgress` 与「已确认」契约 §12.3 漂移：`month` 文档写 `YearMonth`、实现用 `String`（yyyy-MM，与 `Budget.month` 一致，**实现更合理**）；总预算文档写 `total: BudgetLineProgress?`、实现扁平为 `totalBudgetFen/totalUsedFen`（0 哨兵）；分类进度文档写 `category: Category?`、实现 `category: Category`（非空）+ 孤儿跳过（即 P1-1 根源）。实现内部自洽且被 16 例测试锁定，行为正确，**问题仅在文档未回写**。 | 建议 Architect 回写 §12.3 对齐实现（或 Reviewer 记 DEM 后由 Architect 收口）。 |
+| P2-2 | 建议 | `ui/search/SearchScreen.kt`、`ui/budgets/BudgetsScreen.kt`、`ui/search/SearchViewModel.kt` | 全文件 | 3 文件超 300 行软限（685/647/429），详见待审项 (b)。 | 本次不拆；拆分方案见 (b)。 |
+| P2-3 | 建议 | `ui/budgets/BudgetsScreen.kt:454-456` | `BudgetProgressBar` | 进度条比例 `usedFen.toFloat()/budgetFen.toFloat()` 对金额分做浮点——仅 display 比例，超支判定（`over`）仍为 Long 整数，正确性无损；仅极端金额（>2^24 分 ≈ ¥16.7万）下进度条比例有可忽略视觉误差。 | 可接受，保持 Long 语义即可，无需改。 |
+| P2-4 | 建议 | `ui/home/HomeViewModel.kt`（`budgetOverBudget`） | `observe(YearMonth.now())` | 首页超支红点月份在 VM 构造时固定为当月，跨月不自动滚动（VM 重建才更新）；预算页本身可切月、入口仅看当月，极低频。 | 可接受；后续可改为「可观察的 month 源」提升严谨性。 |
+| P2-5 | 建议 | `domain/usecase/report/ObserveTrendUseCase.kt:20` | `enum class GRANULARITY` | 枚举类名全大写，违反 Kotlin 类名大驼峰约定（`coding_rules`）。 | 改名 `Granularity`（含 3 处引用），纯重构。 |
+| P2-6 | 建议 | `ui/search/`（`toDebtFilter`） | `kind = if (direction!=null) LEND else null` | 方向筛选仅覆盖「借」类（LEND）记录，还款类（REPAY×owe_me/收到还款 等）无法按方向过滤，仅能经姓名检索——与 05 §8.1「(kind 口径)」标注一致，属有意窄化，非缺陷。 | 可选增强：若未来需按「收到还款/我还款」检索，将 `kind` 独立开放为筛选项。 |
+
+> 无 P0（阻断）项：未发现崩溃/数据损坏/跨账本泄漏/资金口径错误。
+
+### 已知待审项结论（a~d）
+
+- **(a) 首页导航桥 `HomeNavigation` + `LocalHomeNavigation`（CompositionLocal）与 `ledger-manage` 参数式回调并存**：结论 = **保留两种并存，本次不统一（P2 技术债）**。二者解决同一「嵌套图→根图」跨层导航问题（`MainScreen.onNavigateToLedgerManage` 参数式 vs `LocalHomeNavigation` CompositionLocal），并存无害但属同题两解。评估：三入口 + 未来可能更多入口，若参数式需逐一穿透 `MainScreen` 签名（正是本次弃用参数式的理由），故 **CompositionLocal 是更优方向**。最小落地建议（本次不做）：后续择机**全迁 CompositionLocal**——把 `openLedgerManage()` 加入 `HomeNavigation`、删除 `MainScreen.onNavigateToLedgerManage` 参数（Home/Settings 改读 Local），既可统一机制又缩减 MainScreen 签名；不推荐全迁参数式（签名膨胀）。
+- **(b) `BudgetsScreen.kt`（647）/`SearchScreen.kt`（685）超 300 行软限是否下沉**：结论 = **建议拆分，本次不强制**。`SearchScreen` 中 `OptionalDateField`（C-10 可清空扩展，通用性强）宜下沉 `ui/components/`；`DebtDirectionSelector`/`CategoryFilterChip`/条件区可归入 `ui/search/components/`。`BudgetsScreen` 中 `TotalBudgetCard`/`CategoryBudgetRow` 可收敛为单一可复用进度卡（配合 (c)）。拆分纯可维护性，不改行为。
+- **(c) C-32 `BudgetProgressCard` 未在 `ui/components/` 落地（页内私有）是否补抽**：结论 = **本阶段不补，保留页内私有**。首页超支入口实际落为「预算入口 error 红点」（`HomeQuickEntry + budgetOverBudget:Boolean`），仅需布尔 `hasOverBudget`，**并不需要完整进度卡**，故「复用于首页超支入口」的前提不成立。页内总额卡（3 列+编辑按钮）与分类行（图标+2列+点击编辑）形态差异大，抽成带范式参数的单卡当前无第二消费方、收益低。待出现第二消费方（如首页嵌进度卡）再抽。文档 §8.4 C-32「复用行内变体」与实现「页内两私有卡」存在轻微出入，可接受，建议回写 §8.4 或本报告留痕即可。
+- **(d) 债务搜索方向映射 `kind=LEND + direction`（借出=OWE_ME、借入=I_OWE）与 DebtSheet 语义一致性**：结论 = **一致，通过**。`DebtSheet` 借出按钮 = `setKind(LEND)+setDirection(OWE_ME)`、借入 = `LEND+I_OWE`（`DebtSheet.kt:122-140`）；`SearchViewModel.toDebtFilter`（`SearchViewModel.kt:399-403`）在 direction 选中时强制 `kind=LEND`、未选方向 = 不过滤，逐态对齐。`DebtDetail.kt` 的 `debtKindLabel/debtNetContribution` 四态映射亦与 `DebtDao` 净额四态表一致。唯一语义窄化：方向仅匹配「借」类（不含 REPAY）记录，与 05 §8.1「(kind 口径)」一致，属有意为之（P2-6）。
+
+### 与 Phase 1 报告的延续性
+
+- Phase 1（Stage 8）报告核的是 MVP 全量源码（安全/业务·数据/UI 层），3 Critical + 9 Warning 已全修复；Phase 2 报告核的是**增量**（F-06/F-07/F-08 三页 + 数据/领域扩展），二者范围不重叠、互补。
+- Phase 2 无新增 Critical；新发现集中在「数据完整性缺口」（P1-1 孤儿预算）与「文档漂移/软限/命名」类可维护性项，严重度整体低于 Phase 1 的双钥系统缺陷。
+- Phase 1 报告的「下一步建议」中的 `@IoDispatcher`、material-icons 正式依赖、BackupV1 字段、instrumented 真机验证等非阻塞技术债，在 Phase 2 **仍挂账**（Phase 2 未触碰，README/09 报告已确认延续）。
+
+### 总体评价
+
+Phase 2 三功能实现质量良好：DEC-011/012/013 三项设计决策全部精确落地（零第三方图表、零通知栏/WorkManager、`observeFiltered` 扩展范式合规），分层依赖、金额 Long 分、observe/取值路径统一均延续 Phase 1 既定范式且 KotlinDoc 留痕充分；自绘图表组件解耦干净（Canvas 不承担算术）；测试新增 36 例精准覆盖预算口径/搜索透传/报表委托/累计跑表/min>max 校验并与既有 56 例合成 92 例全绿。**需 Developer 返工 1 项 P1（孤儿预算静默丢失）**，另有多项 P2 建议（契约回写、超限文件拆分、枚举命名等）可延后。
+
 ## 历史审查记录
 
+- **Phase 2（2026-08-21）**：Reviewer 单实例评审 Phase 2 增量（`4e1d55e..HEAD`，14 编码 commit + 1 测试 commit）。对照 DEC-010~013 + 02 §15 / 03 §10 / 04 §12 / 05 §8 逐项核对：DEC 合规三项全过、架构一致、编码规范过·建议并存、测试 92 例全绿。发现 **1 项 P1（P1-1 删除分类不清预算 → 孤儿预算静默丢失，需 Developer 返工）+ 6 项 P2**（模型与 §12.3 契约漂移 / 3 文件超 300 行 / 进度条 float 比例 / 首页红点月份固定 / GRANULARITY 命名 / 债务方向窄化），无 P0。待审项 a~d 结论：导航桥保留两种并存（后续全迁 CompositionLocal）、超限文件建议拆（本次不强制）、C-32 不补抽、债务方向映射一致通过。详见「Phase 2 审查报告」章节。
 - **Stage 8（2026-08-20）**：3 个 Reviewer 子 agent 按层并行（安全层 / 业务·数据层 / UI 层），审查基线为 `1d09ae1`（Stage 7 测试落地）的工作树。发现 **3 项 Critical（2 项 DEC-002 双钥系统安全缺陷 + 1 项 auth 解锁崩溃）+ 9 项 Warning（W1~W5 业务层错误类型化/校验对齐/事务原子性/账本圈定，U1~U4 三页 Error 态/重试/snackbar 重放）**，全部修复并提交（`b4aa338`、`5315fc3`、`2ea7424`）。本报告于 2026-08-21 依协调日志与 git 历史回填，转为「已确认」。
 
