@@ -36,7 +36,7 @@ import org.junit.Test
  *
  * 覆盖：成功导入（自动分类命中 + 未命中归「其他」）；幂等去重（既有 externalId 相交 +
  * 文件内重复 → existing）；全跳过计数（neutral/closed）；工厂判不出 → unrecognized；
- * 「其他」兜底缺失 → 抛异常零落库（事务未提交）。
+ * 「其他」兜底缺失 → 抛异常零落库（事务未提交）；insertBatch 写异常 → 异常上抛且零插入回滚。
  */
 class ImportBillUseCaseTest {
 
@@ -46,8 +46,10 @@ class ImportBillUseCaseTest {
         var existingExternalIds: Set<String> = emptySet()
         var inserted: List<Transaction> = emptyList()
         var insertBatchResult: Int? = null // null = 全部插入成功
+        var insertBatchError: RuntimeException? = null // 非 null = insertBatch 抛异常（模拟写异常）
 
         override suspend fun insertBatch(txs: List<Transaction>): Int {
+            insertBatchError?.let { throw it }
             inserted = txs
             return insertBatchResult ?: txs.size
         }
@@ -291,6 +293,34 @@ class ImportBillUseCaseTest {
         assertNotNull(thrown)
         assertEquals(0, txDs.inserted.size)
         assertTrue(thrown!!.message!!.contains("其他")) // 兜底缺失提示含「其他」
+    }
+
+    @Test
+    fun `insertBatch 写异常 - 异常上抛且零插入整体回滚`() = runTest {
+        val txDs = FakeTransactionDataSource().apply {
+            insertBatchError = IllegalStateException("写入失败")
+        }
+        val catDs = FakeCategoryDataSource().apply {
+            categories = listOf(category("cat-other-exp", "其他", CategoryType.EXPENSE))
+        }
+        val parser = FakeBillParser(
+            format = TransactionSource.ALIPAY_IMPORT,
+            result = BillParseResult.Success(
+                rows = listOf(row("alipay:1", 100)),
+                skipped = emptyList(),
+            ),
+        )
+
+        var thrown: IllegalStateException? = null
+        try {
+            useCase(txDs, catDs, parser)("content://bill.csv", LEDGER)
+        } catch (e: IllegalStateException) {
+            thrown = e
+        }
+
+        assertNotNull(thrown)
+        assertTrue(thrown!!.message!!.contains("写入失败"))
+        assertTrue("写异常不得残留插入", txDs.inserted.isEmpty()) // 事务回滚 → 零插入
     }
 
     private companion object {

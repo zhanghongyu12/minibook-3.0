@@ -101,6 +101,27 @@ class WechatXlsxParserTest {
     }
 
     @Test
+    fun `表头命中后空白行跳过不计数 NEUTRAL`() {
+        // P2-6：微信导出尾部常见空行 `<row/>`（空 cells），应与 CSV 侧 isBlank 跳过一致，
+        // 不计 NEUTRAL、不产出行号明细。
+        val shared = WechatXmlRows.decodeSharedStrings(sharedXml)
+        val xml = """
+            <worksheet><sheetData>
+            <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c><c r="E1" t="s"><v>4</v></c><c r="F1" t="s"><v>5</v></c><c r="G1" t="s"><v>6</v></c><c r="H1" t="s"><v>7</v></c><c r="I1" t="s"><v>8</v></c><c r="J1" t="s"><v>9</v></c><c r="K1" t="s"><v>10</v></c></row>
+            <row r="2"></row>
+            <row r="3"><c r="A3"><v>46259</v></c><c r="E3" t="inlineStr"><is><t>/</t></is></c><c r="F3"><v>1.00</v></c></row>
+            </sheetData></worksheet>
+        """.trimIndent()
+        val decodedRows = WechatXmlRows.decodeSheet(xml, shared)
+        assertEquals(3, decodedRows.size)
+
+        val success = assertSuccess(WechatXlsxParser.mapRows(decodedRows))
+        assertEquals(0, success.rows.size) // 数据行仅 `/` 中性行，无有效行
+        assertEquals(1, success.skipped.count { it.reason == ImportSkipReason.NEUTRAL }) // 空白行不计
+        assertTrue(success.skipped.all { it.rowNumber != 2 }) // 空白行不产出行号明细
+    }
+
+    @Test
     fun `真实 zip 层 readEntry 贯通`() {
         val tmp = java.io.File.createTempFile("wechat", ".xlsx")
         try {

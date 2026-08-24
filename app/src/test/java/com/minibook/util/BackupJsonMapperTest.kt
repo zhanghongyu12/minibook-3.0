@@ -9,6 +9,7 @@ import com.minibook.domain.model.DebtKind
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.SyncStatus
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -181,6 +182,88 @@ class BackupJsonMapperTest {
             assertEquals(transaction.createdAt, imported.createdAt)
             assertEquals(transaction.updatedAt, imported.updatedAt)
             assertEquals(SyncStatus.LOCAL, imported.syncStatus)
+        }
+    }
+
+    @Test
+    fun `Transaction 4 新字段 toDto toDomain 往返等价`() {
+        // P1-1：F-12 四新字段（externalId/counterparty/paymentMethod/source）随备份往返不丢失。
+        val imported = transaction.copy(
+            syncStatus = SyncStatus.LOCAL,
+            externalId = "wechat:100000001",
+            counterparty = "某超市",
+            paymentMethod = "零钱",
+            source = TransactionSource.WECHAT_IMPORT,
+        )
+        with(BackupJsonMapper) {
+            assertEquals(imported, imported.toDto().toDomain())
+        }
+    }
+
+    @Test
+    fun `旧备份缺 4 新字段 toDomain 兜底 manual 且三列 null`() {
+        // P1-1：旧 JSON 无 externalId/counterparty/paymentMethod/source 键时，
+        // 前四者可空默认 null、source 缺省回退 MANUAL，反序列化不崩。
+        val legacyTx = TransactionDto(
+            id = "tx-legacy",
+            ledgerId = "ledger-1",
+            type = "expense",
+            amount = 100L,
+            categoryId = "cat-1",
+            date = "2026-08-18",
+        )
+        with(BackupJsonMapper) {
+            val domain = legacyTx.toDomain()
+            assertEquals(TransactionSource.MANUAL, domain.source)
+            assertNull(domain.externalId)
+            assertNull(domain.counterparty)
+            assertNull(domain.paymentMethod)
+        }
+    }
+
+    @Test
+    fun `旧 JSON 交易无 4 新字段反序列化不崩且兜底 manual`() {
+        // P1-1：缺失 4 新字段走 DTO 默认值 null（kotlinx.serialization 缺键 → 默认值），反序列化不崩。
+        val legacy = """
+            {
+              "version": 1,
+              "scope": "all",
+              "ledgers": [],
+              "categories": [],
+              "transactions": [
+                {
+                  "id": "tx-legacy-1",
+                  "ledgerId": "ledger-x",
+                  "type": "expense",
+                  "amount": 100,
+                  "categoryId": "cat-1",
+                  "date": "2026-08-18"
+                }
+              ],
+              "debts": []
+            }
+        """.trimIndent()
+        val parsed = BackupJsonMapper.fromJson(legacy)
+        assertEquals(1, parsed.transactions.size)
+        assertNull(parsed.transactions[0].source)
+        with(BackupJsonMapper) {
+            assertEquals(TransactionSource.MANUAL, parsed.transactions[0].toDomain().source)
+        }
+    }
+
+    @Test
+    fun `source 非法值 toDomain 兜底 manual`() {
+        val badSourceTx = TransactionDto(
+            id = "tx-bad-source",
+            ledgerId = "ledger-1",
+            type = "expense",
+            amount = 100L,
+            categoryId = "cat-1",
+            date = "2026-08-18",
+            source = "unknown-source",
+        )
+        with(BackupJsonMapper) {
+            assertEquals(TransactionSource.MANUAL, badSourceTx.toDomain().source)
         }
     }
 

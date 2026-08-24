@@ -23,8 +23,9 @@ import java.util.UUID
  *   [PreparedBillFile.close] 删除；
  * - CSV：直接开 GBK [InputStreamReader] 流式读（支付宝「交易流水证明」GBK 编码）。
  *
- * 判型：扩展名主判 + `PK\x03\x04` 魔数兜底（[DefaultBillParserFactory] 同口径）；
- * 嗅探前 4 字节经 `BufferedInputStream.mark/reset` 不丢字。
+ * 判型：**内容嗅探主判**——先 `PK\x03\x04` 魔数嗅探，命中即按 Xlsx 输入，否则再按扩展名
+ * 分发（与 [DefaultBillParserFactory] 同口径：魔数优先于扩展名）；嗅探前 4 字节经
+ * `BufferedInputStream.mark/reset` 不丢字。
  */
 class SafBillFilePreparer(
     private val context: Context,
@@ -46,7 +47,7 @@ class SafBillFilePreparer(
         buffered.reset()
 
         val magicBytes = if (read > 0) magic.copyOf(read) else null
-        val isXlsx = ext == XLSX_EXT || isZipMagic(raw = magic, read = read)
+        val isXlsx = isZipMagic(raw = magic, read = read) || ext == XLSX_EXT
 
         return if (isXlsx) {
             val tempFile = File(context.cacheDir, "$TEMP_XLSX_PREFIX${UUID.randomUUID()}.xlsx")

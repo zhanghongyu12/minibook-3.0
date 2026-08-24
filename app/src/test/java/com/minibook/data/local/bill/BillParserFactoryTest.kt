@@ -7,9 +7,10 @@ import org.junit.Test
 /**
  * 账单解析器工厂判型单测（TASK-041/042，DEC-017，ARCHITECTURE §16.3，PRD §F-12 异常处理）。
  *
- * 覆盖「扩展名主判 + 内容嗅探兜底 + 未识别」三径：`.csv`→支付宝、`.xlsx`→微信（大小写不敏感）、
- * 无/伪扩展名按 `PK\x03\x04` zip 魔数兜底→微信、未知扩展名且非 zip→null（「未识别账单格式」零落库）、
- * 无扩展名且非 zip→按文本 CSV 试解。此判型路径 Original 无单测，补齐 DEC-017「格式探测」验收分支。
+ * 覆盖「内容嗅探主判 + 扩展名分发 + 未识别」三径：`.csv`→支付宝、`.xlsx`→微信（大小写不敏感）、
+ * `PK\x03\x04` zip 魔数兜底→微信（含 .csv 名但内容 zip 的失配场景）、未知扩展名且非 zip→null
+ * （「未识别账单格式」零落库）、无扩展名且非 zip→按文本 CSV 试解。此判型路径 Original 无单测，
+ * 补齐 DEC-017「格式探测」验收分支。
  */
 class BillParserFactoryTest {
 
@@ -28,6 +29,13 @@ class BillParserFactoryTest {
     fun `zip 魔数兜底命中微信解析器即使扩展名非 xlsx`() {
         val magic = byteArrayOf('P'.code.toByte(), 'K'.code.toByte(), 0x03, 0x04)
         assertSame(WechatXlsxParser, DefaultBillParserFactory.resolve("伪装账单.bin", magic))
+    }
+
+    @Test
+    fun `csv 扩展名但 zip 魔数内容嗅探优先命中微信解析器`() {
+        // P2-1 回归：.csv 名但内容为 zip → 魔数前置，不再被扩展名误分发到支付宝 CSV。
+        val magic = byteArrayOf('P'.code.toByte(), 'K'.code.toByte(), 0x03, 0x04)
+        assertSame(WechatXlsxParser, DefaultBillParserFactory.resolve("改名账单.csv", magic))
     }
 
     @Test

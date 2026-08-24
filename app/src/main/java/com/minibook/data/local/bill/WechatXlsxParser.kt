@@ -59,6 +59,9 @@ object WechatXlsxParser : BillParser {
 
         for (cells in decodedRows) {
             rowNumber++
+            // 空白行直接跳过不计数：与 CSV 侧 AlipayCsvParser `isBlank() continue` 口径一致
+            // （微信导出尾部常见空行，不计 NEUTRAL、不产出行号明细）。
+            if (cells.isBlankRow()) continue
             if (columns == null) {
                 columns = BillHeaderMatcher.mapColumnsByIndex(cells)
                 continue
@@ -74,6 +77,10 @@ object WechatXlsxParser : BillParser {
         }
         return BillParseResult.Success(rows, skipped)
     }
+
+    /** 空白行（无单元格，或所有单元格文本均空白）→ true；对齐 CSV 侧 `isBlank()` 跳过口径。 */
+    private fun Map<Int, String>.isBlankRow(): Boolean =
+        isEmpty() || values.all { it.isBlank() }
 
     private sealed interface RowOutcome {
         data class Ok(val row: ParsedBillRow) : RowOutcome

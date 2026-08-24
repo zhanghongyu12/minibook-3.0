@@ -9,6 +9,7 @@ import com.minibook.domain.model.DebtDirection
 import com.minibook.domain.model.DebtKind
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.repository.BudgetRepository
 import com.minibook.domain.repository.CategoryRepository
@@ -154,6 +155,10 @@ class ImportAllUseCase @Inject constructor(
                 checkLedgerRef(t.ledgerId, "交易 ${t.id}", ledgerIds)?.let { return it }
             }
             if (TransactionType.fromValue(t.type) == null) return "非法交易类型：${t.type}"
+            // source 可空（旧备份缺省），但非空且非法时严格拒绝（对齐 type 校验口径，零落库）。
+            if (t.source != null && TransactionSource.fromValue(t.source) == null) {
+                return "非法交易来源：${t.source}"
+            }
             if (!Validators.validateAmount(t.amount)) {
                 return "交易金额非法（须正整分且≤${Validators.MAX_AMOUNT_FEN}）：${t.amount}"
             }

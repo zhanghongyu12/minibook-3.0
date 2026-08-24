@@ -63,7 +63,14 @@ data class CategoryDto(
     val updatedAt: String? = null,
 )
 
-/** 交易条目（API §11.2 Transaction）：`type` ∈ `expense`/`income`，`amount` 正整分。 */
+/**
+ * 交易条目（API §11.2 Transaction）：`type` ∈ `expense`/`income`，`amount` 正整分。
+ *
+ * F-12 四新字段（DEC-018 / P1-1）：`externalId`/`counterparty`/`paymentMethod`/`source`
+ * 随备份往返，避免备份还原丢失来源徽标/对方/支付方式/幂等判据。后三者可空透传；
+ * `source` 亦为可空 String——旧备份（v1 早期）无该键时按「缺省」处理为 `manual`
+ * （[BackupJsonMapper] toDomain 兜底）。
+ */
 @Serializable
 data class TransactionDto(
     val id: String,
@@ -76,6 +83,10 @@ data class TransactionDto(
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val syncStatus: String = "local",
+    val externalId: String? = null,
+    val counterparty: String? = null,
+    val paymentMethod: String? = null,
+    val source: String? = null,
 )
 
 /** 债务条目（API §11.2 Debt）：`kind` ∈ `lend`/`repay`，`direction` ∈ `owe_me`/`i_owe`。 */

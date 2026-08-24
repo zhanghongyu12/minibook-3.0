@@ -8,9 +8,11 @@ import com.minibook.domain.usecase.bill.BillParser
  * 契约放 data/local/bill（与 DEC-017 目录归属一致；ImportBillUseCase 域侧经本接口获得解析器，
  * 与域依赖 `data.datasource.TransactionRunner` 纯接口同径）。
  *
- * [resolve] 判型：扩展名主判（`.csv`→支付宝、`.xlsx`→微信）+ 内容嗅探兜底
- * （`PK\x03\x04` 魔数 → XLSX；否则按 CSV 试解）；CSV 自身表头探测失败 → `parse` 返回
- * `Unrecognized`，同样满足「探测失败 → 零落库」。判不出 → null → 「未识别账单格式」。
+ * [resolve] 判型：**内容嗅探主判**——先 `PK\x03\x04` 魔数嗅探，命中即按 `WechatXlsxParser`
+ * （XLSX）；否则再按扩展名分发（`.xlsx`→微信、`.csv`→支付宝、无扩展名→按 CSV 试解）。
+ * 修复「.csv 名但内容是 zip」被扩展名误分发到 CSV 的问题（DEC-017「扩展名失配→内容嗅探兜底」）。
+ * CSV 自身表头探测失败 → `parse` 返回 `Unrecognized`，同样满足「探测失败 → 零落库」。
+ * 判不出 → null → 「未识别账单格式」。
  */
 interface BillParserFactory {
     fun resolve(displayName: String?, magicBytes: ByteArray?): BillParser?
@@ -30,9 +32,9 @@ object DefaultBillParserFactory : BillParserFactory {
             ?.lowercase()
             ?: ""
         return when {
+            magicBytes.isZipMagic() -> WechatXlsxParser // 内容嗅探前置：魔数优先于扩展名
             ext == XLSX_EXT -> WechatXlsxParser
             ext == CSV_EXT -> AlipayCsvParser
-            magicBytes.isZipMagic() -> WechatXlsxParser
             ext.isEmpty() -> AlipayCsvParser // 无扩展名且非 zip 魔数 → 按文本（CSV）试解
             else -> null                    // 未知扩展名且非 zip → 未识别
         }

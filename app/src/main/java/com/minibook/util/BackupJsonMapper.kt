@@ -9,6 +9,7 @@ import com.minibook.domain.model.DebtKind
 import com.minibook.domain.model.Ledger
 import com.minibook.domain.model.SyncStatus
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import java.time.Instant
 import java.time.ZoneId
@@ -84,6 +85,10 @@ object BackupJsonMapper {
         createdAt = createdAt,
         updatedAt = updatedAt,
         syncStatus = syncStatus.value,
+        externalId = externalId,
+        counterparty = counterparty,
+        paymentMethod = paymentMethod,
+        source = source.value,
     )
 
     fun Debt.toDto(): DebtDto = DebtDto(
@@ -150,6 +155,11 @@ object BackupJsonMapper {
         updatedAt = updatedAt ?: TimeFormatter.nowIso(),
         // 导入目标设备恒写 local（API §11 尾部说明；DTO.syncStatus 仅导出/可读用）。
         syncStatus = SyncStatus.LOCAL,
+        externalId = externalId,
+        counterparty = counterparty,
+        paymentMethod = paymentMethod,
+        // 旧备份缺 source 键（null）或值非法 → 兜底 MANUAL（P1-1 向后兼容）。
+        source = source?.let { TransactionSource.fromValue(it) } ?: TransactionSource.MANUAL,
     )
 
     fun DebtDto.toDomain(): Debt = Debt(

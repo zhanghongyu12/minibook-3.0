@@ -122,8 +122,10 @@ object AlipayCsvParser : BillParser {
     }
 
     /**
-     * 逗号分隔 + 双引号包裹（RFC 4180 子集）：字段内逗号/换行/转义引号（`""`）正确处理。
-     * 支付宝「交易流水证明」为逗号分隔，含逗号字段以 `"` 包裹——切分后再 trim。
+     * 逗号分隔 + 双引号包裹（RFC 4180 子集）：字段内逗号、转义引号（`""`）正确处理。
+     * **按行读取，不支持字段内嵌换行**——上层 [decode] 以 `useLines` 逐行读，引号包裹的
+     * 多行字段会被跨行拆断（支付宝「交易流水证明」个人对账 CSV 无此场景，故不夸大支持）。
+     * 切分后再 trim。
      */
     private fun splitCsvLine(line: String): List<String> {
         val result = mutableListOf<String>()

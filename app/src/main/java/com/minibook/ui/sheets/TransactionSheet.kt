@@ -31,12 +31,14 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionSource
 import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.DatePickerField
 import com.minibook.ui.components.MoneyInputField
 import com.minibook.ui.components.SheetFormScaffold
 import com.minibook.ui.components.TransactionTypeTab
+import com.minibook.ui.components.chineseLabel
 import com.minibook.util.Validators
 
 /**
@@ -126,6 +128,13 @@ fun TransactionSheet(
                 onFenChange = viewModel::setAmount,
                 label = "金额",
             )
+
+            // 编辑态只读信息块（§9.3.3）：导入带入的 source/对方/支付方式不可编辑，
+            // 于金额与分类之间聚簇展示（来源恒中文，空值「—」占位）；手动且两字段空则不显示（零噪音）。
+            if (isEditMode && tx != null && tx.hasImportedFields()) {
+                Spacer(Modifier.height(12.dp))
+                ImportedFieldsInfoBlock(tx)
+            }
 
             Spacer(Modifier.height(12.dp))
 
@@ -230,3 +239,23 @@ fun TransactionSheet(
         )
     }
 }
+
+/**
+ * 编辑态只读信息块（§9.3.3）：来源恒显示中文（手动记录/微信/支付宝），对方/支付方式
+ * 空值「—」弱化占位，单行 `bodySmall + onSurfaceVariant`。
+ */
+@Composable
+private fun ImportedFieldsInfoBlock(tx: Transaction) {
+    val counterparty = tx.counterparty?.takeIf { it.isNotBlank() } ?: "—"
+    val paymentMethod = tx.paymentMethod?.takeIf { it.isNotBlank() } ?: "—"
+    Text(
+        text = "来源：${tx.source.chineseLabel} · 对方：$counterparty · 支付方式：$paymentMethod",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** §9.3.3 展示门槛：来源非手动（或对方/支付方式任一非空）才显示只读信息块。 */
+private fun Transaction.hasImportedFields(): Boolean =
+    source != TransactionSource.MANUAL || !counterparty.isNullOrBlank() || !paymentMethod.isNullOrBlank()
