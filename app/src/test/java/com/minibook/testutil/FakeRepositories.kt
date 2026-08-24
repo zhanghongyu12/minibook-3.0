@@ -1,0 +1,161 @@
+package com.minibook.testutil
+
+import com.minibook.domain.model.Budget
+import com.minibook.domain.model.Category
+import com.minibook.domain.model.CategoryAgg
+import com.minibook.domain.model.CategoryType
+import com.minibook.domain.model.Debt
+import com.minibook.domain.model.DebtFilter
+import com.minibook.domain.model.MonthSummary
+import com.minibook.domain.model.PeriodTrend
+import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionFilter
+import com.minibook.domain.model.TransactionType
+import com.minibook.domain.repository.BudgetRepository
+import com.minibook.domain.repository.CategoryRepository
+import com.minibook.domain.repository.DebtRepository
+import com.minibook.domain.repository.TransactionRepository
+import java.time.YearMonth
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+
+/**
+ * Fake [TransactionRepository]：可配置返回数据，并记录最后一次调用的入参
+ * （用于验证 UseCase 的过滤器/区间委托透传，TASK-032/TASK-036）。
+ *
+ * 只实现 UseCase 单测所需的 observe 方法；写/单值路径抛 [NotImplementedError]，
+ * 以防被测对象意外走到（部署时暴露漏测）。
+ */
+class FakeTransactionRepository : TransactionRepository {
+
+    // ==== 可配置返回数据 ====
+    var transactions: List<Transaction> = emptyList()
+    var dailyTrend: List<PeriodTrend> = emptyList()
+    var monthlyTrend: List<PeriodTrend> = emptyList()
+    var categoryAgg: List<CategoryAgg> = emptyList()
+
+    // ==== 调用记录 ====
+    var lastObservedLedgerId: String? = null
+    var lastFilter: TransactionFilter? = null
+    var dailyTrendInvoked = false
+    var monthlyTrendInvoked = false
+    var lastDailyRange: Pair<String, String>? = null
+    var lastMonthlyRange: Pair<String, String>? = null
+    var lastAggCall: Triple<String?, TransactionType?, Pair<String, String>?>? = null
+
+    // ---- observe 转发（返回可配置数据 + 记录入参） ----
+
+    override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> {
+        lastObservedLedgerId = ledgerId
+        lastFilter = filter
+        return flowOf(transactions)
+    }
+
+    override fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> {
+        dailyTrendInvoked = true
+        lastDailyRange = start to end
+        return flowOf(dailyTrend)
+    }
+
+    override fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> {
+        monthlyTrendInvoked = true
+        lastMonthlyRange = start to end
+        return flowOf(monthlyTrend)
+    }
+
+    override fun observeCategoryAgg(
+        ledgerId: String,
+        type: TransactionType,
+        start: String,
+        end: String,
+    ): Flow<List<CategoryAgg>> {
+        lastAggCall = Triple(ledgerId, type, start to end)
+        return flowOf(categoryAgg)
+    }
+
+    // ---- 其余接口方法：本组单测不触达，暴露即漏测 ----
+
+    override suspend fun insert(tx: Transaction): String = throw NotImplementedError()
+    override suspend fun update(tx: Transaction) = throw NotImplementedError()
+    override suspend fun deleteById(id: String) = throw NotImplementedError()
+    override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
+    override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary =
+        throw NotImplementedError()
+    override suspend fun getById(id: String): Transaction? = throw NotImplementedError()
+    override suspend fun countTransactionsByCategory(categoryId: String): Int =
+        throw NotImplementedError()
+}
+
+/**
+ * Fake [DebtRepository]：记录最后一次 `observeByLedger` 入参，返回可配置债务列表。
+ */
+class FakeDebtRepository : DebtRepository {
+
+    var debts: List<Debt> = emptyList()
+    var lastObservedLedgerId: String? = null
+    var lastFilter: DebtFilter? = null
+
+    override fun observeByLedger(ledgerId: String, filter: DebtFilter): Flow<List<Debt>> {
+        lastObservedLedgerId = ledgerId
+        lastFilter = filter
+        return flowOf(debts)
+    }
+
+    override suspend fun insert(debt: Debt): String = throw NotImplementedError()
+    override suspend fun update(debt: Debt) = throw NotImplementedError()
+    override suspend fun deleteById(id: String) = throw NotImplementedError()
+    override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
+    override suspend fun netByParty(ledgerId: String): Map<String, Long> = throw NotImplementedError()
+}
+
+/**
+ * Fake [BudgetRepository]：返回可配置的月度预算列表（总额 + 分类），并记录最近一次
+ * `observeByMonth` 的账本/月份。
+ */
+class FakeBudgetRepository : BudgetRepository {
+
+    var budgets: List<Budget> = emptyList()
+    var lastObservedLedgerId: String? = null
+    var lastObservedMonth: YearMonth? = null
+
+    override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> {
+        lastObservedLedgerId = ledgerId
+        lastObservedMonth = month
+        return flowOf(budgets)
+    }
+
+    override suspend fun setTotalBudget(ledgerId: String, month: YearMonth, amount: Long) =
+        throw NotImplementedError()
+    override suspend fun setCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String, amount: Long) =
+        throw NotImplementedError()
+    override suspend fun clearTotalBudget(ledgerId: String, month: YearMonth) = throw NotImplementedError()
+    override suspend fun clearCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String) =
+        throw NotImplementedError()
+    override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
+}
+
+/**
+ * Fake [CategoryRepository]：返回可配置分类流（含按 type 过滤的记录），供预算进度/分类占比用。
+ */
+class FakeCategoryRepository : CategoryRepository {
+
+    var categories: List<Category> = emptyList()
+    var lastObservedLedgerId: String? = null
+    var lastObservedType: CategoryType? = null
+
+    override fun observeByLedger(ledgerId: String, type: CategoryType?): Flow<List<Category>> {
+        lastObservedLedgerId = ledgerId
+        lastObservedType = type
+        return flowOf(categories)
+    }
+
+    override suspend fun upsertList(categories: List<Category>) = throw NotImplementedError()
+    override suspend fun insert(category: Category): String = throw NotImplementedError()
+    override suspend fun update(category: Category) = throw NotImplementedError()
+    override suspend fun deleteById(id: String) = throw NotImplementedError()
+    override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
+    override suspend fun countByLedger(ledgerId: String): Long = throw NotImplementedError()
+    override suspend fun countTransactionsByCategory(categoryId: String): Int = throw NotImplementedError()
+    override suspend fun deleteCategoryWithMigration(ledgerId: String, categoryId: String, targetCategoryId: String) =
+        throw NotImplementedError()
+}
