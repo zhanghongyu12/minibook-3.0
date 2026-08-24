@@ -311,6 +311,11 @@ class RoomDataSourceImpl @Inject constructor(
         )
     }
 
+    override suspend fun deleteByCategoryId(categoryId: String) {
+        // P1-1：删分类级联清其预算；调用方（DeleteCategory*UseCase）外层事务已闭合，本方法纯委托。
+        budgetDao().deleteByCategoryId(categoryId)
+    }
+
     override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> =
         budgetDao().observeByMonth(ledgerId, month.toString())
             .map { list -> list.map(BudgetMapper::toDomain) }

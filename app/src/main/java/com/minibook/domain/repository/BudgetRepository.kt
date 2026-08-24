@@ -56,6 +56,16 @@ interface BudgetRepository {
      */
     suspend fun deleteByLedger(ledgerId: String)
 
+    /**
+     * 级联删除 [categoryId] 的全部分类预算（P1-1，跨所有月份）。
+     *
+     * 删除分类（[CategoryRepository.deleteById] / [CategoryRepository.deleteCategoryWithMigration]）
+     * 时由 UseCase 在同一 [com.minibook.data.datasource.TransactionRunner.runInTransaction]
+     * 事务内调用，防分类删除后其预算成孤儿、从预算进度静默消失（P1-1）。分类 id 全局
+     * 唯一，命中所有 month 的分类预算；月度总预算（categoryId=null）不受影响。
+     */
+    suspend fun deleteByCategoryId(categoryId: String)
+
     /** 账本+月份取月度预算列表（含总预算与分类预算，categoryId 区分）。 */
     fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>>
 }

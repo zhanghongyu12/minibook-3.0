@@ -1,7 +1,9 @@
 package com.minibook.domain.usecase.category
 
+import com.minibook.data.datasource.TransactionRunner
 import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
+import com.minibook.domain.repository.BudgetRepository
 import com.minibook.domain.repository.CategoryRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.first
@@ -18,10 +20,17 @@ import kotlinx.coroutines.flow.first
  * Repository 侧经 TransactionRunner 闭合（TASK-009）——「取关联交易 → 逐条重挂目标分类
  * → 删旧分类」整体原子，第 k 条 update 失败 → 全部回滚、无悬空引用（TASK-015 验收）。
  * 本类不承载事务细节（DEC-001）。UI 单调用本类（P-05 迁移流程，TASK-026 接线）。
+ *
+ * **级联清理（P1-1）**：迁移后仍删源分类，其预算行须一并清空（目标分类不继承源预算）；
+ * 故本类在 [TransactionRunner.runInTransaction] 外层事务内，于
+ * [CategoryRepository.deleteCategoryWithMigration] 之后追加
+ * [BudgetRepository.deleteByCategoryId](源分类)，与迁移+删除整体原子闭合。
  */
 class DeleteCategoryWithMigrationUseCase @Inject constructor(
     private val ledgerProvider: LedgerProvider,
     private val categoryRepository: CategoryRepository,
+    private val budgetRepository: BudgetRepository,
+    private val transactionRunner: TransactionRunner,
 ) {
 
     /**
@@ -51,7 +60,11 @@ class DeleteCategoryWithMigrationUseCase @Inject constructor(
             throw InvalidInput("该分类无关联交易，请直接删除（DeleteCategoryUseCase）")
         }
 
-        // 单调用；事务已在 Repository 闭合（TASK-009），本类不承载事务细节（DEC-001）。
-        categoryRepository.deleteCategoryWithMigration(ledgerId, categoryId, targetCategoryId)
+        // P1-1：迁交易 + 删源分类 + 级联清源分类预算 同一挂起事务闭合；目标分类不继承预算。
+        // Room withTransaction 可重入：内层 deleteCategoryWithMigration 事务并入此处外层事务。
+        transactionRunner.runInTransaction {
+            categoryRepository.deleteCategoryWithMigration(ledgerId, categoryId, targetCategoryId)
+            budgetRepository.deleteByCategoryId(categoryId)
+        }
     }
 }

@@ -43,6 +43,9 @@ class BudgetRepositoryImpl @Inject constructor(
 
     override suspend fun deleteByLedger(ledgerId: String) = dataSource.deleteByLedger(ledgerId)
 
+    override suspend fun deleteByCategoryId(categoryId: String) =
+        dataSource.deleteByCategoryId(categoryId)
+
     override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> =
         dataSource.observeByMonth(ledgerId, month)
 }

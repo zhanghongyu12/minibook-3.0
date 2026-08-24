@@ -1,5 +1,6 @@
 package com.minibook.testutil
 
+import com.minibook.data.datasource.TransactionRunner
 import com.minibook.domain.model.Budget
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryAgg
@@ -117,6 +118,7 @@ class FakeBudgetRepository : BudgetRepository {
     var budgets: List<Budget> = emptyList()
     var lastObservedLedgerId: String? = null
     var lastObservedMonth: YearMonth? = null
+    var lastDeletedCategoryId: String? = null
 
     override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> {
         lastObservedLedgerId = ledgerId
@@ -132,6 +134,9 @@ class FakeBudgetRepository : BudgetRepository {
     override suspend fun clearCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String) =
         throw NotImplementedError()
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
+    override suspend fun deleteByCategoryId(categoryId: String) {
+        lastDeletedCategoryId = categoryId
+    }
 }
 
 /**
@@ -143,6 +148,12 @@ class FakeCategoryRepository : CategoryRepository {
     var lastObservedLedgerId: String? = null
     var lastObservedType: CategoryType? = null
 
+    // ---- 写/单值路径调用记录（P1-1 删除分类级联测试用）----
+    var lastDeletedId: String? = null
+    var countTransactionsByCategoryResult: Int = 0
+    var lastCountedCategoryId: String? = null
+    var lastMigrationCall: Triple<String, String, String>? = null
+
     override fun observeByLedger(ledgerId: String, type: CategoryType?): Flow<List<Category>> {
         lastObservedLedgerId = ledgerId
         lastObservedType = type
@@ -152,10 +163,33 @@ class FakeCategoryRepository : CategoryRepository {
     override suspend fun upsertList(categories: List<Category>) = throw NotImplementedError()
     override suspend fun insert(category: Category): String = throw NotImplementedError()
     override suspend fun update(category: Category) = throw NotImplementedError()
-    override suspend fun deleteById(id: String) = throw NotImplementedError()
+    override suspend fun deleteById(id: String) {
+        lastDeletedId = id
+    }
+
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
     override suspend fun countByLedger(ledgerId: String): Long = throw NotImplementedError()
-    override suspend fun countTransactionsByCategory(categoryId: String): Int = throw NotImplementedError()
-    override suspend fun deleteCategoryWithMigration(ledgerId: String, categoryId: String, targetCategoryId: String) =
-        throw NotImplementedError()
+    override suspend fun countTransactionsByCategory(categoryId: String): Int {
+        lastCountedCategoryId = categoryId
+        return countTransactionsByCategoryResult
+    }
+
+    override suspend fun deleteCategoryWithMigration(ledgerId: String, categoryId: String, targetCategoryId: String) {
+        lastMigrationCall = Triple(ledgerId, categoryId, targetCategoryId)
+    }
+}
+
+/**
+ * Fake [TransactionRunner]：直接执行块（JVM 单测无 Room，不真正开 DB 事务），并统计
+ * 事务包装次数。供删除分类级联（P1-1）/删除账本等「UseCase 外层事务多步编排」单测使用。
+ */
+class FakeTransactionRunner : TransactionRunner {
+
+    var transactionsRun = 0
+        private set
+
+    override suspend fun <T> runInTransaction(block: suspend () -> T): T {
+        transactionsRun++
+        return block()
+    }
 }
