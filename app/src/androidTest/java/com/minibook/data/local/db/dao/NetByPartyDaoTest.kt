@@ -72,31 +72,36 @@ class NetByPartyDaoTest {
         runBlocking { debtDao.observeNetByParty(LEDGER).first() }
 
     @Test
-    fun `lend x owe_me 净额为正`() {
+    /** lend×owe_me 净额为正（借出、对方欠我 → +）。 */
+    fun lendOweMeNetPositive() {
         insertDebt("d1", "张三", 10_000L, "lend", "owe_me")
         assertEquals(listOf(NetByPartyRow("张三", 10_000L)), netByParty())
     }
 
     @Test
-    fun `lend x i_owe 净额为负`() {
+    /** lend×i_owe 净额为负（借入、我欠对方 → −）。 */
+    fun lendIOweNetNegative() {
         insertDebt("d2", "张三", 10_000L, "lend", "i_owe")
         assertEquals(listOf(NetByPartyRow("张三", -10_000L)), netByParty())
     }
 
     @Test
-    fun `repay x owe_me 净额为负`() {
+    /** repay×owe_me 净额为负（收到还款、对方欠我 → −）。 */
+    fun repayOweMeNetNegative() {
         insertDebt("d3", "张三", 10_000L, "repay", "owe_me")
         assertEquals(listOf(NetByPartyRow("张三", -10_000L)), netByParty())
     }
 
     @Test
-    fun `repay x i_owe 净额为正`() {
+    /** repay×i_owe 净额为正（我还款、我欠对方 → +）。 */
+    fun repayIOweNetPositive() {
         insertDebt("d4", "张三", 10_000L, "repay", "i_owe")
         assertEquals(listOf(NetByPartyRow("张三", 10_000L)), netByParty())
     }
 
     @Test
-    fun `同对象多笔聚合求和`() {
+    /** 同对象多笔（lend/repay 混合）聚合求和。 */
+    fun samePartyMultipleDebtsAggregated() {
         insertDebt("d5", "张三", 10_000L, "lend", "owe_me")   // +10000
         insertDebt("d6", "张三", 5_000L, "lend", "owe_me")    // +5000
         insertDebt("d7", "张三", 3_000L, "repay", "owe_me")   // -3000
@@ -109,7 +114,8 @@ class NetByPartyDaoTest {
     }
 
     @Test
-    fun `仅统计指定账本`() {
+    /** 仅统计指定账本：跨账本债务不混入。 */
+    fun onlyCountsSpecifiedLedger() {
         insertDebt("d10", "张三", 10_000L, "lend", "owe_me")
         runBlocking {
             debtDao.insert(
@@ -133,7 +139,8 @@ class NetByPartyDaoTest {
     }
 
     @Test
-    fun `无数据返回空列表`() {
+    /** 无数据返回空列表。 */
+    fun returnsEmptyListWhenNoData() {
         assertTrue(netByParty().isEmpty())
     }
 

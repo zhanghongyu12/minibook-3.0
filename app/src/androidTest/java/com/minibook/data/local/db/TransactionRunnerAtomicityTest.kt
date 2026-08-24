@@ -61,7 +61,8 @@ class TransactionRunnerAtomicityTest {
     }
 
     @Test
-    fun `deleteById 三表分发原子性`() {
+    /** deleteById 三表分发原子性：transactions/debts/categories 按 id 分发删除，异常整体回滚。 */
+    fun deleteByIdDistributesAcrossThreeTables() {
         val id = "shared-1"
         runBlocking {
             db.transactionDao().insert(txEntity(id = id))
@@ -98,7 +99,8 @@ class TransactionRunnerAtomicityTest {
     }
 
     @Test
-    fun `runInTransaction 内抛异常整体回滚`() {
+    /** runInTransaction 内抛异常 → 整体回滚、异常原样上抛。 */
+    fun runInTransactionRollsBackOnException() {
         val id = "rollback-tx-1"
         runBlocking {
             var thrown = false
@@ -117,7 +119,8 @@ class TransactionRunnerAtomicityTest {
     }
 
     @Test
-    fun `deleteByLedger 四表批删原子性`() {
+    /** deleteByLedger 四表批删原子性：transactions/debts/categories/budgets 按 ledgerId 批删。 */
+    fun deleteByLedgerBatchDeletesFourTables() {
         val ledger = "ledger-del"
         runBlocking {
             db.transactionDao().insert(txEntity(id = "tx-l", ledgerId = ledger))

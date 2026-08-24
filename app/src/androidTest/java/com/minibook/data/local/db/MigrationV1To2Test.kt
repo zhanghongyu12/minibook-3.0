@@ -34,7 +34,8 @@ class MigrationV1To2Test {
     )
 
     @Test
-    fun `迁移 1 到 2 保留旧数据且新列默认正确唯一索引生效`() {
+    /** 迁移 1→2：保留旧数据、新列默认（source=manual、三列 NULL）、唯一索引(ledgerId, externalId)生效。 */
+    fun migrationV1To2KeepsDataAndAppliesDefaultsAndUniqueIndex() {
         // 1) 造 v1 库：旧 10 列 + 一条手动记录。
         helper.createDatabase(DB_NAME, 1).use { db ->
             db.execSQL(

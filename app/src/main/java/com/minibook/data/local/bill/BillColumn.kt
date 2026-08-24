@@ -1,4 +1,4 @@
-﻿package com.minibook.data.local.bill
+package com.minibook.data.local.bill
 
 /**
  * 账单表头列关键（F-12，DEC-016/019，动态表头探测的「列名归一化」）。
@@ -25,6 +25,7 @@ internal enum class BillColumn {
          * 口径（PRD §F-12 字段映射 + DEC-016 关键词表）：
          * - DATE：含「交易时间」（支付宝「交易创建时间」同含「交易」「时间」，一并命中）；
          * - AMOUNT：含「金额」（覆盖「金额(元)」「金额（元）」半/全角括号）；
+         * - COUNTERPARTY：精确 ==「交易对方」（「对方账号」等 PRD 明列不落库字段不误捕，F-12/P3-1）；
          * - PAYMENT_METHOD：含「支付方式」或「付款方式」（覆盖「收付款方式」「收/付款方式」）；
          * - ORDER_NO：含「交易单号/交易订单号」或恰为「交易号」（排除「商户单号/商家订单号」）；
          * - PLATFORM_CATEGORY：含「交易分类/交易类型」或恰为「类型」（支付宝流水证明「类型」列）。
@@ -36,7 +37,7 @@ internal enum class BillColumn {
                 h.contains("交易时间") || (h.contains("交易") && h.contains("时间")) -> DATE
                 h.contains("收/支") -> TYPE
                 h.contains("金额") -> AMOUNT
-                h.contains("交易对方") || h.contains("对方") -> COUNTERPARTY
+                h == "交易对方" -> COUNTERPARTY
                 h.contains("商品") -> GOODS
                 h.contains("备注") -> REMARK
                 h.contains("支付方式") || h.contains("付款方式") -> PAYMENT_METHOD

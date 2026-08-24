@@ -61,7 +61,8 @@ class MonthlySummaryDaoTest {
         runBlocking { txDao.monthSummary(LEDGER, monthStart, monthEnd) }
 
     @Test
-    fun `monthSummary 按区间汇总收支`() {
+    /** monthSummary 按日期区间（BETWEEN 含端点）汇总收支，跨月排除。 */
+    fun monthSummarySumsByDateRange() {
         insertTx("t1", "expense", 1000L, "2026-03-05")
         insertTx("t2", "income", 500L, "2026-03-20")
         insertTx("t3", "expense", 200L, "2026-03-31")   // 区间端点含入
@@ -73,7 +74,8 @@ class MonthlySummaryDaoTest {
     }
 
     @Test
-    fun `monthSummary 空月全零`() {
+    /** monthSummary 空月无数据 → 全零。 */
+    fun monthSummaryEmptyMonthAllZero() {
         val row = summary("2026-02-01", "2026-02-28")
         assertEquals(0L, row.expenseFen)
         assertEquals(0L, row.incomeFen)
@@ -81,7 +83,8 @@ class MonthlySummaryDaoTest {
     }
 
     @Test
-    fun `monthSummary 仅统计指定账本`() {
+    /** monthSummary 仅统计指定账本，跨账本交易不混入。 */
+    fun monthSummaryOnlyCountsSpecifiedLedger() {
         insertTx("t1", "expense", 1000L, "2026-03-05")
         runBlocking {
             txDao.insert(

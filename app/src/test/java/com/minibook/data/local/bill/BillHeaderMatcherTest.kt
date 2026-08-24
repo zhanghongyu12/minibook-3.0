@@ -60,6 +60,9 @@ class BillHeaderMatcherTest {
         // 「对方账号」(列 3) 与「商家订单号」(列 10) 均为 PRD 明列「不落库」字段，不映射任何列键。
         assertNull(map?.entries?.firstOrNull { it.value == 3 })
         assertNull(map?.entries?.firstOrNull { it.value == 10 })
+        // P3-1：COUNTERPARTY 精确匹配「交易对方」；「对方账号」单独出现也不命中任何列键（不再误捕）。
+        assertEquals(BillColumn.COUNTERPARTY, BillColumn.match("交易对方"))
+        assertNull(BillColumn.match("对方账号"))
     }
 
     @Test

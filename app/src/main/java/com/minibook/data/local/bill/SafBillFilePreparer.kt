@@ -12,13 +12,14 @@ import java.io.IOException
 import java.io.InputStreamReader
 import java.io.Reader
 import java.nio.charset.Charset
+import java.util.UUID
 
 /**
  * SAF（Storage Access Framework）账单文件读取（F-12，DEC-017，ARCHITECTURE §16.6）。
  *
  * 解析栈**唯一**触碰 Android 框架（ContentResolver/Uri）的边界类：把 `uriString`（ViewModel
  * 传入 `android.net.Uri.toString()`，§13.6）落地为 [PreparedBillFile]——
- * - XLSX：拷到 `cacheDir/import_bill.xlsx` 临时文件（`ZipFile` 需可 seek File），
+ * - XLSX：拷到 `cacheDir/minibook_import_<uuid>.xlsx` 唯一临时文件（`ZipFile` 需可 seek File），
  *   [PreparedBillFile.close] 删除；
  * - CSV：直接开 GBK [InputStreamReader] 流式读（支付宝「交易流水证明」GBK 编码）。
  *
@@ -48,7 +49,7 @@ class SafBillFilePreparer(
         val isXlsx = ext == XLSX_EXT || isZipMagic(raw = magic, read = read)
 
         return if (isXlsx) {
-            val tempFile = File(context.cacheDir, TEMP_XLSX_NAME)
+            val tempFile = File(context.cacheDir, "$TEMP_XLSX_PREFIX${UUID.randomUUID()}.xlsx")
             buffered.use { input ->
                 FileOutputStream(tempFile).use { output -> input.copyTo(output) }
             }
@@ -103,7 +104,7 @@ class SafBillFilePreparer(
     }
 
     private companion object {
-        const val TEMP_XLSX_NAME = "import_bill.xlsx"
+        const val TEMP_XLSX_PREFIX = "minibook_import_"
         const val GBK_CHARSET = "GBK"
         const val XLSX_EXT = "xlsx"
 
