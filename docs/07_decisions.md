@@ -267,4 +267,23 @@
 
 ---
 
+## DEC-020: F-12 账单导入 UI 设计自决（入口 / 结果形态 / 字段展示槽 / 失败明细 / source 筛选）
+
+- 日期：2026-08-24
+- 决定：
+  1. **入口位置**：首页快捷入口区（`HomeQuickEntries`，「报表/预算」并排 Row）增设第三格「导入账单」tile（emoji 📥）为**主入口**；设置（P-06）「数据」区加「导入账单」`SettingRow` 为**可选入口**；收支页（P-03）顶栏**不加入口**（`TransactionsScreen` 现无 TopAppBar，加顶栏属新增结构、非最小改动）。导航桥：`HomeNavigation` 增 `openImport()` + 根图 `Destination.Import`（`MiniBookNavHost` else 分支，与 Search/Reports/Budgets 同径）。
+  2. **结果反馈形态**：用「**结果页态**」——`import` 全屏页内 `ImportUiState` 四态原地切换（Idle/Busy/Result/Error），**不用 ModalBottomSheet / 结果弹层**。理由：TASK-044 状态机 `Result(summary)` 即页面状态、返回栈单一；解析失败明细可能较多，Sheet 高度上限（max 420dp）会截断。完成/顶栏返回均 `popBackStack`，等价。
+  3. **解析失败明细形态**：**折叠分组**（`SkippedBreakdownSection`，默认折叠、点表头展开逐条「第 k 行 · 原因」，≤3 条默认展开），并入结果页整体 `LazyColumn`；**不一次性平铺、不独立分页/弹层**。理由：失败明细是结果「二等公民」，先总后分；滚动列表避免 Modal 高度上限与分页复杂度。
+  4. **字段展示槽**（均**不改金额语义色规则**）：
+     - `counterparty`：`TransactionListItem` 副文本从「仅描述」升级为「0~2 行」——先 counterparty 后 description（各 `bodySmall` 省略）；详情/编辑态显示「对方」。
+     - `paymentMethod`：列表行**不展示**（信息密度控制），仅详情/编辑态「支付方式」。
+     - `source`：列表行分类名主文本行尾部 `SourceBadge`（仅 `source≠manual`，`secondaryContainer` 徽标，manual 零噪音）；详情恒显示「来源」；编辑态仅 source≠manual 时显示只读信息块。
+  5. **source 筛选**：**可选增强、不阻塞 TASK-044 核心**；DEC-013 同径扩展 `TransactionFilter.source`（可空），UI 用收支页 `SourceFilterChipRow`（C-37）「全部来源/手动记录/微信/支付宝」，与类型筛选正交。
+- 原因：入场口/结果形态/字段槽/失败明细均非 PRD 或 DEC 明文锁定（PRD §F-12 只锁「入口层级」「一次性反馈成功 N / 跳过 M 分原因」「解析失败给行号与原因」；ARCH §16.8 只给状态机骨架）；无人值守，属可自决的展示级细节，先自决留痕避免卡住 Developer。
+- 影响：`05_ui.md §9`（P-15 + C-33~C-37 + 文案表 + 复用说明）、`CHANGELOG.md`；TASK-044 开发者落地依据（入口三选一并明确主/可选、结果页态、字段插入位、decl 失败折叠、source 筛选缓做）。
+- 替代方案：收支页顶栏为主入口（弃：需新增 TopAppBar 结构）；结果用 ModalBottomSheet（弃：失败明细长被高度上限截断、返回栈复杂化）；解析失败一次性平铺（弃：淹没主结论）；source 筛选本期硬做（弃：PRD/ARCH 已标可选增强，硬做挤占 TASK-044 核心工时）。
+- 最终选择：**首页 tile 主入口 + 设置行可选 + 结果页态 + 失败折叠分组 + 上述字段插槽 + source 筛选缓做**。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

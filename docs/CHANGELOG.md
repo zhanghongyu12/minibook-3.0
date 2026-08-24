@@ -16,6 +16,7 @@
 - **测试**：JVM 单测 56 → 95 例（预算超支口径 / 搜索组合 / 报表累计跑表 / min>max 校验 / 分类删除级联）。
 - **账单导入（F-12，需求）**：微信/支付宝账单导入 PRD 落盘——支付宝 CSV(GBK) / 微信 XLSX 动态表头解析、`transactions` 4 新列（`externalId`/`counterparty`/`paymentMethod`/`source`）、幂等去重与自动分类映射（01_prd.md §F-12 + DEC-015，状态评审中待架构评审）。
 - **账单导入（F-12，架构/DB/API 设计）**：`transactions` 加 4 列 + `UNIQUE(ledgerId, externalId)`、DB version 2（`MIGRATION_1_2`，DEC-018，SQLite 唯一索引 NULL 互异⇒手动记录不参与去重）；微信 XLSX 手动 zip+XML 解析（`ZipFile`+`XmlPullParser`，DEC-016 零第三方库）+ 支付宝 GBK CSV 动态表头解析；`BillParser` 抽象 + `ImportBillUseCase`（逐行过滤 + 单事务整批写入，DEC-015/019）；自动分类映射（`BillCategoryMapping`）+ 幂等计数；`import` 路由 + `ImportViewModel` 状态机；测试策略 + TASK-040~044 拆分落盘（02/03/04/06/07 文档）。
+- **账单导入（F-12，UI 设计）**：P-15 导入账单页 + C-33~C-37 组件（DEC-020）——首页「导入账单」tile 主入口 + 设置「数据」区可选入口；`import` 根图全屏页四态（Idle 提示 / Busy 忙碌 / Result 结果 / Error 错误）；结果页态（非弹层）+ 解析失败折叠明细；`TransactionListItem`/`TransactionDetailSheet`/`TransactionSheet` 增 `counterparty`/`paymentMethod`/`source` 展示（金额语义色不动）；source 筛选可选增强（C-37）；精确中文文案表（05_ui.md §9 + 07_decisions.md DEC-020）。
 
 ### Changed
 
