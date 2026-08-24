@@ -1,7 +1,7 @@
 # 审查报告
 
 > 状态：已确认
-> 最后更新：2026-08-21
+> 最后更新：2026-08-24
 > 维护者：Reviewer
 
 > **说明**：Stage 8 审查已于 2026-08-20 实际执行（3 个 Reviewer 子 agent 按层并行），
@@ -164,8 +164,94 @@ Stage 6~7 产出整体质量良好。业务层分层清晰（domain / data / UI 
 
 Phase 2 三功能实现质量良好：DEC-011/012/013 三项设计决策全部精确落地（零第三方图表、零通知栏/WorkManager、`observeFiltered` 扩展范式合规），分层依赖、金额 Long 分、observe/取值路径统一均延续 Phase 1 既定范式且 KotlinDoc 留痕充分；自绘图表组件解耦干净（Canvas 不承担算术）；测试新增 36 例精准覆盖预算口径/搜索透传/报表委托/累计跑表/min>max 校验并与既有 56 例合成 92 例全绿。**需 Developer 返工 1 项 P1（孤儿预算静默丢失）**，另有多项 P2 建议（契约回写、超限文件拆分、枚举命名等）可延后。
 
+## F-12 审查报告（微信/支付宝账单导入，2026-08-24）
+
+### 审查信息
+
+| 项目 | 内容 |
+|------|------|
+| 审查日期 | 2026-08-24 |
+| 审查人 | Reviewer |
+| 审查范围 | **F-12 微信/支付宝账单导入全量交付**（相对架构/设计之后的代码与测试）：`be1ccdd..HEAD`（`e13eee0` 数据层 4 列迁移+解析器+导入用例 / `913e7f0` UI 接线 / `d9a091a` 测试+报告 / `49c0868` 三缺陷修复），56 文件 +3890/-49 |
+| 代码版本 | HEAD `49c0868`（本地 master，未 push；`origin/master` 尚在 `634c65f` 基线） |
+| 依据 | `01_prd.md §F-12`、`02_architecture.md §16`、`03_database.md §2/§4.1/§7.5`、`04_api.md §13`、`05_ui.md §9`、`07_decisions.md` DEC-015~021、`06_tasks.md` TASK-040~044、`09_test_report.md §F-12`、`08_review.md` 既有格式 |
+
+### 逐大类结论
+
+> 文件路径相对 `app/src/main/java/com/minibook/`（测试文件相对 `app/src/test/...`）。
+
+**1. 功能完整性（PRD §F-12 十项验收）—— 全部达成**
+
+- 动态表头探测、支付宝 GBK+`\t` trim、微信 XLSX（sharedStrings/日期序列 1899-12-30 整数拆分/金额 `<v>` 字面量）逐条实现并单测锁定（`AlipayCsvParserTest` / `WechatXlsxParserTest` / `BillHeaderMatcherTest`）。
+- 过滤（不计收支/交易关闭/「/」/解析失败）、幂等（externalId 唯一 + NULL 互异 + 文件内去重 + IGNORE 计 -1）、自动分类映射+「其他」兜底、单事务整批写入、结果反馈计数——与 DEC-015/019 一致（`ImportBillUseCase` 逐行浏览确认）。
+- 字段映射（type/amount 分/counterparty/paymentMethod/description 合并/externalId 前缀/source/categoryId）逐项正确；「当前状态/对方账号/商户单号」不落库（表头探测未注册该列）。
+
+**2. 金额精度 —— 通过**
+
+`grep -nE "double|float|toDouble|toFloat|\\*100"` 于 F-12 新文件：零命中。金额全程 `MoneyFormatter.toFen`（BigDecimal→`setScale(2,HALF_UP)`→`movePointRight(2)`→`longValueExact`，`MoneyFormatter.kt:28-41`）；微信日期序列数 `substringBefore('.')` 字符串拆分、`LocalDate.plusDays`（`WechatXlsxParser.kt:135-144`），微信金额 `<v>` 字面量（`WechatXmlRows.kt:83`）。无手写 `*100`。
+
+**3. 迁移正确性（DB 1→2）—— 通过**
+
+`MIGRATION_1_2`（`MiniBookDatabase.kt:76-87`）4 条 ADD COLUMN → 1 条 CREATE UNIQUE INDEX，顺序/默认值/索引名与 03 §7.5 逐字一致；`DatabaseGate.open` 已接 `.fallbackToDestructiveMigration(false)` + `.addMigrations(MIGRATION_1_2)`（`DatabaseGate.kt:64-65`）；`2.json` 14 列 + `source TEXT NOT NULL DEFAULT 'manual'` + 唯一索引名一致；Entity 侧 `@ColumnInfo(defaultValue="'manual'")` + `@Index(unique=true, name=...)`；手动记账走 `AddTransactionUseCase`（Domain 默认值 source=MANUAL、三列 null，零改动）。`MigrationV1To2Test` 断言质量合格（旧数据保留 / source=manual / 三列 NULL / 重复 externalId 抛 SQLiteConstraintException / NULL 互异）。
+
+**4. 架构/分层一致 —— 通过（2 处留痕例外）**
+
+分层 ui→domain→data 无逆向新增；`SafBillFilePreparer` 是解析栈唯一 Android 边界（`data/local/bill/SafBillFilePreparer.kt`，其余纯 Kotlin、JVM 可测）；DI 装配完整（`di/ImportModule.kt` 两绑定）。包名 `bill`（`import` 关键字）已留注（`ImportComponents.kt:32-33`）。例外：① `BillParserFactory` 接口落 `data/local/bill`、`ImportBillUseCase`（domain）直 `import com.minibook.data.local.bill.*`——延续既有 domain→data 技术债（见 P2-4）。② XLSX 用纯 regex 解码替代 DEC-016 指定的 XmlPullParser（见遗留项）。
+
+**5. 错误/边界 —— 通过（1 处轻微计数偏差）**
+
+空文件/表头未命中→`Unrecognized`、全跳过→`BillImportResult.success=0`、externalId 缺失/金额 0/负/非法→`PARSE_ERROR`、文件损坏→`Unrecognized`（`ZipFile` 异常兜底 `WechatXlsxParser.kt:49-51`）、非目标格式→工厂 null→「未识别账单格式」。文案精确对齐 §9.6。轻微：微信表头命中后的空白行被计入 NEUTRAL（见 P2-6）。
+
+**6. 代码质量 —— 良好**
+
+KDoc 完整（职责/决策引用/偏离留痕）、命名清晰、无空 catch、无调试残留。`ZipFile`/`InputStream`/tempFile 均 `.use`/finally 关闭（`SafBillFilePreparer` tempFile 已改 `<uuid>`，`BufferedInputStream.mark/reset` 不丢字）。已知残留：`BillColumn` 未再注册「对方账号/商户单号」（49c0868 改为精确 `== "交易对方"`，P3-1 已修）。
+
+**7. 测试充分性 —— 通过（1 项报告口径失真）**
+
+132 JVM 例全绿，覆盖与 PRD 十项验收逐条对得上（解析/表头/金额/枚举往返/mapper 往返/分类映射/幂等均测）。`MigrationV1To2Test` 断言质量合格。androidTest 反引号含空格方法名已全部改 ASCII（49c0868，HEAD 无残留）。失真：09 报告称「事务写异常：注入异常→0 插入」无对应用例（见 P2-3）。
+
+**8. 偏离与遗漏 —— 见「问题清单」与「遗留项」**
+
+新增下载发现 1 项 P1（F-04 备份 JSON 未携带 4 新字段，非任务预列的已知偏离）；task 预列的已知偏离（bill 包名/regex 解码/详情「—」/C-37 source 筛选/真机未验/eg/ 未提交）逐条评估见「遗留项」，均可接受或已留痕。
+
+### 问题清单（按严重度）
+
+| 编号 | 严重度 | 文件 | 位置 | 描述 | 建议方向（不修） |
+|------|--------|------|------|------|------|
+| P1-1 | P1 应改 | `util/BackupJsonModels.kt`、`util/BackupJsonMapper.kt` | `BackupJsonModels.kt:68-79`（`TransactionDto` 仅 9 字段）；`BackupJsonMapper.kt:76-87`（`toDto` 丢弃 4 新字段）、`BackupJsonMapper.kt:140-153`（`toDomain` 用默认值 source=MANUAL/三列 null） | **F-04 备份 JSON（BackupV1）未携带 F-12 四个新字段**：导出→导入（备份还原/换机迁移）会静默丢失导入交易的 `source`（徽标消失）、`counterparty/paymentMethod`（详情变「—」）、`externalId`（幂等判据丢失 → 还原后再导入同一账单将**重复入账**）。违反「数据不丢」与「全量备份」语义，DEC-018「四层贯通」未枚举 BackupJsonMapper（设计缺口）。 | 扩展 `TransactionDto`（+4 字段，可空/默认）+ `toDto`/`toDomain` + `MapperRoundTripTest` 补断言；或补一条 DEC 明确「backup v1 排除 F-12 字段」并给出升级/迁移口径。二选一后回写本表结论。 |
+| P2-1 | P2 | `data/local/bill/BillParserFactory.kt`、`data/local/bill/SafBillFilePreparer.kt` | `BillParserFactory.kt:32-38`（扩展名主判先于 zip 魔数）；`SafBillFilePreparer.kt:49`（`isXlsx = ext==xlsx || 魔数`） | **内容嗅探兜底在「扩展名失配」场景失效**：`.csv` 命名但内容为 zip（用户改名 .xlsx→.csv）时，preparer 按魔数已写成 Xlsx 输入、factory 却按 `ext==csv` 分发到 `AlipayCsvParser` → 输入类型失配 → 返回「支付宝账单需 CSV 输入」的 `Unrecognized`。DEC-017「扩展名失配→内容嗅探兜底」只覆盖了「未知/空扩展名 + zip 魔数」，未覆盖「已知但错误扩展名」。非崩溃（优雅回未识别零落库），属健壮性缺口。 | `resolve` 将 `magicBytes.isZipMagic()` 判定前置于扩展名（或 ext 与魔数冲突时魔数优先），使「扩展名失配」真正走内容嗅探。 |
+| P2-2 | P2 | `ui/sheets/TransactionSheet.kt`（未改动） | 全文件（新字段展示缺失） | **§9.3.3「编辑态只读信息块」未实现**：设计（05_ui §9.3.3 + CHANGELOG:19「TransactionSheet 增展示」）要求在编辑导入交易时于表单中显示只读「来源：微信 · 对方：… · 支付方式：…」；`TransactionSheet.kt` 未加任何 source/counterparty/paymentMethod 展示。数据无损失（`TransactionDao.update` 只写 type/amount/categoryId/description/date/updatedAt，不覆盖新字段，`TransactionDao.kt:44-52`），属纯展示缺口 + CHANGELOG 与实现不符。 | 编辑态 `source≠MANUAL`（或两字段任一非空）时加只读信息块；或回写 CHANGELOG/§9.3.3 标注「编辑态展示本期未做」。 |
+| P2-3 | P2 | `app/src/test/java/com/minibook/domain/usecase/bill/ImportBillUseCaseTest.kt` | 全 6 例（无「写入异常→回滚」用例）；对照 `docs/09_test_report.md:76` | **「事务写异常整体回滚零落库」无对应单测**：`ImportBillUseCaseTest` 6 例中「缺少其他兜底分类」在 `insertBatch` 之前抛 `error`（`ImportBillUseCase.kt:123`），`FakeTransactionRunner` 仅 `block()`（`FakeRepositories.kt:193-196`）、`FakeTransactionDataSource.insertBatch` 无可抛异常注入；并无「insertBatch 抛异常验证回滚」用例。09 报告「✅ ImportBillUseCaseTest（注入异常→0 插入）」口径失真。真实回滚语义仅由 instrumented `TransactionRunnerAtomicityTest`（RoomTransactionRunner 层）间接保障。 | 补一例：fake 注入 `insertBatch` 抛异常 → 断言异常上抛且零落库；或更正 09 报告口径为「经 TransactionRunnerAtomicityTest 间接覆盖」。 |
+| P2-4 | P2 | `data/local/bill/BillParserFactory.kt`、`domain/usecase/bill/ImportBillUseCase.kt` | `BillParserFactory.kt:15`（接口声明于 data.local.bill）；`ImportBillUseCase.kt:6`（domain import data.local.bill.*） | **domain UseCase 直依赖 data 包的接口**：`BillParserFactory` 契约落在 `data/local/bill`（与 impl `DefaultBillParserFactory` 同包），而既有的『域可依赖』契约（`TransactionRunner`/各 `*DataSource`）都收在 `data/datasource`。属层级放置不一致，KDoc 已自注「与 TransactionRunner 同径」（后者实际在 data.datasource），轻微漂移。 | 将 `BillParserFactory` 接口并入 `data/datasource`（与 TransactionRunner 对称），或下沉 domain。纯重构，不改行为。 |
+| P2-5 | P2 | `data/local/bill/AlipayCsvParser.kt` | `AlipayCsvParser.kt:126-129`（KDoc）+ `:43`（`useLines` 逐行读） | **KDoc 声明「字段内逗号/换行/转义引号正确处理」与实现不符**：`splitCsvLine` 只处理逗号/`""` 转义，`useLines` 按换行切分，引号包裹字段内的**内嵌换行**（多行字段，RFC 4180 场景）会被跨行拆断、表头/数据错位。支付宝「交易流水证明」实际极少含内嵌换行，属文档夸大 + 极端边界未覆盖，非当前数据缺陷。 | KDoc 改为「逗号/`""` 转义（不含多行字段）」，或补齐跨行引号字段的状态机扫描。 |
+| P2-6 | P2 | `data/local/bill/WechatXlsxParser.kt` | `WechatXlsxParser.kt:60-70`（表头命中后逐行，未跳过空白行）；对照 `AlipayCsvParser.kt:46`（`isBlank() continue`） | **微信表头命中后的空白行计入 NEUTRAL 跳过**：`mapRows` 对空 cells（`{}`）仍走 `parseRow` → 收/支空 → `NEUTRAL`，若账单尾部存在空行（Excel 常见）会虚增「不计收支」计数与其行号明细。与 CSV 侧「isBlank 跳过」口径不一致。 | 在 `mapRows` 内对空 cells 行（size==0）跳过不计数，对齐 CSV 语义。 |
+
+> 无 P0（阻断）项：未发现崩溃/数据损坏/跨账本泄漏/资金精度错误。F-12 主链路（解析→过滤→幂等→单事务写入→UI 四态）无功能性缺陷。
+
+### 遗留项与可接受偏离（逐条评估）
+
+| 项 | 评估 | 结论 |
+|----|------|------|
+| `bill` 包名（替代 `import`，Java/Kotlin 关键字不可作包段） | 已留注（`ImportComponents.kt:32-33`、`BillParserFactory.kt:8` KDOC），KSP 可编译 | 接受 |
+| 纯 regex XML 解码（替代 DEC-016 指定的 XmlPullParser） | 为 JVM 可测性（`WechatXmlRows` 纯函数喂字符串），KDoc 显式留痕、`WechatXlsxParserTest` 覆盖 t=s/str/inlineStr/富文本/实体转义。风险：`<v/>` 自闭合空值单元格不匹配 `V_REGEX`（极少见）；属性值未解实体（当前只解文本）。属有限窄路径可控复杂度 | 接受（记录在案） |
+| 详情空值用「—」（对方/支付方式对 manual 记录也显示占位） | §9.3.2 明文指定「空值占位 —」，非偏离；与 §9.3.3「编辑态才隐藏」的层级差异已记 P2-2 | 符合设计 |
+| C-37 source 筛选（收支页）未做 | PRD/ARCH/TASK-044 明文「可选增强、不阻塞核心」，`ImportComponents.kt:35-36` TODO 留痕 | 接受（可选增强，挂账） |
+| 真机未验（MEIZU 21 未连接） | DEC-021 #3 已降级为「遗留手动验证清单」（迁移保数据/UI 结构/端到端三态 + 精确点击路径与预期计数 206/28、297/2），非造假通过 | 接受（待设备） |
+| `eg/` 样例账单未提交 | 含真实个人财务数据，不入 VCS 属隐私正确；真机清单引用其路径 | 接受 |
+| androidTest 反引号方法名（P2-1 前期） | 49c0868 已将 13 个反引号含空格方法名全部改 ASCII（HEAD 无残留） | 已闭合 |
+| `BillColumn`「对方账号」误捕（P3-1） | 49c0868 改精确 `== "交易对方"`（`BillColumn.kt:40`） | 已闭合 |
+| XLSX 临时文件固定名（P3-2） | 49c0868 改 `minibook_import_<uuid>.xlsx`（`SafBillFilePreparer.kt:52,107`） | 已闭合 |
+
+### 总体评价
+
+F-12 履行质量良好：PRD 十项验收全部达成、金额全程整数分、DB 1→2 迁移 SQL/Entity/schema 三方逐字一致且 `fallbackToDestructiveMigration(false)` 未松动、分层清晰且 Android 边界唯一收敛于 `SafBillFilePreparer`、132 JVM 例 + 迁移 instrumented 覆盖与验收逐条对应、三项收尾缺陷（androidTest 方法名 / 对方账号精确匹配 / 临时文件 uuid）均已真实闭合。**无 P0**。
+**需 Developer 补 1 项 P1**（P1-1：F-04 备份 JSON 未携带 F-12 四个新字段 → 备份/迁移还原后丢 source/对方/支付方式/externalId，重导同账单将重复入账），另有 6 项 P2（工厂嗅探优先级、§9.3.3 编辑态展示缺失、事务回滚单测口径失真、工厂接口层级、CSV KDoc、XLSX 空行计数）可延后/择机处理。因存在 P1 数据完整性遗漏，结论记为 **FAIL-with-issues**（有 P1 待处理，非无条件 PASS）。
+
+---
+
 ## 历史审查记录
 
+- **F-12（2026-08-24）**：Reviewer 评审 F-12 账单导入全量交付（`be1ccdd..HEAD`，`e13eee0`/`913e7f0`/`d9a091a`/`49c0868` 四 commit）。对照 PRD §F-12 + DEC-015~021 + 02 §16 / 03 §7.5 / 04 §13 / 05 §9 逐项核对：功能完整性/金额精度/迁移/分层/错误边界/测试全部达成或通过；**发现 1 项 P1（P1-1 F-04 备份 JSON 未携带 F-12 四个新字段，备份还原后丢 source/对方/支付方式/externalId 且幂等破坏）+ 6 项 P2**（工厂嗅探优先级、§9.3.3 编辑态展示缺失、事务回滚口径失真、工厂接口层级、CSV KDoc 多行、XLSX 空行计数），无 P0。三项收尾缺陷（androidTest 方法名 / 对方账号 / 临时文件 uuid）已确认闭合。结论 **FAIL-with-issues**。详见「F-12 审查报告」章节。
 - **Phase 2（2026-08-21）**：Reviewer 单实例评审 Phase 2 增量（`4e1d55e..HEAD`，14 编码 commit + 1 测试 commit）。对照 DEC-010~013 + 02 §15 / 03 §10 / 04 §12 / 05 §8 逐项核对：DEC 合规三项全过、架构一致、编码规范过·建议并存、测试 92 例全绿。发现 **1 项 P1（P1-1 删除分类不清预算 → 孤儿预算静默丢失，需 Developer 返工）+ 6 项 P2**（模型与 §12.3 契约漂移 / 3 文件超 300 行 / 进度条 float 比例 / 首页红点月份固定 / GRANULARITY 命名 / 债务方向窄化），无 P0。待审项 a~d 结论：导航桥保留两种并存（后续全迁 CompositionLocal）、超限文件建议拆（本次不强制）、C-32 不补抽、债务方向映射一致通过。详见「Phase 2 审查报告」章节。
 - **Stage 8（2026-08-20）**：3 个 Reviewer 子 agent 按层并行（安全层 / 业务·数据层 / UI 层），审查基线为 `1d09ae1`（Stage 7 测试落地）的工作树。发现 **3 项 Critical（2 项 DEC-002 双钥系统安全缺陷 + 1 项 auth 解锁崩溃）+ 9 项 Warning（W1~W5 业务层错误类型化/校验对齐/事务原子性/账本圈定，U1~U4 三页 Error 态/重试/snackbar 重放）**，全部修复并提交（`b4aa338`、`5315fc3`、`2ea7424`）。本报告于 2026-08-21 依协调日志与 git 历史回填，转为「已确认」。
 
