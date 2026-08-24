@@ -88,6 +88,20 @@ interface TransactionDataSource {
     suspend fun getById(id: String): Transaction?
 
     /**
+     * 批量插入（F-12 账单导入，DEC-019 / API §13.5）：`@Insert(IGNORE)` 忽略 externalId 冲突。
+     *
+     * @return **实际插入行数**（IGNORE 后统计非 `-1` 的下标数）；被忽略的行由 UseCase 补计「已存在」。
+     * 在 [com.minibook.data.datasource.TransactionRunner.runInTransaction] 事务内整批写入（DEC-015）。
+     */
+    suspend fun insertBatch(txs: List<Transaction>): Int
+
+    /**
+     * 取账本内全部已存在的 externalId（非空），供导入幂等预查（DEC-019，§13.5）。
+     * 在导入事务内与文件内重复/既有相交共同决定「已存在」计数。
+     */
+    suspend fun getExistingExternalIds(ledgerId: String): Set<String>
+
+    /**
      * 删除前关联检查：统计引用该分类的交易数；>0 则 UI 提示走迁移流程
      * （TASK-015 DeleteCategoryWithMigrationUseCase / UI D-15 依赖）。
      *

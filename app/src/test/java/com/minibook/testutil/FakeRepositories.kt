@@ -85,6 +85,8 @@ class FakeTransactionRepository : TransactionRepository {
     override suspend fun getById(id: String): Transaction? = throw NotImplementedError()
     override suspend fun countTransactionsByCategory(categoryId: String): Int =
         throw NotImplementedError()
+    override suspend fun insertBatch(txs: List<Transaction>): Int = throw NotImplementedError()
+    override suspend fun getExistingExternalIds(ledgerId: String): Set<String> = throw NotImplementedError()
 }
 
 /**

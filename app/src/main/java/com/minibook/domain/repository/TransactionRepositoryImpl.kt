@@ -53,6 +53,11 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun getById(id: String): Transaction? = dataSource.getById(id)
 
+    override suspend fun insertBatch(txs: List<Transaction>): Int = dataSource.insertBatch(txs)
+
+    override suspend fun getExistingExternalIds(ledgerId: String): Set<String> =
+        dataSource.getExistingExternalIds(ledgerId)
+
     override suspend fun countTransactionsByCategory(categoryId: String): Int =
         dataSource.countTransactionsByCategory(categoryId)
 }

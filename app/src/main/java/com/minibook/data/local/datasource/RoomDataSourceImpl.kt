@@ -101,6 +101,24 @@ class RoomDataSourceImpl @Inject constructor(
         return id
     }
 
+    /**
+     * 批量插入（F-12 账单导入，DEC-019 / API §13.5）。
+     *
+     * 与单条 [insert] 不同：**不重生成 id/createdAt/updatedAt**——导入编排方
+     * （ImportBillUseCase）已按 §13.6 为每行装配 UUID + 时间戳，此处原样透传
+     * （`@Insert(IGNORE)` 的冲突键是 `UNIQUE(ledgerId, externalId)`，与主键无关）。
+     *
+     * @return 实际插入行数（统计 `insertAll` 返回中非 `-1` 的下标数）。
+     */
+    override suspend fun insertBatch(txs: List<Transaction>): Int {
+        if (txs.isEmpty()) return 0
+        val results = transactionDao().insertAll(txs.map(TransactionMapper::toEntity))
+        return results.count { it != -1L }
+    }
+
+    override suspend fun getExistingExternalIds(ledgerId: String): Set<String> =
+        transactionDao().getAllExternalIds(ledgerId).toSet()
+
     override suspend fun update(tx: Transaction) {
         transactionDao().update(
             id = tx.id,
@@ -386,6 +404,9 @@ class RoomDataSourceImpl @Inject constructor(
     /** Cursor → [TransactionEntity]（`getById` 用，列名与 Room 默认列名一致，DATABASE §4.1）。 */
     private fun Cursor.toTransactionEntity(): TransactionEntity {
         val descriptionIndex = getColumnIndexOrThrow("description")
+        val externalIdIndex = getColumnIndexOrThrow("externalId")
+        val counterpartyIndex = getColumnIndexOrThrow("counterparty")
+        val paymentMethodIndex = getColumnIndexOrThrow("paymentMethod")
         return TransactionEntity(
             id = getString(getColumnIndexOrThrow("id")),
             ledgerId = getString(getColumnIndexOrThrow("ledgerId")),
@@ -397,6 +418,10 @@ class RoomDataSourceImpl @Inject constructor(
             createdAt = getString(getColumnIndexOrThrow("createdAt")),
             updatedAt = getString(getColumnIndexOrThrow("updatedAt")),
             syncStatus = getString(getColumnIndexOrThrow("syncStatus")),
+            externalId = if (isNull(externalIdIndex)) null else getString(externalIdIndex),
+            counterparty = if (isNull(counterpartyIndex)) null else getString(counterpartyIndex),
+            paymentMethod = if (isNull(paymentMethodIndex)) null else getString(paymentMethodIndex),
+            source = getString(getColumnIndexOrThrow("source")),
         )
     }
 }

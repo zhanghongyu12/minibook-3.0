@@ -62,6 +62,7 @@ class DatabaseGate(
                 val db = Room.databaseBuilder(context, MiniBookDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
                     .fallbackToDestructiveMigration(false) // DATABASE §7.3 显式禁止破坏迁移
+                    .addMigrations(MiniBookDatabase.MIGRATION_1_2) // F-12：version 1→2 加列 + 唯一索引（DEC-018）
                     .build()
                 // 触发真实打开：SQLCipher 先以 key 解密，随后 Room 在同一上下文执行
                 // migration（密码错误会在 schema 校验时抛 SQLiteException）。

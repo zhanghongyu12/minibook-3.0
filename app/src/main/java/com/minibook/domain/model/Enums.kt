@@ -59,3 +59,35 @@ enum class SyncStatus(val value: String) {
         fun fromValue(value: String): SyncStatus? = entries.firstOrNull { it.value == value }
     }
 }
+
+/**
+ * 交易来源（F-12 账单导入，DEC-018 / DATABASE §4.1 / API §13.1）。
+ *
+ * 落盘为 `transactions.source` 列（String，默认 `'manual'`，Entity 侧 `@ColumnInfo(defaultValue)`）。
+ * 与 [TransactionType] 同径：value 直接暴露给 mapper 做 enum↔String 落盘转换，fromValue 供反向查询。
+ */
+enum class TransactionSource(val value: String) {
+    MANUAL("manual"),
+    WECHAT_IMPORT("wechat_import"),
+    ALIPAY_IMPORT("alipay_import");
+
+    companion object {
+        fun fromValue(value: String): TransactionSource? = entries.firstOrNull { it.value == value }
+    }
+}
+
+/**
+ * 账单导入跳过原因（F-12，DEC-019 / API §13.1）。
+ *
+ * 纯领域枚举、不落库（中文文案由 UI 层映射，DEC-020）：
+ * - [EXISTS]：externalId 冲突/文件内重复（幂等去重，UseCase 计数，解析器不产出）；
+ * - [NEUTRAL]：收/支 = 「不计收支」/「/」/空（微信中性行）；
+ * - [CLOSED]：支付宝「交易状态 = 交易关闭」；
+ * - [PARSE_ERROR]：时间缺失 / 金额非法或非正 / externalId 单号为空。
+ */
+enum class ImportSkipReason {
+    EXISTS,
+    NEUTRAL,
+    CLOSED,
+    PARSE_ERROR,
+}

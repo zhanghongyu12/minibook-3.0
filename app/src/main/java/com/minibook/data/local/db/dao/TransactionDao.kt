@@ -2,6 +2,7 @@ package com.minibook.data.local.db.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.minibook.data.local.db.CategoryAggRow
 import com.minibook.data.local.db.PeriodTrendRow
@@ -22,6 +23,23 @@ interface TransactionDao {
 
     @Insert
     suspend fun insert(tx: TransactionEntity)
+
+    /**
+     * 批量插入（F-12 账单导入，DEC-019 / API §13.5）。
+     *
+     * `IGNORE` 冲突策略：命中 `UNIQUE(ledgerId, externalId)` 冲突（含文件内重复）时忽略该行。
+     * 返回 [List] 与入参同长：`-1` 表示该下标被忽略（冲突），否则为新插入的 rowId——
+     * 数据层 `insertBatch` 以此统计「实际插入行数」，UseCase 补计「已存在」（DEC-019）。
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(txs: List<TransactionEntity>): List<Long>
+
+    /**
+     * 取账本内全部已存在的 externalId（非空列），供导入幂等预查（DEC-019）。
+     * 唯一索引 `UNIQUE(ledgerId, externalId)` 的 NULL 互异语义 → 手动记录（NULL）不返回。
+     */
+    @Query("SELECT externalId FROM transactions WHERE ledgerId=:ledgerId AND externalId IS NOT NULL")
+    suspend fun getAllExternalIds(ledgerId: String): List<String>
 
     @Query(
         """
