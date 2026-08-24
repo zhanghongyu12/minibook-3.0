@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.minibook.domain.model.Category
 import com.minibook.domain.model.Transaction
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.sheets.TransactionSheet
@@ -37,8 +38,10 @@ import com.minibook.ui.components.TransactionTypeTab
  * 重订阅）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（弹 [TransactionSheet]）。
  *
  * 列表按 `date` 分组（组头 [DateSectionHeader]，组内 createdAt DESC 由 DAO 保证），
- * `LazyColumn + key=id + animateItem` 保证千条级滚动流畅与条目复用稳定。分类信息本期
- * 未联表，[TransactionListItem] 分类字段传 null 走组件内 fallback（❔/outline 色）。
+ * `LazyColumn + key=id + animateItem` 保证千条级滚动流畅与条目复用稳定。分类信息经
+ * [TransactionsViewModel] 联表（`Success.categoriesById`，id→[Category]，对齐首页 0c041a3），
+ * [TransactionListItem] 按 `tx.categoryId` 取真实 `categoryName/categoryIcon/categoryColor`；
+ * 分类已删（map 取不到）传 null 走组件 fallback（❔/outline 色），不崩溃。
  *
  * FAB / 行点击已接线：页内状态弹 [TransactionSheet]（P-07，新增/编辑态），不走 NavHost route。
  *
@@ -89,6 +92,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 )
                 is TransactionsUiState.Success -> TransactionList(
                     transactions = state.transactions,
+                    categoriesById = state.categoriesById,
                     onItemClick = { tx ->
                         editingTx = tx
                         showTransactionSheet = true
@@ -114,11 +118,15 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
  * `header_` 前缀与行 key（`id`）隔离，`animateItem` 提供条目增删/移动的位移动画。
  *
  * @param transactions 扁平列表（DAO 已按 createdAt DESC 排序，故组内天然倒序）。
+ * @param categoriesById 分类 id→[Category] 映射（[TransactionsViewModel] 联表产物），按
+ *   `tx.categoryId` 解析名称/图标/颜色；分类已删（map 取不到）时 [TransactionListItem]
+ *   fallback（❔/outline 色），对齐首页 0c041a3。
  * @param onItemClick 行点击回调（跳编辑态）。
  */
 @Composable
 private fun TransactionList(
     transactions: List<Transaction>,
+    categoriesById: Map<String, Category>,
     onItemClick: (Transaction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -134,11 +142,12 @@ private fun TransactionList(
                 DateSectionHeader(date = date)
             }
             items(items = txs, key = { it.id }) { tx ->
+                val category = categoriesById[tx.categoryId]
                 TransactionListItem(
                     tx = tx,
-                    categoryName = null, // 本期未联表，分类信息走组件 fallback
-                    categoryIcon = null,
-                    categoryColor = null,
+                    categoryName = category?.name,
+                    categoryIcon = category?.icon,
+                    categoryColor = category?.color,
                     onClick = { onItemClick(tx) },
                     modifier = Modifier.animateItem(),
                 )

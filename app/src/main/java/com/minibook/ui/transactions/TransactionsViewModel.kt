@@ -3,9 +3,11 @@ package com.minibook.ui.transactions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.domain.common.LedgerNotFound
+import com.minibook.domain.model.Category
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
+import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -30,6 +32,9 @@ import kotlinx.coroutines.flow.stateIn
  *   collect，UseCase 内置账本切换重订阅，UI 层不感知账本）。
  * - 将交易流折叠为三态 [TransactionsUiState]（Loading / Empty / Success），供
  *   [TransactionsScreen] 直接渲染。VM 只提供扁平列表，**按日期分组在 UI 层完成**。
+ * - **分类联表**：分类流经 [ObserveCategoriesUseCase.observe] 与交易流同账本同源（同 TASK-015，
+ *   内置账本切换重订阅），在 [TransactionsUiState.Success] 侧折叠为
+ *   `categoriesById`（id→[Category]）供 UI 联表展示（对齐首页 0c041a3）。
  *
  * 冷流语义：`observe` 为冷流（仅订阅时执行），故以 `WhileSubscribed(5_000)` 保活——UI 离屏
  * 5 秒后自动停止订阅，回到页面重连即刷新（避免后台常驻查询）。
@@ -38,6 +43,7 @@ import kotlinx.coroutines.flow.stateIn
 @HiltViewModel
 class TransactionsViewModel @Inject constructor(
     observeTransactions: ObserveTransactionsUseCase,
+    private val observeCategories: ObserveCategoriesUseCase,
 ) : ViewModel() {
 
     /** 当前类型筛选：null=全部；EXPENSE=支出；INCOME=收入（初值全部）。 */
@@ -52,16 +58,29 @@ class TransactionsViewModel @Inject constructor(
     /**
      * 页面四态：[Loading] 流未首发射（骨架屏）；[Empty] 空列表；[Error] 观察流异常
      * （账本未初始化 / 数据库异常，供 UI 展示重试）；[Success] 非空扁平列表。
+     *
+     * 组合交易流 + 分类流：交易流经 [filterType] `flatMapLatest` 驱动（filter 变化重订阅），
+     * 分类流（[ObserveCategoriesUseCase.observe]，filter=null 全部）与交易流同账本同源——
+     * 在 [TransactionsUiState.Success] 侧折叠为 `categoriesById`（id→[Category]），分类改名/换色
+     * 时只重发分类流即实时联动（协调日志 2026-08-21 commit 0c041a3 同款模式）。
      */
-    val uiState: StateFlow<TransactionsUiState> = combine(_filterType, refreshTick) { type, _ -> type }
-        .flatMapLatest { type ->
-            observeTransactions.observe(TransactionFilter(type = type))
-        }
-        .map { list ->
-            if (list.isEmpty()) {
+    val uiState: StateFlow<TransactionsUiState> = combine(
+        combine(_filterType, refreshTick) { type, _ -> type }
+            .flatMapLatest { type ->
+                observeTransactions.observe(TransactionFilter(type = type))
+            },
+        observeCategories.observe(),
+    ) { transactions, categories ->
+        TransactionSource(transactions, categories)
+    }
+        .map { source ->
+            if (source.transactions.isEmpty()) {
                 TransactionsUiState.Empty(hasActiveFilter = _filterType.value != null)
             } else {
-                TransactionsUiState.Success(list)
+                TransactionsUiState.Success(
+                    transactions = source.transactions,
+                    categoriesById = source.categories.associateBy { it.id },
+                )
             }
         }
         .catch { e ->
@@ -116,6 +135,15 @@ sealed interface TransactionsUiState {
     /** 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 重试。 */
     data class Error(val message: String) : TransactionsUiState
 
-    /** 非空扁平交易列表（组内 createdAt DESC 由 DAO 保证，分组在 UI 层完成）。 */
-    data class Success(val transactions: List<Transaction>) : TransactionsUiState
+    /** 非空扁平交易列表（组内 createdAt DESC 由 DAO 保证，分组在 UI 层完成）+ 分类 id→[Category] 映射（联表展示用）。 */
+    data class Success(
+        val transactions: List<Transaction>,
+        val categoriesById: Map<String, Category>,
+    ) : TransactionsUiState
 }
+
+/** [TransactionsViewModel] 组合源数据：交易列表 + 分类列表（id→[Category] 联表用）。 */
+private data class TransactionSource(
+    val transactions: List<Transaction>,
+    val categories: List<Category>,
+)
