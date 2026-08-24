@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 应用图标背景：品牌主色（Material 3 primary #6750A4）纯色，108dp 自适应图标标准视口。 -->
+<!-- 应用图标背景：取样自真机底部导航栏（Material You 动态 surface #FCEAE3），与软件菜单栏背景一致。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -7,5 +7,5 @@
     android:viewportHeight="108">
     <path
         android:pathData="M0,0h108v108h-108z"
-        android:fillColor="#6750A4" />
+        android:fillColor="#FCEAE3" />
 </vector>
