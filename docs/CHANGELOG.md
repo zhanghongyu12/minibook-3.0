@@ -30,6 +30,7 @@
 
 - **事务原子性测试**：补全 TransactionRunnerAtomicityTest 三个空骨架用例为真实断言（deleteById 三表分发 / runInTransaction 异常回滚 / deleteByLedger 四表批删），内存库 + DatabaseProvider 替身，无新增依赖。
 - **P1-1 孤儿预算静默丢失**：删除分类时于同一事务内级联清理该分类的预算行（`BudgetDao.deleteByCategoryId` + UseCase 事务闭合），防分类删除后其预算在 budgets 表成孤儿、从预算进度静默消失。
+- **F-12 评审收口（1×P1 + 5×P2）**：备份 JSON 的 `TransactionDto` 补交易 4 新字段并双向映射（P1-1，`source` 旧 JSON 缺省兜底 `manual`，防备份/迁移还原后丢 `externalId` 致重导重复入账）；工厂按 zip 魔数前置嗅探（防 `.csv` 名 zip 内容失配）；编辑弹层加来源/对方/支付方式只读信息块；补 `insertBatch` 抛异常回滚单测；修正支付宝 CSV KDoc「换行」声明；微信 XLSX 空白行跳过（对齐 CSV 口径）——详见 08_review.md 与 cb679a7。
 
 ### Security
 
