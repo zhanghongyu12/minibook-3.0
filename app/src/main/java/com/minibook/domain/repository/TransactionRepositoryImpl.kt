@@ -1,9 +1,12 @@
 package com.minibook.domain.repository
 
 import com.minibook.data.datasource.TransactionDataSource
+import com.minibook.domain.model.CategoryAgg
 import com.minibook.domain.model.MonthSummary
+import com.minibook.domain.model.PeriodTrend
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
+import com.minibook.domain.model.TransactionType
 import java.time.YearMonth
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,6 +34,19 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =
         dataSource.observeByLedger(ledgerId, filter)
+
+    override fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
+        dataSource.observeDailyTrend(ledgerId, start, end)
+
+    override fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
+        dataSource.observeMonthlyTrend(ledgerId, start, end)
+
+    override fun observeCategoryAgg(
+        ledgerId: String,
+        type: TransactionType,
+        start: String,
+        end: String,
+    ): Flow<List<CategoryAgg>> = dataSource.observeCategoryAgg(ledgerId, type, start, end)
 
     override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary =
         dataSource.monthlySummary(ledgerId, month)

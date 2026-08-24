@@ -23,3 +23,23 @@ data class NetByPartyRow(
     val partyName: String,
     val netFen: Long,
 )
+
+/**
+ * 报表·收支趋势桶（`observeDailyTrend` / `observeMonthlyTrend`）查询结果 DTO。
+ * 字段名对齐 DATABASE §10.3 SQL 别名 `bucket` / `expenseFen` / `incomeFen`；
+ * `bucket` 为日期桶（月度=date `yyyy-MM-dd`、年度=substr(date,1,7) `yyyy-MM`）。
+ */
+data class PeriodTrendRow(
+    val bucket: String,
+    val expenseFen: Long,
+    val incomeFen: Long,
+)
+
+/**
+ * 报表·分类占比 / 预算「已用」聚合结果 DTO（`observeCategoryAgg`）。
+ * 字段名对齐 SQL 别名 `categoryId` / `totalFen`（单位分）。
+ */
+data class CategoryAggRow(
+    val categoryId: String,
+    val totalFen: Long,
+)

@@ -8,6 +8,8 @@ import com.minibook.data.datasource.DebtDataSource
 import com.minibook.data.datasource.SyncChangeDataSource
 import com.minibook.data.datasource.TransactionDataSource
 import com.minibook.data.datasource.TransactionRunner
+import com.minibook.data.local.db.CategoryAggRow
+import com.minibook.data.local.db.PeriodTrendRow
 import com.minibook.data.local.db.dao.BudgetDao
 import com.minibook.data.local.db.dao.CategoryDao
 import com.minibook.data.local.db.dao.DebtDao
@@ -23,13 +25,16 @@ import com.minibook.data.mapper.SyncChangeMapper
 import com.minibook.data.mapper.TransactionMapper
 import com.minibook.domain.model.Budget
 import com.minibook.domain.model.Category
+import com.minibook.domain.model.CategoryAgg
 import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtFilter
 import com.minibook.domain.model.MonthSummary
+import com.minibook.domain.model.PeriodTrend
 import com.minibook.domain.model.SyncChange
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
+import com.minibook.domain.model.TransactionType
 import java.time.Instant
 import java.time.YearMonth
 import java.util.UUID
@@ -159,7 +164,27 @@ class RoomDataSourceImpl @Inject constructor(
             categoryId = filter.categoryId,
             dateFrom = filter.dateFrom,
             dateTo = filter.dateTo,
+            remark = filter.remark,
+            amountMin = filter.amountMin,
+            amountMax = filter.amountMax,
         ).map { list -> list.map(TransactionMapper::toDomain) }
+
+    override fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
+        transactionDao().observeDailyTrend(ledgerId, start, end)
+            .map { list -> list.map { it.toDomain() } }
+
+    override fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
+        transactionDao().observeMonthlyTrend(ledgerId, start, end)
+            .map { list -> list.map { it.toDomain() } }
+
+    override fun observeCategoryAgg(
+        ledgerId: String,
+        type: TransactionType,
+        start: String,
+        end: String,
+    ): Flow<List<CategoryAgg>> =
+        transactionDao().observeCategoryAgg(ledgerId, type.value, start, end)
+            .map { list -> list.map { it.toDomain() } }
 
     override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary {
         val row = transactionDao().monthSummary(
@@ -213,6 +238,7 @@ class RoomDataSourceImpl @Inject constructor(
             ledgerId = ledgerId,
             kind = filter.kind?.value,
             direction = filter.direction?.value,
+            partyName = filter.partyName,
         ).map { list -> list.map(DebtMapper::toDomain) }
 
     override suspend fun netByParty(ledgerId: String): Map<String, Long> =
@@ -343,6 +369,14 @@ class RoomDataSourceImpl @Inject constructor(
     /** 当前打开库的可写连接（Room 官方逃生舱，供无 DAO 的等价 SQL 操作使用）。 */
     private fun writableDatabase(): SupportSQLiteDatabase = gate.database?.openHelper?.writableDatabase
         ?: error("DatabaseGate 未解锁/未打开，无法访问数据库")
+
+    /** DAO 查询 DTO [PeriodTrendRow] → domain [PeriodTrend]（字段透传，金额 Long 分不变）。 */
+    private fun PeriodTrendRow.toDomain(): PeriodTrend =
+        PeriodTrend(bucket = bucket, expenseFen = expenseFen, incomeFen = incomeFen)
+
+    /** DAO 查询 DTO [CategoryAggRow] → domain [CategoryAgg]（字段透传，金额 Long 分不变）。 */
+    private fun CategoryAggRow.toDomain(): CategoryAgg =
+        CategoryAgg(categoryId = categoryId, totalFen = totalFen)
 
     /** Cursor → [TransactionEntity]（`getById` 用，列名与 Room 默认列名一致，DATABASE §4.1）。 */
     private fun Cursor.toTransactionEntity(): TransactionEntity {

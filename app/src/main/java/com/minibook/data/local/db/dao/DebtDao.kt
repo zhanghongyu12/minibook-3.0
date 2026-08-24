@@ -74,13 +74,14 @@ interface DebtDao {
     )
     fun observeNetByParty(ledgerId: String): Flow<List<NetByPartyRow>>
 
-    /** 筛选：kind（lend/repay）与 direction（owe_me/i_owe）可选；null 即不过滤（A-2 契约）。 */
+    /** 筛选：kind（lend/repay）与 direction（owe_me/i_owe）可选，Phase 2 增 partyName 模糊（DEC-013）；null 即不过滤。 */
     @Query(
         """
         SELECT * FROM debts
         WHERE ledgerId=:ledgerId
           AND (:kind IS NULL OR kind=:kind)
           AND (:direction IS NULL OR direction=:direction)
+          AND (:partyName IS NULL OR partyName LIKE '%' || :partyName || '%')
         ORDER BY date DESC
         """,
     )
@@ -88,5 +89,6 @@ interface DebtDao {
         ledgerId: String,
         kind: String?,
         direction: String?,
+        partyName: String?,
     ): Flow<List<DebtEntity>>
 }

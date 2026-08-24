@@ -1,8 +1,11 @@
 package com.minibook.data.datasource
 
+import com.minibook.domain.model.CategoryAgg
 import com.minibook.domain.model.MonthSummary
+import com.minibook.domain.model.PeriodTrend
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
+import com.minibook.domain.model.TransactionType
 import java.time.YearMonth
 import kotlinx.coroutines.flow.Flow
 
@@ -48,6 +51,31 @@ interface TransactionDataSource {
      * （API §3）。冷流，仅订阅时执行。Phase 2 搜索复用同一参数化查询。
      */
     fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>>
+
+    /**
+     * 报表·月度收支趋势（F-07）：按天桶（bucket=date）。
+     *
+     * @param start 当月首日（yyyy-MM-dd）；@param end 当月末日（yyyy-MM-dd）。
+     * 冷流；金额 Long 分；对齐 API §12.2 / DATABASE §10.3。
+     */
+    fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>>
+
+    /**
+     * 报表·年度收支趋势（F-07）：按月桶（bucket=yyyy-MM，substr(date,1,7)）。
+     *
+     * @param start 当年首日（yyyy-MM-dd）；@param end 当年末日（yyyy-MM-dd）。
+     * 金额 Long 分；对齐 API §12.2 / DATABASE §10.3。
+     */
+    fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>>
+
+    /**
+     * 报表·分类占比 / 预算「已用」聚合（F-07 / F-08）：按 [type]（收入/支出分开）+
+     * categoryId 分组金额合计（`totalFen` Long 分，DATABASE §10.3）。
+     *
+     * @param start/end 统计区间（报表=视图期间；预算「已用」=当月首/末日）。
+     * 冷流；对齐 API §12.2。
+     */
+    fun observeCategoryAgg(ledgerId: String, type: TransactionType, start: String, end: String): Flow<List<CategoryAgg>>
 
     /**
      * 当月收入/支出合计（分）与结余；DB 端 SQL 聚合（DATABASE §6.1 monthSummary）。
