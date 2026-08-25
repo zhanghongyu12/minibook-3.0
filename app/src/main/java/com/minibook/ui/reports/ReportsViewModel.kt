@@ -13,6 +13,7 @@ import com.minibook.domain.usecase.report.periodEnd
 import com.minibook.domain.usecase.report.periodStart
 import com.minibook.ui.navigation.BillsFilterRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.LocalDate
 import java.time.YearMonth
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -155,6 +156,13 @@ class ReportsViewModel @Inject constructor(
     fun buildBillsFilterRequest(slice: CategorySlice): BillsFilterRequest =
         buildBillsFilterRequest(slice, _categoryType.value, _period.value, _viewType.value)
 
+    /**
+     * 折线/柱状图数据框（tooltip）点击 → 构建账单筛选跳转请求（仅日期区间，type/category 不限）。
+     * 纯计算由顶层 [trendBucketToBillsFilterRequest] 承担，本方法仅透传被点桶原始标签。
+     */
+    fun buildTrendBillsFilterRequest(bucket: String): BillsFilterRequest =
+        trendBucketToBillsFilterRequest(bucket)
+
     /** 观察流异常折叠为 [ChartState.Error]（账本未初始化走引导文案）；[CancellationException] 透传。 */
     private suspend fun <T> FlowCollector<ChartState<T>>.emitChartError(e: Throwable) {
         if (e is CancellationException) throw e
@@ -193,3 +201,33 @@ internal fun buildBillsFilterRequest(
         Granularity.YEARLY -> "${period.year}年"
     },
 )
+
+/**
+ * 纯函数：趋势桶标签 → 账单筛选跳转请求（折线/柱状图数据框点击，报表 → 记账 Tab 联动）。
+ *
+ * 桶标签为 [ReportTrend.buckets] 原始值（非表示层缩短后的标签）：月视图按天 `yyyy-MM-dd`
+ * → 当天区间（dateFrom=dateTo=当天，periodLabel 如「2026年8月15日」）；年视图按月 `yyyy-MM`
+ * → 该月首/末日（periodLabel 如「2026年8月」）。type/categoryId/categoryName 均 null（不限）。
+ */
+internal fun trendBucketToBillsFilterRequest(bucket: String): BillsFilterRequest {
+    val day = runCatching { LocalDate.parse(bucket) }.getOrNull()
+    if (day != null) {
+        return BillsFilterRequest(
+            categoryId = null,
+            categoryName = null,
+            type = null,
+            dateFrom = bucket,
+            dateTo = bucket,
+            periodLabel = "${day.year}年${day.monthValue}月${day.dayOfMonth}日",
+        )
+    }
+    val month = YearMonth.parse(bucket)
+    return BillsFilterRequest(
+        categoryId = null,
+        categoryName = null,
+        type = null,
+        dateFrom = month.atDay(1).toString(),
+        dateTo = month.atEndOfMonth().toString(),
+        periodLabel = "${month.year}年${month.monthValue}月",
+    )
+}

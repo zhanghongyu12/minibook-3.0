@@ -48,6 +48,8 @@ import kotlin.math.min
  * @param buckets X 轴时间桶显示标签（与各系列 valuesFen 索引对齐、等距）。
  * @param series 要绘制的多系列；valuesFen 长度会截断到 [buckets] 长度。
  * @param height 图表高度。
+ * @param onTooltipClick 非空时点击有数据的桶（即显示 tooltip 的桶）回调其下标，
+ *   用于「点击数据框跳转明细」；空桶只选中不高亮跳转。null 仅选中显示 tooltip。
  */
 @Composable
 fun BarChart(
@@ -55,6 +57,7 @@ fun BarChart(
     series: List<BarChartSeries>,
     modifier: Modifier = Modifier,
     height: Dp = 220.dp,
+    onTooltipClick: ((Int) -> Unit)? = null,
 ) {
     val textMeasurer = rememberTextMeasurer()
     val gridColor = MaterialTheme.colorScheme.outlineVariant
@@ -78,7 +81,12 @@ fun BarChart(
             .height(height)
             .pointerInput(buckets, series) {
                 detectTapGestures { offset ->
-                    selectedIndex = hitTestBarBucket(offset, buckets.size)
+                    val hit = hitTestBarBucket(offset, buckets.size)
+                    selectedIndex = hit
+                    // 点有数据的桶即视为「点击数据框」：选中并回调跳转明细；空桶仅选中不高亮跳转。
+                    if (hit != null && onTooltipClick != null && clamped.hasDataAt(hit)) {
+                        onTooltipClick(hit)
+                    }
                 }
             },
     ) {
@@ -147,6 +155,13 @@ private fun PointerInputScope.hitTestBarBucket(offset: Offset, bucketCount: Int)
     if (offset.y < top || offset.y > bottom) return null
     return barBucketIndexFromX(offset.x, left, (right - left).coerceAtLeast(1f), bucketCount)
 }
+
+/**
+ * 某桶是否存在非零数据（任一系列该桶金额 ≠ 0）。「点击数据框跳转」仅对真实存在明细的桶触发，
+ * 避免跳到无交易的空白日期。
+ */
+private fun List<BarChartSeries>.hasDataAt(index: Int): Boolean =
+    any { (it.valuesFen.getOrNull(index) ?: 0L) != 0L }
 
 private fun DrawScope.drawBars(
     series: List<BarChartSeries>,

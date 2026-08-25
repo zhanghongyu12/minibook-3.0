@@ -55,6 +55,8 @@ private const val MAX_MARKER_POINTS = 24
  * @param series 要绘制的多系列；valuesFen 长度会截断到 [buckets] 长度。
  * @param height 图表高度。
  * @param showPoints 是否绘制数据点标记（点数超过 [MAX_MARKER_POINTS] 时自动忽略）。
+ * @param onTooltipClick 非空时点击有数据的数据点（即显示 tooltip 的桶）回调其下标，
+ *   用于「点击数据框跳转明细」；空桶只选中不高亮跳转。null 仅选中显示 tooltip。
  */
 @Composable
 fun LineChart(
@@ -63,6 +65,7 @@ fun LineChart(
     modifier: Modifier = Modifier,
     height: Dp = 220.dp,
     showPoints: Boolean = true,
+    onTooltipClick: ((Int) -> Unit)? = null,
 ) {
     val textMeasurer = rememberTextMeasurer()
     val gridColor = MaterialTheme.colorScheme.outlineVariant
@@ -87,7 +90,12 @@ fun LineChart(
             .height(height)
             .pointerInput(buckets, series) {
                 detectTapGestures { offset ->
-                    selectedIndex = hitTestBucket(offset, buckets.size)
+                    val hit = hitTestBucket(offset, buckets.size)
+                    selectedIndex = hit
+                    // 点有数据的数据点即视为「点击数据框」：选中并回调跳转明细；空桶仅选中不高亮跳转。
+                    if (hit != null && onTooltipClick != null && clamped.hasDataAt(hit)) {
+                        onTooltipClick(hit)
+                    }
                 }
             },
     ) {
@@ -273,6 +281,13 @@ private fun PointerInputScope.hitTestBucket(offset: Offset, bucketCount: Int): I
     val index = round((offset.x - left) / width * bucketCount - 0.5f).toInt()
     return if (index in 0 until bucketCount) index else null
 }
+
+/**
+ * 某桶是否存在非零数据（任一系列该桶金额 ≠ 0）。「点击数据框跳转」仅对真实存在明细的桶触发，
+ * 避免跳到无交易的空白日期。
+ */
+private fun List<LineChartSeries>.hasDataAt(index: Int): Boolean =
+    any { (it.valuesFen.getOrNull(index) ?: 0L) != 0L }
 
 /**
  * 选中态叠加层（A2）：竖参考线（outlineVariant）+ 放大各系列选中点（3dp→5.5dp + surface 描边环）

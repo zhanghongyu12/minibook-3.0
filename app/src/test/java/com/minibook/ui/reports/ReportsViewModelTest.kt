@@ -54,6 +54,30 @@ class ReportsViewModelTest {
         assertNull("分类已删 categoryName 应为 null", req.categoryName)
     }
 
+    @Test
+    fun `buildTrendBillsFilterRequest 天桶为当天区间且周期文案为 2026年8月15日`() {
+        val req = trendBucketToBillsFilterRequest("2026-08-15")
+
+        assertNull("type 应不限", req.type)
+        assertNull("categoryId 应不限", req.categoryId)
+        assertNull("categoryName 应不限", req.categoryName)
+        assertEquals("2026-08-15", req.dateFrom)
+        assertEquals("2026-08-15", req.dateTo)
+        assertEquals("2026年8月15日", req.periodLabel)
+    }
+
+    @Test
+    fun `buildTrendBillsFilterRequest 月桶为该月首末日且周期文案为 2026年8月`() {
+        val req = trendBucketToBillsFilterRequest("2026-08")
+
+        assertNull("type 应不限", req.type)
+        assertNull("categoryId 应不限", req.categoryId)
+        assertNull("categoryName 应不限", req.categoryName)
+        assertEquals("2026-08-01", req.dateFrom)
+        assertEquals("2026-08-31", req.dateTo)
+        assertEquals("2026年8月", req.periodLabel)
+    }
+
     private fun category(id: String, name: String, type: CategoryType): Category = Category(
         id = id,
         ledgerId = "ledger-1",

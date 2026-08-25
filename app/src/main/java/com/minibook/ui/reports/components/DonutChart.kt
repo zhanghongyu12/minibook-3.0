@@ -39,12 +39,15 @@ import kotlin.math.sqrt
  *   分类自有 color 为唯一允许的硬编码色来源。
  * @param modifier 尺寸控制（建议正方形，绘制时按内容居中并取最小边）。
  * @param onSliceClick 点击命中某扇区时回调其下标（保留既有选中高亮）；null 表示仅选中不高亮跳转。
+ * @param onCenterClick 非空且已有选中切片（[selectedIndex] 非空）时，点击环心文本区（中心数据框）
+ *   回调，用于「点击中间数据跳转明细」；未选中切片时点击中心忽略。
  */
 @Composable
 fun DonutChart(
     slices: List<DonutSlice>,
     modifier: Modifier = Modifier,
     onSliceClick: ((Int) -> Unit)? = null,
+    onCenterClick: (() -> Unit)? = null,
 ) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val centerTextColor = MaterialTheme.colorScheme.onSurface
@@ -57,6 +60,11 @@ fun DonutChart(
     Canvas(
         modifier.pointerInput(slices) {
             detectTapGestures { offset ->
+                // 中心数据框（内孔）优先命中：已有选中切片时回调「点击中间数据跳转」。
+                if (hitTestCenter(offset)) {
+                    if (selectedIndex != null) onCenterClick?.invoke()
+                    return@detectTapGestures
+                }
                 val hit = hitTestSlice(offset, slices)
                 selectedIndex = hit
                 if (hit != null) onSliceClick?.invoke(hit)
@@ -122,6 +130,23 @@ private fun PointerInputScope.hitTestSlice(offset: Offset, slices: List<DonutSli
         start += sweep
     }
     return null
+}
+
+/**
+ * 中心数据框命中检测：点相对圆心距离落在环带内孔（圆心距 < 内半径，即环心文本区）即命中。
+ * 与 [hitTestSlice] 共用同一套环带几何，保证「点中间数据跳转」与扇区命中互不重叠。
+ */
+private fun PointerInputScope.hitTestCenter(offset: Offset): Boolean {
+    val strokeWidth = 28.dp.toPx()
+    val diameter = min(size.width.toFloat(), size.height.toFloat())
+    val radius = (diameter / 2f - strokeWidth / 2f).coerceAtLeast(1f)
+    val centerX = size.width / 2f
+    val centerY = size.height / 2f
+    val dx = offset.x - centerX
+    val dy = offset.y - centerY
+    val dist = sqrt(dx * dx + dy * dy)
+    val inner = (radius - strokeWidth / 2f).coerceAtLeast(0f)
+    return dist < inner
 }
 
 private fun DrawScope.drawDonut(

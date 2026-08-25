@@ -25,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -115,6 +118,10 @@ fun ReportsScreen(
                     state = trendState,
                     kind = trendKind,
                     onKindChange = viewModel::setTrendKind,
+                    onBucketClick = { bucket ->
+                        BillsFilterBus.post(viewModel.buildTrendBillsFilterRequest(bucket))
+                        onBack()
+                    },
                 )
             }
             item {
@@ -231,6 +238,7 @@ private fun TrendCard(
     state: ChartState<ReportTrend>,
     kind: TrendChartKind,
     onKindChange: (TrendChartKind) -> Unit,
+    onBucketClick: (String) -> Unit,
 ) {
     ChartCard(
         title = "收支趋势",
@@ -245,13 +253,17 @@ private fun TrendCard(
             ChartState.Loading -> ChartLoadingBlock()
             ChartState.Empty -> ChartEmptyState(message = "暂无收支数据")
             is ChartState.Error -> ChartEmptyState(message = state.message)
-            is ChartState.Success -> TrendChartContent(trend = state.value, kind = kind)
+            is ChartState.Success -> TrendChartContent(trend = state.value, kind = kind, onBucketClick = onBucketClick)
         }
     }
 }
 
 @Composable
-private fun TrendChartContent(trend: ReportTrend, kind: TrendChartKind) {
+private fun TrendChartContent(
+    trend: ReportTrend,
+    kind: TrendChartKind,
+    onBucketClick: (String) -> Unit,
+) {
     val incomeColor = LocalSemanticColors.current.income
     val expenseColor = LocalSemanticColors.current.expense
     val buckets = trend.buckets.map(::shortBucketLabel)
@@ -263,6 +275,7 @@ private fun TrendChartContent(trend: ReportTrend, kind: TrendChartKind) {
                 LineChartSeries(label = "收入", color = incomeColor, valuesFen = trend.incomeValues),
                 LineChartSeries(label = "支出", color = expenseColor, valuesFen = trend.expenseValues),
             ),
+            onTooltipClick = { index -> onBucketClick(trend.buckets[index]) },
         )
         TrendChartKind.BAR -> BarChart(
             buckets = buckets,
@@ -270,6 +283,7 @@ private fun TrendChartContent(trend: ReportTrend, kind: TrendChartKind) {
                 BarChartSeries(label = "收入", color = incomeColor, valuesFen = trend.incomeValues),
                 BarChartSeries(label = "支出", color = expenseColor, valuesFen = trend.expenseValues),
             ),
+            onTooltipClick = { index -> onBucketClick(trend.buckets[index]) },
         )
     }
     Spacer(Modifier.height(12.dp))
@@ -331,16 +345,19 @@ private fun CategoryCard(
             is ChartState.Success -> {
                 val categorySlices = state.value
                 val slices = categorySlices.toDonutSlices(fallbackColor = MaterialTheme.colorScheme.outline)
+                // 页内选中分类（扇区/图例点击仅选中不高亮跳转）；分类数据刷新即复位。
+                var selectedSlice by remember(categorySlices) { mutableStateOf<CategorySlice?>(null) }
                 DonutChart(
                     slices = slices,
-                    onSliceClick = { index -> onCategoryClick(categorySlices[index]) },
+                    onSliceClick = { index -> selectedSlice = categorySlices[index] },
+                    onCenterClick = { selectedSlice?.let(onCategoryClick) },
                     modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
                 )
                 if (slices.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     ChartLegend(
                         items = buildDonutLegendItems(slices),
-                        onItemClick = { index -> onCategoryClick(categorySlices[index]) },
+                        onItemClick = { index -> selectedSlice = categorySlices[index] },
                     )
                 }
             }
