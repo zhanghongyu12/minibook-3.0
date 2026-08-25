@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -48,8 +49,9 @@ import kotlin.math.min
  * @param buckets X 轴时间桶显示标签（与各系列 valuesFen 索引对齐、等距）。
  * @param series 要绘制的多系列；valuesFen 长度会截断到 [buckets] 长度。
  * @param height 图表高度。
- * @param onTooltipClick 非空时点击有数据的桶（即显示 tooltip 的桶）回调其下标，
- *   用于「点击数据框跳转明细」；空桶只选中不高亮跳转。null 仅选中显示 tooltip。
+ * @param onTooltipClick 非空时，再次点击当前选中桶的数据框（tooltip）回调其下标，
+ *   用于「点击数据框跳转明细」（两步交互：第一下点柱仅选中并显示 tooltip，第二下点
+ *   tooltip 才跳转）；空桶仅选中不跳转。null 仅选中显示 tooltip。
  */
 @Composable
 fun BarChart(
@@ -74,6 +76,8 @@ fun BarChart(
 
     // 点击选中的桶下标（A2「点击看数值」）；null = 未选中，点出 plot 区域/越界即清空。
     var selectedIndex by remember(buckets, series) { mutableStateOf<Int?>(null) }
+    // 当前选中桶 tooltip 的命中矩形：draw 时写入、pointer 命中检测读取（非快照状态，draw 写入不触发重组）。
+    val tooltipBounds = remember { arrayOfNulls<Rect>(1) }
 
     Canvas(
         modifier
@@ -81,12 +85,15 @@ fun BarChart(
             .height(height)
             .pointerInput(buckets, series) {
                 detectTapGestures { offset ->
+                    // 两步交互：第一下点柱仅选中并显示 tooltip；第二下点 tooltip 数据框才跳转明细。
+                    val current = selectedIndex
+                    if (current != null && tooltipBounds[0]?.contains(offset) == true && clamped.hasDataAt(current)) {
+                        onTooltipClick?.invoke(current)
+                        return@detectTapGestures
+                    }
                     val hit = hitTestBarBucket(offset, buckets.size)
                     selectedIndex = hit
-                    // 点有数据的桶即视为「点击数据框」：选中并回调跳转明细；空桶仅选中不高亮跳转。
-                    if (hit != null && onTooltipClick != null && clamped.hasDataAt(hit)) {
-                        onTooltipClick(hit)
-                    }
+                    if (hit == null) tooltipBounds[0] = null
                 }
             },
     ) {
@@ -94,9 +101,10 @@ fun BarChart(
         drawYGridAndLabels(axis, plot, textMeasurer, labelStyle, gridColor, zeroColor, textColor)
         drawXLabels(buckets, plot, textMeasurer, labelStyle, textColor)
         drawBars(clamped, axis, plot, pointCount, selectedIndex, tooltipBg, zeroColor)
+        tooltipBounds[0] = null
         selectedIndex?.let { index ->
             if (index in buckets.indices) {
-                drawBarSelectionOverlay(
+                tooltipBounds[0] = drawBarSelectionOverlay(
                     index = index,
                     clamped = clamped,
                     buckets = buckets,
@@ -230,7 +238,7 @@ private fun DrawScope.drawBarSelectionOverlay(
     tooltipBg: Color,
     tooltipText: Color,
     tooltipBorder: Color,
-) {
+): Rect? {
     val x = xCenterFor(index, buckets.size, plot)
 
     // 竖参考线（outlineVariant），对齐折线图选中强调。
@@ -242,10 +250,13 @@ private fun DrawScope.drawBarSelectionOverlay(
         val v = s.valuesFen.getOrNull(index) ?: return@forEach
         lines += "${s.label}: ${MoneyFormatter.formatFen(v)}"
     }
-    drawBarTooltip(lines, Offset(x, plot.top), plot, textMeasurer, labelStyle, tooltipBg, tooltipText, tooltipBorder)
+    return drawBarTooltip(lines, Offset(x, plot.top), plot, textMeasurer, labelStyle, tooltipBg, tooltipText, tooltipBorder)
 }
 
-/** 轻量 tooltip（对齐折线图 drawTooltip 手法）：浅色圆角底 + 多行文本，定位锚点上方并水平钳在 plot 内。 */
+/**
+ * 轻量 tooltip（对齐折线图 [tooltipRect] 手法）：浅色圆角底 + 多行文本，定位锚点上方并水平钳在 plot 内。
+ * 布局复用 [tooltipRect] 纯函数，返回实际绘制矩形供 pointer 命中检测。
+ */
 private fun DrawScope.drawBarTooltip(
     lines: List<String>,
     anchor: Offset,
@@ -255,32 +266,29 @@ private fun DrawScope.drawBarTooltip(
     bg: Color,
     textColor: Color,
     border: Color,
-) {
-    if (lines.isEmpty()) return
+): Rect? {
+    if (lines.isEmpty()) return null
     val textStyle = style.copy(color = textColor)
     val layouts = lines.map { textMeasurer.measure(it, textStyle) }
-    val lineHeight = layouts.maxOfOrNull { it.size.height } ?: return
-    val maxWidth = layouts.maxOfOrNull { it.size.width } ?: return
+    val lineHeight = layouts.maxOfOrNull { it.size.height } ?: return null
+    val maxWidth = layouts.maxOfOrNull { it.size.width } ?: return null
+    val rect = tooltipRect(anchor, plot, maxWidth, lineHeight, lines.size) ?: return null
+    val corner = CornerRadius(6.dp.toPx(), 6.dp.toPx())
     val padH = 6.dp.toPx()
     val padV = 4.dp.toPx()
-    val width = maxWidth + padH * 2
-    val height = lineHeight * lines.size + padV * 2
-    val corner = CornerRadius(6.dp.toPx(), 6.dp.toPx())
 
-    val x = (anchor.x - width / 2f).coerceIn(plot.left, (plot.right - width).coerceAtLeast(plot.left))
-    val y = plot.top + 4.dp.toPx()
-
-    drawRoundRect(color = bg, topLeft = Offset(x, y), size = Size(width, height), cornerRadius = corner)
+    drawRoundRect(color = bg, topLeft = rect.topLeft, size = rect.size, cornerRadius = corner)
     drawRoundRect(
         color = border,
-        topLeft = Offset(x, y),
-        size = Size(width, height),
+        topLeft = rect.topLeft,
+        size = rect.size,
         cornerRadius = corner,
         style = Stroke(width = 1.dp.toPx()),
     )
-    var cursorY = y + padV
+    var cursorY = rect.top + padV
     layouts.forEachIndexed { i, _ ->
-        drawText(textMeasurer, lines[i], Offset(x + padH, cursorY), textStyle)
+        drawText(textMeasurer, lines[i], Offset(rect.left + padH, cursorY), textStyle)
         cursorY += lineHeight
     }
+    return rect
 }
