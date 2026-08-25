@@ -1,23 +1,35 @@
 package com.minibook.ui.reports.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.minibook.domain.model.PeriodTrend
 import com.minibook.ui.theme.TabularFigures
+import com.minibook.util.MoneyFormatter
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.min
 
 /**
@@ -26,6 +38,10 @@ import kotlin.math.min
  * 原生 [Canvas] 自绘，`drawRoundRect`，多系列收支柱（同桶内并排）。仅渲染调用方已聚合数据点，
  * **不承担任何算术**（DEC-011）。Y 轴金额分→元经 [com.minibook.util.MoneyFormatter.formatFen]，
  * 配合 [TabularFigures] 等宽数字。
+ *
+ * 点击交互（A2「点击看数值」，对齐折线图）：点击命中某桶后高亮该桶的收/支柱（surface 描边环 +
+ * outline 细描边）并在顶部 tooltip 显示该桶「收入 / 支出」金额；点出 plot 区域或越界即清空选中。
+ * 选中态仅为表示层（桶下标），不参与任何算术（DEC-011）。
  *
  * 降级：0 数据点只画空坐标系不崩；1 个数据桶只画单组柱。
  *
@@ -44,6 +60,8 @@ fun BarChart(
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val zeroColor = MaterialTheme.colorScheme.outline
     val textColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val tooltipBg = MaterialTheme.colorScheme.surface
+    val tooltipText = MaterialTheme.colorScheme.onSurface
     val labelStyle = MaterialTheme.typography.labelSmall.merge(TabularFigures)
 
     val pointCount = buckets.size
@@ -51,11 +69,39 @@ fun BarChart(
     val allValues = clamped.flatMap { it.valuesFen }
     val axis = remember(allValues) { buildYAxis(allValues) }
 
-    Canvas(modifier.fillMaxWidth().height(height)) {
+    // 点击选中的桶下标（A2「点击看数值」）；null = 未选中，点出 plot 区域/越界即清空。
+    var selectedIndex by remember(buckets, series) { mutableStateOf<Int?>(null) }
+
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(height)
+            .pointerInput(buckets, series) {
+                detectTapGestures { offset ->
+                    selectedIndex = hitTestBarBucket(offset, buckets.size)
+                }
+            },
+    ) {
         val plot = plotArea()
         drawYGridAndLabels(axis, plot, textMeasurer, labelStyle, gridColor, zeroColor, textColor)
         drawXLabels(buckets, plot, textMeasurer, labelStyle, textColor)
-        drawBars(clamped, axis, plot, pointCount)
+        drawBars(clamped, axis, plot, pointCount, selectedIndex, tooltipBg, zeroColor)
+        selectedIndex?.let { index ->
+            if (index in buckets.indices) {
+                drawBarSelectionOverlay(
+                    index = index,
+                    clamped = clamped,
+                    buckets = buckets,
+                    plot = plot,
+                    textMeasurer = textMeasurer,
+                    labelStyle = labelStyle,
+                    referenceColor = gridColor,
+                    tooltipBg = tooltipBg,
+                    tooltipText = tooltipText,
+                    tooltipBorder = gridColor,
+                )
+            }
+        }
     }
 }
 
@@ -74,7 +120,43 @@ fun List<PeriodTrend>.toIncomeBarSeries(color: Color): BarChartSeries =
 fun List<PeriodTrend>.toExpenseBarSeries(color: Color): BarChartSeries =
     BarChartSeries(label = "支出", color = color, valuesFen = expenseFenValues())
 
-private fun DrawScope.drawBars(series: List<BarChartSeries>, axis: YAxis, plot: PlotArea, bucketCount: Int) {
+/**
+ * 柱状图命中映射（纯函数，便于单测）：点击 x（px）落在 `[plotLeft, plotLeft + plotWidth]` 内时，
+ * 按 `plotWidth / bucketCount` 等宽分桶，反解 `floor((x - plotLeft) / slot)` 得桶下标；
+ * x 越界或下标越界 → null。
+ */
+internal fun barBucketIndexFromX(x: Float, plotLeft: Float, plotWidth: Float, bucketCount: Int): Int? {
+    if (bucketCount <= 0 || plotWidth <= 0f) return null
+    if (x < plotLeft || x > plotLeft + plotWidth) return null
+    val slot = plotWidth / bucketCount
+    val index = floor((x - plotLeft) / slot).toInt()
+    return if (index in 0 until bucketCount) index else null
+}
+
+/**
+ * 点击命中检测（A2）：用 [PointerInputScope.size] 复刻 [plotArea] 的 px 平面
+ * （left=46dp/right=size.width-10dp/top=10dp/bottom=size.height-28dp）；柱状图等宽分桶，
+ * x 直接 [barBucketIndexFromX] 反解桶下标；点出 plot 区域或越界 → null（清空选中）。
+ */
+private fun PointerInputScope.hitTestBarBucket(offset: Offset, bucketCount: Int): Int? {
+    if (bucketCount <= 0) return null
+    val left = 46.dp.toPx()
+    val right = size.width.toFloat() - 10.dp.toPx()
+    val top = 10.dp.toPx()
+    val bottom = size.height.toFloat() - 28.dp.toPx()
+    if (offset.y < top || offset.y > bottom) return null
+    return barBucketIndexFromX(offset.x, left, (right - left).coerceAtLeast(1f), bucketCount)
+}
+
+private fun DrawScope.drawBars(
+    series: List<BarChartSeries>,
+    axis: YAxis,
+    plot: PlotArea,
+    bucketCount: Int,
+    selectedIndex: Int?,
+    highlightRingColor: Color,
+    highlightBorderColor: Color,
+) {
     if (series.isEmpty() || bucketCount <= 0) return
 
     val baseline = yFor(0L, axis, plot)
@@ -97,6 +179,93 @@ private fun DrawScope.drawBars(series: List<BarChartSeries>, axis: YAxis, plot: 
                 size = Size(barWidth, barHeight),
                 cornerRadius = corner,
             )
+            if (bucket == selectedIndex) {
+                // 选中桶强调：surface 描边环（对齐折线图选中点 surface 环）+ outline 细描边。
+                drawRoundRect(
+                    color = highlightRingColor,
+                    topLeft = Offset(barX, top),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = corner,
+                    style = Stroke(width = 3.dp.toPx()),
+                )
+                drawRoundRect(
+                    color = highlightBorderColor,
+                    topLeft = Offset(barX, top),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = corner,
+                    style = Stroke(width = 1.5.dp.toPx()),
+                )
+            }
         }
+    }
+}
+
+/**
+ * 柱状图选中态叠加层（A2）：竖参考线（outlineVariant）+ 顶部 tooltip（首行桶标签，
+ * 其后每系列「label: ¥金额」，[MoneyFormatter] + 等宽数字，对齐折线图）。柱体高亮见 [drawBars]。
+ */
+private fun DrawScope.drawBarSelectionOverlay(
+    index: Int,
+    clamped: List<BarChartSeries>,
+    buckets: List<String>,
+    plot: PlotArea,
+    textMeasurer: TextMeasurer,
+    labelStyle: TextStyle,
+    referenceColor: Color,
+    tooltipBg: Color,
+    tooltipText: Color,
+    tooltipBorder: Color,
+) {
+    val x = xCenterFor(index, buckets.size, plot)
+
+    // 竖参考线（outlineVariant），对齐折线图选中强调。
+    drawLine(referenceColor, Offset(x, plot.top), Offset(x, plot.bottom), strokeWidth = 1.dp.toPx())
+
+    // tooltip 文本行：首行桶标签，其后逐系列「label: ¥金额」。
+    val lines = mutableListOf(buckets.getOrNull(index).orEmpty())
+    clamped.forEach { s ->
+        val v = s.valuesFen.getOrNull(index) ?: return@forEach
+        lines += "${s.label}: ${MoneyFormatter.formatFen(v)}"
+    }
+    drawBarTooltip(lines, Offset(x, plot.top), plot, textMeasurer, labelStyle, tooltipBg, tooltipText, tooltipBorder)
+}
+
+/** 轻量 tooltip（对齐折线图 drawTooltip 手法）：浅色圆角底 + 多行文本，定位锚点上方并水平钳在 plot 内。 */
+private fun DrawScope.drawBarTooltip(
+    lines: List<String>,
+    anchor: Offset,
+    plot: PlotArea,
+    textMeasurer: TextMeasurer,
+    style: TextStyle,
+    bg: Color,
+    textColor: Color,
+    border: Color,
+) {
+    if (lines.isEmpty()) return
+    val textStyle = style.copy(color = textColor)
+    val layouts = lines.map { textMeasurer.measure(it, textStyle) }
+    val lineHeight = layouts.maxOfOrNull { it.size.height } ?: return
+    val maxWidth = layouts.maxOfOrNull { it.size.width } ?: return
+    val padH = 6.dp.toPx()
+    val padV = 4.dp.toPx()
+    val width = maxWidth + padH * 2
+    val height = lineHeight * lines.size + padV * 2
+    val corner = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+
+    val x = (anchor.x - width / 2f).coerceIn(plot.left, (plot.right - width).coerceAtLeast(plot.left))
+    val y = plot.top + 4.dp.toPx()
+
+    drawRoundRect(color = bg, topLeft = Offset(x, y), size = Size(width, height), cornerRadius = corner)
+    drawRoundRect(
+        color = border,
+        topLeft = Offset(x, y),
+        size = Size(width, height),
+        cornerRadius = corner,
+        style = Stroke(width = 1.dp.toPx()),
+    )
+    var cursorY = y + padV
+    layouts.forEachIndexed { i, _ ->
+        drawText(textMeasurer, lines[i], Offset(x + padH, cursorY), textStyle)
+        cursorY += lineHeight
     }
 }
