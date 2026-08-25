@@ -6,11 +6,14 @@ import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.BudgetProgress
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
+import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.budget.ClearCategoryBudgetUseCase
 import com.minibook.domain.usecase.budget.ObserveBudgetProgressUseCase
 import com.minibook.domain.usecase.budget.SetCategoryBudgetUseCase
 import com.minibook.domain.usecase.budget.SetTotalBudgetUseCase
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
+import com.minibook.ui.navigation.BillsFilterRequest
+import com.minibook.util.TimeFormatter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.YearMonth
 import javax.inject.Inject
@@ -241,3 +244,27 @@ sealed interface BudgetsUiState {
     /** 有任一预算：总额卡 + 分类预算区，展示已用/剩余/进度与超支标红。 */
     data class Success(val progress: BudgetProgress) : BudgetsUiState
 }
+
+/**
+ * 纯函数：月份 + 目标分类（null=总额卡全部支出）→ 账单筛选跳转请求（预算页 → 记账 Tab 联动）。
+ *
+ * 日期区间 = 当月首日/末日（[YearMonth.atDay]/[YearMonth.atEndOfMonth]），统一经
+ * [com.minibook.util.TimeFormatter.formatLocalDate] 输出 `yyyy-MM-dd`；periodLabel 总额卡
+ * 如「2026年8月支出」、分类行如「2026年8月·餐饮」（与报表/首页跳转同口径，§8.3）。
+ *
+ * @param month 预算页当前查看月份。
+ * @param category 目标分类；null = 总额卡（筛当月全部支出）。
+ */
+internal fun buildBillsFilterRequest(month: YearMonth, category: Category?): BillsFilterRequest =
+    BillsFilterRequest(
+        categoryId = category?.id,
+        categoryName = category?.name,
+        type = TransactionType.EXPENSE,
+        dateFrom = TimeFormatter.formatLocalDate(month.atDay(1)),
+        dateTo = TimeFormatter.formatLocalDate(month.atEndOfMonth()),
+        periodLabel = if (category == null) {
+            "${month.year}年${month.monthValue}月支出"
+        } else {
+            "${month.year}年${month.monthValue}月·${category.name}"
+        },
+    )

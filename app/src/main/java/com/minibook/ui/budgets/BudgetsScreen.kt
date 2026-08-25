@@ -55,6 +55,7 @@ import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.MiniBookSnackbarHost
 import com.minibook.ui.components.MoneySemantic
 import com.minibook.ui.components.MoneyText
+import com.minibook.ui.navigation.BillsFilterBus
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.util.TimeFormatter
 import java.time.YearMonth
@@ -72,8 +73,11 @@ import java.time.YearMonth
  * 四态（[BudgetsUiState]，UI §8.3 状态说明）：Loading=[LoadingState] 骨架；Empty=未设任何预算
  * →「设置月度总预算」引导；Error=观察流异常 + 重试；Success=两区渲染。
  *
- * 编辑入口：总额卡「编辑总额/设预算」→ [BudgetEditorSheet]（TOTAL mode）；区头「+ 添加」或点
- * 分类行 → [BudgetEditorSheet]（CATEGORY mode，可删除）。保存/删除走
+ * 跳转账单：总额卡（已用=当月支出汇总）或分类预算行点击 → [BillsFilterBus] post 当月支出筛选
+ * （总额=全部支出 / 分类行=该分类支出）+ onBack 回主屏记账 Tab（账单页 applyBillsFilter 填入查询框）。
+ *
+ * 编辑入口：总额卡「编辑总额/设预算」→ [BudgetEditorSheet]（TOTAL mode）；区头「+ 添加」或
+ * 分类行尾「编辑」→ [BudgetEditorSheet]（CATEGORY mode，可删除）。保存/删除走
  * [BudgetsViewModel]（总额先删后插 & 分类 UNIQUE，DEC-008）。
  *
  * @param onBack 顶栏返回回调（NavHost 接线传入 `popBackStack()`）。
@@ -99,6 +103,13 @@ fun BudgetsScreen(
 
     // 编辑总额预填：取当前 Success 进度的总额（>0 才回填，否则按「设置」处理）。
     val successProgress = (uiState as? BudgetsUiState.Success)?.progress
+
+    // 点击跳转账单：总额卡=当月全部支出、分类预算行=该分类当月支出。post + onBack 回主屏
+    // （MainScreen LaunchedEffect 观察 Bus → 切记账 Tab，账单页 applyBillsFilter 填入查询框）。
+    val jumpToExpenses: (CategoryBudgetProgress?) -> Unit = { item ->
+        BillsFilterBus.post(buildBillsFilterRequest(month, item?.category))
+        onBack()
+    }
 
     // 轻提示：展示后经 VM 清除（避免重复展示）。
     LaunchedEffect(snackbarMessage) {
@@ -143,6 +154,8 @@ fun BudgetsScreen(
                     onEditCategory = { item ->
                         categoryEditorTarget = CategoryEditorTarget(item.category, item.budgetFen)
                     },
+                    onViewAllExpenses = { jumpToExpenses(null) },
+                    onViewCategoryExpenses = { item -> jumpToExpenses(item) },
                 )
             }
         }
@@ -205,6 +218,8 @@ private data class CategoryEditorTarget(
  * @param onEditTotal 编辑总额回调。
  * @param onAddCategory 添加分类预算回调。
  * @param onEditCategory 编辑指定分类预算回调。
+ * @param onViewAllExpenses 总额卡点击回调（跳转账单筛当月全部支出）。
+ * @param onViewCategoryExpenses 分类预算行点击回调（跳转账单筛该分类当月支出）。
  */
 @Composable
 private fun BudgetsContent(
@@ -212,6 +227,8 @@ private fun BudgetsContent(
     onEditTotal: () -> Unit,
     onAddCategory: () -> Unit,
     onEditCategory: (CategoryBudgetProgress) -> Unit,
+    onViewAllExpenses: () -> Unit,
+    onViewCategoryExpenses: (CategoryBudgetProgress) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -219,7 +236,11 @@ private fun BudgetsContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "total") {
-            TotalBudgetCard(progress = progress, onEditTotal = onEditTotal)
+            TotalBudgetCard(
+                progress = progress,
+                onEditTotal = onEditTotal,
+                onClick = onViewAllExpenses,
+            )
         }
         item(key = "category_header") {
             CategorySectionHeader(onAddCategory = onAddCategory)
@@ -230,7 +251,11 @@ private fun BudgetsContent(
             }
         } else {
             items(progress.categoryProgress, key = { it.category.id }) { item ->
-                CategoryBudgetRow(item = item, onClick = { onEditCategory(item) })
+                CategoryBudgetRow(
+                    item = item,
+                    onClick = { onViewCategoryExpenses(item) },
+                    onEdit = { onEditCategory(item) },
+                )
             }
         }
     }
@@ -242,16 +267,26 @@ private fun BudgetsContent(
  *   `semanticExpense` 红 + 「已超支 ¥X」（App 内页内告警，DEC-012）；
  * - 未设：展示「未设置」+ 右上「设预算」按钮。
  *
+ * 点击整卡（含未设态）→ 跳转账单筛当月全部支出（[onClick]）；右上「编辑总额/设预算」
+ * [onEditTotal] 仍负责预算编辑。
+ *
  * @param progress 预算进度。
  * @param onEditTotal 「编辑总额/设预算」回调（弹 [BudgetEditorSheet]）。
+ * @param onClick 整卡点击回调（跳转账单筛当月支出，[BillsFilterBus] post + onBack）。
  */
 @Composable
 private fun TotalBudgetCard(
     progress: BudgetProgress,
     onEditTotal: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.large,
+    ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -356,13 +391,18 @@ private fun CategoryEmptyHint(
  * 分类预算进度行（UI §8.3）：分类 IconTile（图标/名称）+ 已用/预算 + 进度条；
  * 超支进度条满格 `semanticExpense` 红 + 「已超支 ¥X」。
  *
+ * 点击整行 → 跳转账单筛该分类当月支出（[onClick]）；行尾「编辑」按钮 → 弹
+ * [BudgetEditorSheet] 分类模式编辑（[onEdit]，可删除）。
+ *
  * @param item 单个分类预算进度（含分类元信息）。
- * @param onClick 行点击回调（弹 [BudgetEditorSheet] 分类模式编辑，可删除）。
+ * @param onClick 行点击回调（跳转账单筛该分类当月支出，[BillsFilterBus] post + onBack）。
+ * @param onEdit 「编辑」按钮回调（弹 [BudgetEditorSheet] 分类模式编辑，可删除）。
  */
 @Composable
 private fun CategoryBudgetRow(
     item: CategoryBudgetProgress,
     onClick: () -> Unit,
+    onEdit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -380,6 +420,7 @@ private fun CategoryBudgetRow(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
+                TextButton(onClick = onEdit) { Text("编辑") }
             }
             Spacer(Modifier.height(10.dp))
             Row(
