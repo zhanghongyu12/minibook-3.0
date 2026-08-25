@@ -12,6 +12,7 @@ import com.minibook.domain.usecase.report.ReportTrend
 import com.minibook.domain.usecase.report.periodEnd
 import com.minibook.domain.usecase.report.periodStart
 import com.minibook.ui.navigation.BillsFilterRequest
+import com.minibook.ui.navigation.ReportMonthSync
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.time.YearMonth
@@ -84,8 +85,12 @@ class ReportsViewModel @Inject constructor(
     private val _viewType = MutableStateFlow(Granularity.MONTHLY)
     val viewType: StateFlow<Granularity> = _viewType.asStateFlow()
 
-    /** 当前选择周期（月视图 = 月份、年视图 = 该年），默认当前月/年。 */
-    private val _period = MutableStateFlow(YearMonth.now())
+    /**
+     * 当前选择周期（月视图 = 月份、年视图 = 该年）。初始值取首页联动的月份
+     * [ReportMonthSync.month]（首页结余卡滑动到的月份点击「报表」入口时写入），
+     * 未从首页联动过则回退当前月/年。
+     */
+    private val _period = MutableStateFlow(ReportMonthSync.month.value ?: YearMonth.now())
     val period: StateFlow<YearMonth> = _period.asStateFlow()
 
     /** 图 1 形态：折线 / 柱状（默认折线）。 */

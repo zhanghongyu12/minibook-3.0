@@ -60,6 +60,7 @@ import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.navigation.BillsFilterBus
 import com.minibook.ui.navigation.BillsFilterRequest
+import com.minibook.ui.navigation.ReportMonthSync
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.ui.theme.lightSemanticColors
 import com.minibook.util.TimeFormatter
@@ -182,7 +183,10 @@ fun HomeScreen(
                         showTransactionSheet = true
                     },
                     onNavigateToTransactions = onNavigateToTransactions,
-                    onOpenReports = homeNavigation::openReports,
+                    onOpenReports = {
+                        ReportMonthSync.set(selectedMonth)
+                        homeNavigation.openReports()
+                    },
                     onOpenBudgets = homeNavigation::openBudgets,
                     onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
@@ -205,7 +209,10 @@ fun HomeScreen(
                         showTransactionSheet = true
                     },
                     onNavigateToTransactions = onNavigateToTransactions,
-                    onOpenReports = homeNavigation::openReports,
+                    onOpenReports = {
+                        ReportMonthSync.set(selectedMonth)
+                        homeNavigation.openReports()
+                    },
                     onOpenBudgets = homeNavigation::openBudgets,
                     onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
