@@ -36,8 +36,11 @@ object TimeFormatter {
         } catch (e: DateTimeException) {
             Instant.parse(iso).atZone(ZoneId.systemDefault()).toLocalDate()
         }
-        return date.format(DATE_FORMATTER)
+        return formatLocalDate(date)
     }
+
+    /** 本地日 → `yyyy-MM-dd`（DATABASE §9.5 存储/展示口径）。 */
+    fun formatLocalDate(date: LocalDate): String = date.format(DATE_FORMATTER)
 
     /** 年月 → `yyyy-MM`（如 `2026-08`），对齐预算 month 存储口径（§9.5）。 */
     fun formatYearMonth(yearMonth: YearMonth): String = yearMonth.format(YEAR_MONTH_FORMATTER)

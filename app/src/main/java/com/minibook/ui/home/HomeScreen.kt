@@ -1,6 +1,7 @@
 package com.minibook.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,8 +58,11 @@ import com.minibook.ui.components.NetBalanceCard
 import com.minibook.ui.components.NetBalanceRow
 import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
+import com.minibook.ui.navigation.BillsFilterBus
+import com.minibook.ui.navigation.BillsFilterRequest
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.ui.theme.lightSemanticColors
+import com.minibook.util.TimeFormatter
 import java.time.YearMonth
 
 /**
@@ -312,6 +316,20 @@ private fun HomeDashboardContent(
                 expense = expense,
                 onPreviousMonth = onPreviousMonth,
                 onNextMonth = onNextMonth,
+                onOpenMonthTransactions = {
+                    val range = monthTransactionsRange(month)
+                    BillsFilterBus.post(
+                        BillsFilterRequest(
+                            categoryId = null,
+                            categoryName = null,
+                            type = null,
+                            dateFrom = range.dateFrom,
+                            dateTo = range.dateTo,
+                            periodLabel = range.periodLabel,
+                        ),
+                    )
+                    onNavigateToTransactions()
+                },
             )
         }
         item {
@@ -371,12 +389,19 @@ private val MONTH_SWIPE_THRESHOLD_DP = 64.dp
  * 标题右端叠加「‹/›」箭头按钮辅助切换（当前月时「›」禁用）。箭头与滑动走同一
  * [onPreviousMonth]/[onNextMonth]，由 [HomeViewModel.nextMonth] 上限当前月兜底。
  *
+ * 卡片主体（除「‹/›」箭头外）可点击（[Modifier.clickable] 轻点）：点击跳转账单页并按当月
+ * 区间筛明细（[onOpenMonthTransactions]，由 [HomeDashboardContent] 组装
+ * [BillsFilterBus.post] + 跳「记账」Tab）。clickable 与左右滑动手势不互斥——滑动一旦
+ * 越过 touch slop 由 drag 消费并取消 tap，轻点（未拖动）才触发 [onOpenMonthTransactions]；
+ * 箭头按钮为上层独立 [IconButton]，自身消费点击不受影响。
+ *
  * @param month 所选月份（标题 + 是否已达当前月的判定）。
  * @param balance 所选月结余（分，可负）。
  * @param income 所选月收入（分）。
  * @param expense 所选月支出（分）。
  * @param onPreviousMonth 右滑 /「‹」箭头回调。
  * @param onNextMonth 左滑 /「›」箭头回调。
+ * @param onOpenMonthTransactions 结余卡轻点回调（跳转账单当月明细，可空=不可点）。
  */
 @Composable
 private fun MonthBalanceCard(
@@ -386,12 +411,14 @@ private fun MonthBalanceCard(
     expense: Long,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
+    onOpenMonthTransactions: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isLatestMonth = month >= YearMonth.now()
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .clickable(onClick = onOpenMonthTransactions)
             .pointerInput(month) {
                 var dragAccum = 0f
                 detectHorizontalDragGestures(
@@ -450,6 +477,28 @@ private fun MonthBalanceCard(
 /** 所选月份结余卡标题：`2026年8月结余`（TimeFormatter 无中文月份口径，直接 year/monthValue 拼接）。 */
 private fun monthBalanceTitle(month: YearMonth): String =
     "${month.year}年${month.monthValue}月结余"
+
+/**
+ * 首页结余卡点击跳转账单当月明细所需的筛选区间与周期文案（纯函数，可单测）。
+ *
+ * dateFrom/dateTo 用 [YearMonth.atDay]（首日）/[YearMonth.atEndOfMonth]（月末）求当月区间，
+ * 统一经 [TimeFormatter.formatLocalDate] 输出 `yyyy-MM-dd`；periodLabel 与结余卡标题同口径
+ * （`2026年8月`，无「结余」尾缀），供账单查询框/筛选展示。
+ *
+ * @param month 所选月份（结余卡当前展示月份）。
+ */
+internal data class MonthTransactionsRange(
+    val dateFrom: String,
+    val dateTo: String,
+    val periodLabel: String,
+)
+
+internal fun monthTransactionsRange(month: YearMonth): MonthTransactionsRange =
+    MonthTransactionsRange(
+        dateFrom = TimeFormatter.formatLocalDate(month.atDay(1)),
+        dateTo = TimeFormatter.formatLocalDate(month.atEndOfMonth()),
+        periodLabel = "${month.year}年${month.monthValue}月",
+    )
 
 /**
  * 首页「报表 / 预算 / 导入账单」并排轻量入口（§8.6 设计约定 + §9.1 TASK-044 增设第三格）：
