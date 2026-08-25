@@ -11,6 +11,7 @@ import com.minibook.testutil.FakeCategoryRepository
 import com.minibook.testutil.FakeTransactionRepository
 import com.minibook.testutil.FakeUserCategoryRuleRepository
 import com.minibook.testutil.fakeLedgerDataStore
+import com.minibook.ui.navigation.BillsFilterRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -136,6 +137,110 @@ class TransactionsViewModelCategoryFilterTest {
         advanceTimeBy(1)
         assertEquals(null, txRepo.lastFilter?.type)
         assertEquals(null, txRepo.lastFilter?.categoryId)
+    }
+
+    // ---- 时间段 / 备注查询态 ----
+
+    @Test
+    fun `setRemark 驱动 observe filter remark 且空白归一为 null`() = runTest(dispatcher) {
+        val txRepo = FakeTransactionRepository()
+        val vm = newViewModel(txRepo)
+        backgroundScope.activate(vm)
+        advanceTimeBy(1)
+        assertEquals(null, txRepo.lastFilter?.remark)
+
+        vm.setRemark("  餐饮  ")
+        advanceTimeBy(1)
+        assertEquals("餐饮", txRepo.lastFilter?.remark)
+
+        vm.setRemark("   ")
+        advanceTimeBy(1)
+        assertEquals(null, txRepo.lastFilter?.remark)
+    }
+
+    @Test
+    fun `setDateRange 设置时间段并支持单端清空`() = runTest(dispatcher) {
+        val txRepo = FakeTransactionRepository()
+        val vm = newViewModel(txRepo)
+        backgroundScope.activate(vm)
+        advanceTimeBy(1)
+
+        vm.setDateRange("2026-08-01", "2026-08-31")
+        advanceTimeBy(1)
+        assertEquals("2026-08-01", txRepo.lastFilter?.dateFrom)
+        assertEquals("2026-08-31", txRepo.lastFilter?.dateTo)
+
+        vm.setDateRange(null, "2026-08-31")
+        advanceTimeBy(1)
+        assertEquals(null, txRepo.lastFilter?.dateFrom)
+        assertEquals("2026-08-31", txRepo.lastFilter?.dateTo)
+
+        vm.setDateRange("2026-08-01", null)
+        advanceTimeBy(1)
+        assertEquals("2026-08-01", txRepo.lastFilter?.dateFrom)
+        assertEquals(null, txRepo.lastFilter?.dateTo)
+    }
+
+    @Test
+    fun `clearFilter 复位时间段与备注`() = runTest(dispatcher) {
+        val txRepo = FakeTransactionRepository()
+        val vm = newViewModel(txRepo)
+        backgroundScope.activate(vm)
+        advanceTimeBy(1)
+
+        vm.setFilter(TransactionType.EXPENSE)
+        vm.setCategoryFilter("cat-food")
+        vm.setDateRange("2026-08-01", "2026-08-31")
+        vm.setRemark("餐饮")
+        advanceTimeBy(1)
+        vm.clearFilter()
+        advanceTimeBy(1)
+        assertEquals(null, txRepo.lastFilter?.type)
+        assertEquals(null, txRepo.lastFilter?.categoryId)
+        assertEquals(null, txRepo.lastFilter?.dateFrom)
+        assertEquals(null, txRepo.lastFilter?.dateTo)
+        assertEquals(null, txRepo.lastFilter?.remark)
+    }
+
+    @Test
+    fun `applyBillsFilter 可空填入 type 与 categoryId`() = runTest(dispatcher) {
+        val txRepo = FakeTransactionRepository()
+        val vm = newViewModel(txRepo)
+        backgroundScope.activate(vm)
+        advanceTimeBy(1)
+
+        // 全空口径：type/categoryId 为 null，日期区间照填，备注清空。
+        vm.applyBillsFilter(
+            BillsFilterRequest(
+                categoryId = null,
+                categoryName = null,
+                type = null,
+                dateFrom = "2026-08-01",
+                dateTo = "2026-08-31",
+                periodLabel = "2026年8月",
+            ),
+        )
+        advanceTimeBy(1)
+        assertEquals(null, txRepo.lastFilter?.type)
+        assertEquals(null, txRepo.lastFilter?.categoryId)
+        assertEquals("2026-08-01", txRepo.lastFilter?.dateFrom)
+        assertEquals("2026-08-31", txRepo.lastFilter?.dateTo)
+        assertEquals(null, txRepo.lastFilter?.remark)
+
+        // 非空口径：type/categoryId 带入查询框。
+        vm.applyBillsFilter(
+            BillsFilterRequest(
+                categoryId = "cat-food",
+                categoryName = "餐饮",
+                type = TransactionType.EXPENSE,
+                dateFrom = "2026-08-01",
+                dateTo = "2026-08-31",
+                periodLabel = "2026年8月",
+            ),
+        )
+        advanceTimeBy(1)
+        assertEquals(TransactionType.EXPENSE, txRepo.lastFilter?.type)
+        assertEquals("cat-food", txRepo.lastFilter?.categoryId)
     }
 
     // ---- deleteTransactions 委托（回归：方法/属性同名曾致无限递归 StackOverflowError）----

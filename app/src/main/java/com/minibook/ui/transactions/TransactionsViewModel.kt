@@ -31,17 +31,19 @@ import kotlinx.coroutines.flow.stateIn
  * 收支记录页 ViewModel（TASK-024，UI §2 P-03）。
  *
  * 职责：
- * - 持有类型筛选态 [filterType]（null=全部 / EXPENSE / INCOME）与分类筛选态
- *   [filterCategoryId]（null=全部分类）；任一变化经 `combine` + `flatMapLatest` 触发
- *   [ObserveTransactionsUseCase.observe] 重订阅（filter 变化 → 重新 collect，UseCase 内置
- *   账本切换重订阅，UI 层不感知账本）。
+ * - 持有类型筛选态 [filterType]（null=全部 / EXPENSE / INCOME）、分类筛选态
+ *   [filterCategoryId]（null=全部分类）、时间段 [dateFrom]/[dateTo]（null=该端不限）与
+ *   备注模糊关键词 [remark]（null=不按备注过滤）；任一变化经 `combine` + `flatMapLatest`
+ *   触发 [ObserveTransactionsUseCase.observe] 重订阅（filter 变化 → 重新 collect，UseCase
+ *   内置账本切换重订阅，UI 层不感知账本）。
  * - 将交易流折叠为三态 [TransactionsUiState]（Loading / Empty / Success），供
  *   [TransactionsScreen] 直接渲染。VM 只提供扁平列表，**按日期分组在 UI 层完成**。
  * - **分类联表**：分类流经 [ObserveCategoriesUseCase.observe] 与交易流同账本同源（同 TASK-015，
  *   内置账本切换重订阅），在 [TransactionsUiState.Success] 侧折叠为
  *   `categoriesById`（id→[Category]）供 UI 联表展示（对齐首页 0c041a3）。
- * - **分类筛选栏**：对外暴露 [categories]（当前账本全类型分类流，常驻显示于列表上方，
- *   不随空态消失），供 UI 渲染横向 chip + 下拉选择器（分类 icon 为 emoji 文本）。
+ * - **查询区**：对外暴露 [categories]（当前账本全类型分类流，常驻显示于列表上方，不随空态
+ *   消失），供 UI 渲染「搜索框 + 时间段 + 收缩式分类入口」；报表等跳转落点即本查询框
+ *   （见 [applyBillsFilter]）。
  *
  * 冷流语义：`observe` 为冷流（仅订阅时执行），故以 `WhileSubscribed(5_000)` 保活——UI 离屏
  * 5 秒后自动停止订阅，回到页面重连即刷新（避免后台常驻查询）。
@@ -68,23 +70,23 @@ class TransactionsViewModel @Inject constructor(
     /** 对外只读的分类筛选态。 */
     val filterCategoryId: StateFlow<String?> = _filterCategoryId.asStateFlow()
 
-    /** 账单筛选跳转的区间起点 `yyyy-MM-dd`；null=未设日期区间（报表跳转前为空）。 */
+    /** 查询框时间段起点 `yyyy-MM-dd`；null=未设起点（不限起始）。 */
     private val _dateFrom = MutableStateFlow<String?>(null)
 
-    /** 对外只读的账单筛选区间起点。 */
+    /** 对外只读的查询框时间段起点。 */
     val dateFrom: StateFlow<String?> = _dateFrom.asStateFlow()
 
-    /** 账单筛选跳转的区间终点 `yyyy-MM-dd`；null=未设日期区间。 */
+    /** 查询框时间段终点 `yyyy-MM-dd`；null=未设终点（不限结束）。 */
     private val _dateTo = MutableStateFlow<String?>(null)
 
-    /** 对外只读的账单筛选区间终点。 */
+    /** 对外只读的查询框时间段终点。 */
     val dateTo: StateFlow<String?> = _dateTo.asStateFlow()
 
-    /** 账单筛选提示条文案（`周期 · 分类名`）；null=无跳转筛选来源（初始/清除后）。 */
-    private val _billsFilterLabel = MutableStateFlow<String?>(null)
+    /** 备注/标题模糊查询关键词；null=不按备注过滤（空串/纯空白归一为 null）。 */
+    private val _remark = MutableStateFlow<String?>(null)
 
-    /** 对外只读的账单筛选提示条文案。 */
-    val billsFilterLabel: StateFlow<String?> = _billsFilterLabel.asStateFlow()
+    /** 对外只读的备注模糊关键词。 */
+    val remark: StateFlow<String?> = _remark.asStateFlow()
 
     /** 手动刷新触发：递增使 `flatMapLatest` 重订阅观察流（冷流重连，供错误重试）。 */
     private val refreshTick = MutableStateFlow(0)
@@ -108,9 +110,12 @@ class TransactionsViewModel @Inject constructor(
      * （协调日志 2026-08-21 commit 0c041a3 同款模式）。
      */
     val uiState: StateFlow<TransactionsUiState> = combine(
-        combine(_filterType, _filterCategoryId, _dateFrom, _dateTo, refreshTick) { type, categoryId, from, to, _ ->
-            TransactionFilter(type = type, categoryId = categoryId, dateFrom = from, dateTo = to)
-        }
+        combine(
+            combine(_filterType, _filterCategoryId, _dateFrom, _dateTo, _remark) { type, categoryId, from, to, remark ->
+                TransactionFilter(type = type, categoryId = categoryId, dateFrom = from, dateTo = to, remark = remark)
+            },
+            refreshTick,
+        ) { filter, _ -> filter }
             .flatMapLatest { filter ->
                 observeTransactions.observe(filter)
             },
@@ -121,7 +126,11 @@ class TransactionsViewModel @Inject constructor(
         .map { source ->
             if (source.transactions.isEmpty()) {
                 TransactionsUiState.Empty(
-                    hasActiveFilter = _filterType.value != null || _filterCategoryId.value != null,
+                    hasActiveFilter = _filterType.value != null ||
+                        _filterCategoryId.value != null ||
+                        _dateFrom.value != null ||
+                        _dateTo.value != null ||
+                        !_remark.value.isNullOrBlank(),
                 )
             } else {
                 TransactionsUiState.Success(
@@ -141,17 +150,16 @@ class TransactionsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState.Loading)
 
     /**
-     * 应用报表分类占比点击产生的账单筛选请求：设类型/分类/日期区间/提示条（提示条文案
-     * `周期 · 分类名`）。不在此 clear [com.minibook.ui.navigation.BillsFilterBus.request]——
-     * 由调用方（[TransactionsScreen] 组合作用域的 LaunchedEffect 消费后）负责 clear，
-     * 确保「切 Tab」先于「消费」：VM 常驻也不抢跑，切到记账页组合后才生效。
+     * 应用报表分类占比点击产生的账单筛选请求：把 type/category/dateRange 直接填入查询框
+     * （跳转落点 = 查询框，不再有独立提示条），备注清空。不在此 clear
+     * [com.minibook.ui.navigation.BillsFilterBus.request]——由调用方（[TransactionsScreen]
+     * 组合作用域的 LaunchedEffect 消费后）负责 clear，确保「切 Tab」先于「消费」。
      */
     fun applyBillsFilter(req: BillsFilterRequest) {
         setFilter(req.type)
         setCategoryFilter(req.categoryId)
-        _dateFrom.value = req.dateFrom
-        _dateTo.value = req.dateTo
-        _billsFilterLabel.value = "${req.periodLabel} · ${req.categoryName ?: req.categoryId.take(6)}"
+        setDateRange(req.dateFrom, req.dateTo)
+        setRemark(null)
     }
 
     /**
@@ -164,7 +172,7 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /**
-     * 设置分类筛选；null=全部分类（「全部」chip / 空态「清除筛选」均走此口径）。
+     * 设置分类筛选；null=全部分类（分类下拉「全部分类」/ 空态「清除筛选」均走此口径）。
      *
      * @param categoryId 目标分类 id；null 表示「全部分类」。
      */
@@ -173,16 +181,31 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /**
-     * 清除全部筛选（类型 + 分类 + 日期区间 + 提示条）：供空态「清除筛选」与提示条「清除」
-     * 动作使用。空态 [hasActiveFilter] 现为「type 或 categoryId 任一非空」，故须一并复位
-     * 日期区间与提示条文案，避免只清类型残留分类/日期。
+     * 设置备注/标题模糊查询关键词；null 或纯空白 = 不按备注过滤（归一为 null）。
+     */
+    fun setRemark(remark: String?) {
+        _remark.value = remark?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * 设置查询框时间段（起止 `yyyy-MM-dd`）；任一传 null = 该端不限（清空）。
+     */
+    fun setDateRange(from: String?, to: String?) {
+        _dateFrom.value = from
+        _dateTo.value = to
+    }
+
+    /**
+     * 清除全部查询条件（类型 + 分类 + 时间段 + 备注）：供空态「清除筛选」与查询区「重置」
+     * 使用。[hasActiveFilter] 现涵盖 type/categoryId/dateFrom/dateTo/remark 任一非空，
+     * 故须一并复位全部维度。
      */
     fun clearFilter() {
         _filterType.value = null
         _filterCategoryId.value = null
         _dateFrom.value = null
         _dateTo.value = null
-        _billsFilterLabel.value = null
+        _remark.value = null
     }
 
     /**

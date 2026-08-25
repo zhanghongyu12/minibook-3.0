@@ -32,8 +32,8 @@ import org.junit.Test
  *
  * 报表分类占比点击 → 账单筛选请求由 [TransactionsScreen] 组合作用域消费后调用本方法（见时机说明），
  * 此处直接断言方法赋值的副作用：
- * - setFilter(type) / setCategoryFilter(categoryId)；
- * - 设 dateFrom / dateTo / billsFilterLabel（`周期 · 分类名`）；
+ * - setFilter(type) / setCategoryFilter(categoryId) / setDateRange(dateFrom, dateTo)；
+ * - 备注清空（查询框即跳转落点，无独立提示条）；
  * - 不在此 clear 总线（由 Screen 负责）。
  *
  * 按现有 TransactionsViewModelCategoryFilterTest 风格：类级 StandardTestDispatcher 在
@@ -55,7 +55,7 @@ class TransactionsViewModelBillsFilterTest {
     }
 
     @Test
-    fun `applyBillsFilter 设置 type category 日期区间与提示条`() = runTest(dispatcher) {
+    fun `applyBillsFilter 设置 type category 日期区间并清空备注`() = runTest(dispatcher) {
         val txRepo = FakeTransactionRepository()
         val vm = newViewModel(txRepo)
         backgroundScope.activate(vm)
@@ -79,11 +79,11 @@ class TransactionsViewModelBillsFilterTest {
         assertEquals("cat-food", txRepo.lastFilter?.categoryId)
         assertEquals("2026-08-01", txRepo.lastFilter?.dateFrom)
         assertEquals("2026-08-31", txRepo.lastFilter?.dateTo)
-        assertEquals("2026年8月 · 餐饮", vm.billsFilterLabel.value)
+        assertNull(vm.remark.value)
     }
 
     @Test
-    fun `clearFilter 一并复位类型分类日期区间与提示条`() = runTest(dispatcher) {
+    fun `clearFilter 一并复位类型分类日期区间与备注`() = runTest(dispatcher) {
         val txRepo = FakeTransactionRepository()
         val vm = newViewModel(txRepo)
         backgroundScope.activate(vm)
@@ -109,7 +109,7 @@ class TransactionsViewModelBillsFilterTest {
         assertNull(txRepo.lastFilter?.categoryId)
         assertNull(txRepo.lastFilter?.dateFrom)
         assertNull(txRepo.lastFilter?.dateTo)
-        assertNull(vm.billsFilterLabel.value)
+        assertNull(vm.remark.value)
     }
 
     /** 以已设置当前账本的 LedgerDataStore 构造 VM，保证 observe 路径触达仓库（记录 filter 入参）。 */

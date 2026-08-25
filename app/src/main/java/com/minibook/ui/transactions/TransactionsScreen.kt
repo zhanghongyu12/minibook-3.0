@@ -1,7 +1,7 @@
 package com.minibook.ui.transactions
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,24 +12,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,6 +56,8 @@ import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.DateSectionHeader
+import com.minibook.ui.components.dateToUtcMillis
+import com.minibook.ui.components.utcMillisToDate
 import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.EmptyState
 import com.minibook.ui.components.LoadingState
@@ -85,7 +89,9 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     val filterType by viewModel.filterType.collectAsStateWithLifecycle()
     val filterCategoryId by viewModel.filterCategoryId.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
-    val billsFilterLabel by viewModel.billsFilterLabel.collectAsStateWithLifecycle()
+    val remark by viewModel.remark.collectAsStateWithLifecycle()
+    val dateFrom by viewModel.dateFrom.collectAsStateWithLifecycle()
+    val dateTo by viewModel.dateTo.collectAsStateWithLifecycle()
     // 报表分类占比点击 → 页面组合（切到记账 Tab）后才消费账单筛选请求：
     // 先由 MainScreen 观察 Bus 切 Tab，再由本组合作用域消费并 clear，避免 VM 常驻抢跑（时序 bug 修复）。
     LaunchedEffect(viewModel) {
@@ -140,10 +146,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 报表分类占比跳转后的筛选来源提示条（可「清除」复位全部筛选）。
-            billsFilterLabel?.let { label ->
-                BillsFilterBanner(label = label, onClear = viewModel::clearFilter)
-            }
             // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 全选/删除/取消）。
             if (batchMode) {
                 BatchModeBar(
@@ -178,10 +180,17 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            CategoryFilterBar(
+            QueryFilterArea(
+                remark = remark ?: "",
+                onRemarkChange = viewModel::setRemark,
+                dateFrom = dateFrom,
+                dateTo = dateTo,
+                onDateFromChange = { from -> viewModel.setDateRange(from, dateTo) },
+                onDateToChange = { to -> viewModel.setDateRange(dateFrom, to) },
                 categories = categories,
                 selectedCategoryId = filterCategoryId,
-                onSelect = viewModel::setCategoryFilter,
+                onCategorySelect = viewModel::setCategoryFilter,
+                onReset = viewModel::clearFilter,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
@@ -285,37 +294,6 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
 }
 
 /**
- * 账单筛选提示条：报表分类占比点击跳转后，顶部展示「周期 · 分类」筛选来源 + 「清除」按钮。
- * 清除 = 复位类型/分类/日期区间/提示条全部筛选（走 [com.minibook.ui.transactions.TransactionsViewModel.clearFilter]）。
- */
-@Composable
-private fun BillsFilterBanner(
-    label: String,
-    onClear: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            TextButton(onClick = onClear) { Text("清除") }
-        }
-    }
-}
-
-/**
  * 批量操作栏（批量模式顶部，替换普通态「管理」入口）。
  *
  * 第一行：左「已选 N 条」计数，右「全选/取消全选」；第二行：右「改分类」「改类型」「删除」
@@ -406,135 +384,159 @@ private fun TypePickerSheet(
 }
 
 /**
- * 分类筛选栏（常驻显示，不随列表 Empty 消失）：横向可滚动 chip 行 + 右端下拉选择器。
+ * 查询区（类型 Tab 之下，常驻显示，不随列表 Empty 消失）：
+ * 模糊搜索输入框 + 「重置」、时间段起止选择（可单独清空）、收缩式分类筛选入口。
  *
- * chip 行：首个「全部」chip（选中 = 清空分类筛选），其后每个分类一个 chip（emoji + 名称）；
- * 选中的 chip 以主题配色高亮（primaryContainer / onPrimaryContainer，对齐 SearchScreen 的
- * [CategoryFilterChip] 手写 Surface 风格，工程未引入 material-icons、分类 icon 为 emoji 文本）。
- *
- * 下拉选择器：chip 行右端一个筛选图标按钮（[CategoryFilterIcon]），点开 [DropdownMenu]
- * 按支出/收入分组列出全部分类（带 emoji），点击设同一 categoryId；选中某分类时下拉入口
- * 显示选中态（primaryContainer 底色）。chip 与下拉共用 [selectedCategoryId] / [onSelect]，
- * 清除分类筛选走「全部」chip。
- *
- * @param categories 候选分类（VM [com.minibook.ui.transactions.TransactionsViewModel.categories]，
- *   当前账本全类型，order 升序）。
- * @param selectedCategoryId 当前选中分类 id；null=全部分类。
- * @param onSelect 选中回调；null=清空分类筛选（「全部」chip）。
+ * 模糊搜索按备注/标题关键词（映射 description 列）即时过滤；时间段起止为 `yyyy-MM-dd`；
+ * 分类筛选由横向 chip 收缩为单一「分类」按钮 + 下拉（含「全部分类」清除项）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryFilterBar(
+private fun QueryFilterArea(
+    remark: String,
+    onRemarkChange: (String) -> Unit,
+    dateFrom: String?,
+    dateTo: String?,
+    onDateFromChange: (String?) -> Unit,
+    onDateToChange: (String?) -> Unit,
     categories: List<Category>,
     selectedCategoryId: String?,
-    onSelect: (String?) -> Unit,
+    onCategorySelect: (String?) -> Unit,
+    onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // 横向可滚动 chip 行：内容超宽时可滑动，下拉入口固定在右端不随 chip 滚动。
+    Column(modifier = modifier) {
         Row(
-            modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CategoryFilterChip(
-                icon = null,
-                name = "全部",
-                selected = selectedCategoryId == null,
-                onClick = { onSelect(null) },
+            OutlinedTextField(
+                value = remark,
+                onValueChange = onRemarkChange,
+                placeholder = { Text("搜索备注/标题关键词") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
             )
-            categories.forEach { category ->
-                CategoryFilterChip(
-                    icon = category.icon,
-                    name = category.name,
-                    selected = category.id == selectedCategoryId,
-                    onClick = { onSelect(category.id) },
-                )
-            }
+            TextButton(onClick = onReset) { Text("重置") }
         }
-        Spacer(Modifier.width(8.dp))
-        CategoryFilterDropdown(
-            categories = categories,
-            selectedCategoryId = selectedCategoryId,
-            onSelect = onSelect,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            DateFilterChip(
+                placeholder = "起始日期",
+                value = dateFrom,
+                onChange = onDateFromChange,
+                modifier = Modifier.weight(1f),
+            )
+            Text("~", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            DateFilterChip(
+                placeholder = "结束日期",
+                value = dateTo,
+                onChange = onDateToChange,
+                modifier = Modifier.weight(1f),
+            )
+            CategoryFilterEntry(
+                categories = categories,
+                selectedCategoryId = selectedCategoryId,
+                onSelect = onCategorySelect,
+            )
+        }
     }
 }
 
 /**
- * 单个分类筛选 chip（手写 Surface，对齐 SearchScreen 的 [CategoryFilterChip] 配色口径）：
- * 选中 → primaryContainer/onPrimaryContainer + primary 描边；未选 → surfaceVariant/onSurfaceVariant。
- *
- * @param icon 分类 emoji 文本；null 表示「全部」chip（不展示图标）。
- * @param name chip 文案。
- * @param selected 是否选中。
- * @param onClick 点击回调。
+ * 单个日期筛选 chip（起/止日期）：展示 `yyyy-MM-dd` 或占位文案，点击弹 [DatePickerDialog]；
+ * 已设值时右侧「✕」可单独清空（回调 null）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryFilterChip(
-    icon: String?,
-    name: String,
-    selected: Boolean,
-    onClick: () -> Unit,
+private fun DateFilterChip(
+    placeholder: String,
+    value: String?,
+    onChange: (String?) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    var showPicker by remember { mutableStateOf(false) }
+    val initialMillis = remember(value) { value?.let { dateToUtcMillis(it) } }
     Surface(
-        onClick = onClick,
+        onClick = { showPicker = true },
         shape = MaterialTheme.shapes.small,
-        color = if (selected) {
+        color = if (value != null) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceVariant
         },
         border = BorderStroke(
             1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+            if (value != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
         ),
+        modifier = modifier,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (icon != null) {
-                Text(icon, fontSize = 14.sp)
-                Spacer(Modifier.width(4.dp))
-            }
             Text(
-                name,
+                text = value ?: placeholder,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (selected) {
+                color = if (value != null) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            if (value != null) {
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "✕",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.clickable { onChange(null) },
+                )
+            }
+        }
+    }
+    if (showPicker) {
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    utcMillisToDate(pickerState.selectedDateMillis)?.let(onChange)
+                    showPicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showPicker = false }) { Text("取消") } },
+        ) {
+            DatePicker(state = pickerState)
         }
     }
 }
 
 /**
- * 分类下拉选择器：筛选图标按钮 + [DropdownMenu]（按支出/收入分组，带 emoji + 选中标记）。
- *
- * 入口与 chip 联动：选中某分类时入口用 primaryContainer 底色 + onPrimaryContainer 图标
- * 呈现「选中态」。选中项在菜单内以主题 primary「✓」标记；点击分类即关闭菜单并回传同一
- * categoryId（清除分类筛选仍走「全部」chip，故菜单不重复提供「全部」项）。
+ * 收缩式分类筛选入口：单一「分类」按钮显示当前分类名（或「全部分类」），点击弹
+ * [DropdownMenu]，首项「全部分类」清除 + 按支出/收入分组的全部分类（复用 [CategoryDropdownSection]）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryFilterDropdown(
+private fun CategoryFilterEntry(
     categories: List<Category>,
     selectedCategoryId: String?,
     onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
+    val selectedName = categories.firstOrNull { it.id == selectedCategoryId }?.name
+    val contentColor = if (selectedCategoryId != null) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(modifier = modifier) {
         Surface(
             onClick = { expanded = true },
             shape = MaterialTheme.shapes.small,
@@ -545,30 +547,37 @@ private fun CategoryFilterDropdown(
             },
             border = BorderStroke(
                 1.dp,
-                if (selectedCategoryId != null) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.outline
-                },
+                if (selectedCategoryId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
             ),
         ) {
-            Icon(
-                imageVector = CategoryFilterIcon,
-                contentDescription = "分类筛选",
-                tint = if (selectedCategoryId != null) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier
-                    .padding(6.dp)
-                    .size(20.dp),
-            )
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("分类：", style = MaterialTheme.typography.labelMedium, color = contentColor)
+                Text(
+                    selectedName ?: "全部分类",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 120.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("▾", fontSize = 14.sp, color = contentColor)
+            }
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                text = { Text("全部分类") },
+                onClick = {
+                    expanded = false
+                    onSelect(null)
+                },
+            )
             CategoryDropdownSection(
                 title = "支出",
                 items = categories.filter { it.type == CategoryType.EXPENSE },
@@ -620,25 +629,6 @@ private fun CategoryDropdownSection(
             onClick = { onPick(category.id) },
         )
     }
-}
-
-/**
- * 分类筛选图标：Material「filter_list」path 本地构造（工程未引入 material-icons，同
- * [EmptyReceiptIcon] 手法）。纯填充矢量，tint 由 [Icon] 统一上色，fill 仅占位（不参与渲染）。
- */
-private val CategoryFilterIcon: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "CategoryFilter",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).addPath(
-        pathData = addPathNodes(
-            "M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z",
-        ),
-        fill = SolidColor(Color.Black),
-    ).build()
 }
 
 /**

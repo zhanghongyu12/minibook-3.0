@@ -153,8 +153,8 @@ fun LedgerSelector(
     }
 }
 
-/** `yyyy-MM-dd` → UTC 当日零点毫秒（DatePicker 用）。 */
-private fun dateToUtcMillis(date: String): Long {
+/** `yyyy-MM-dd` → UTC 当日零点毫秒（DatePicker 用）；非法日期回退今天。 */
+internal fun dateToUtcMillis(date: String): Long {
     val localDate = try {
         LocalDate.parse(date)
     } catch (e: DateTimeException) {
@@ -164,7 +164,7 @@ private fun dateToUtcMillis(date: String): Long {
 }
 
 /** DatePicker 选中毫秒（UTC 当日零点）→ `yyyy-MM-dd`；null 表示未选中。 */
-private fun utcMillisToDate(millis: Long?): String? {
+internal fun utcMillisToDate(millis: Long?): String? {
     if (millis == null) return null
     val localDate = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
     return TimeFormatter.formatDate(localDate.toString())
