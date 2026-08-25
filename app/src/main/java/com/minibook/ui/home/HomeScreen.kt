@@ -1,6 +1,7 @@
 package com.minibook.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,6 +59,7 @@ import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.ui.theme.lightSemanticColors
+import java.time.YearMonth
 
 /**
  * 首页跨层导航桥（TASK-033/036/038 接线收口）。
@@ -124,6 +127,7 @@ fun HomeScreen(
     onNavigateToLedgerManage: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
@@ -159,6 +163,7 @@ fun HomeScreen(
                     onRetry = viewModel::refresh,
                 )
                 is HomeUiState.Empty -> HomeDashboardContent(
+                    month = selectedMonth,
                     balance = 0L,
                     income = 0L,
                     expense = 0L,
@@ -177,8 +182,11 @@ fun HomeScreen(
                     onOpenBudgets = homeNavigation::openBudgets,
                     onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
+                    onPreviousMonth = viewModel::previousMonth,
+                    onNextMonth = viewModel::nextMonth,
                 )
                 is HomeUiState.Success -> HomeDashboardContent(
+                    month = state.month,
                     balance = state.balance,
                     income = state.income,
                     expense = state.expense,
@@ -197,6 +205,8 @@ fun HomeScreen(
                     onOpenBudgets = homeNavigation::openBudgets,
                     onOpenImport = homeNavigation::openImport,
                     budgetOverBudget = budgetOverBudget,
+                    onPreviousMonth = viewModel::previousMonth,
+                    onNextMonth = viewModel::nextMonth,
                 )
             }
         }
@@ -251,12 +261,13 @@ private fun HomeTopBar(
 
 /**
  * 首页仪表板主体内容（[HomeUiState.Empty] / [HomeUiState.Success] 共用）：
- * 结余卡（[NetBalanceCard]）+「最近交易」区（列表或空态）。
+ * 结余卡（[MonthBalanceCard]，所选月份 + 左右滑动/箭头切换）+「最近交易」区（列表或空态）。
  *
- * @param balance 本月结余（分，可负）；负值经 [NetBalanceCard]/[MoneyText] 红色展示。
- * @param income 本月收入（分）。
- * @param expense 本月支出（分）。
- * @param transactions 最近交易（调用方已截断前 10，A-3；此处再 take 兜底）。
+ * @param month 所选月份（结余卡标题 + 切换；Empty 态来自 `selectedMonth`、Success 态来自 `Success.month`）。
+ * @param balance 所选月结余（分，可负）；负值经 [NetBalanceCard]/[MoneyText] 红色展示。
+ * @param income 所选月收入（分）。
+ * @param expense 所选月支出（分）。
+ * @param transactions 所选月最近交易（调用方已截断前 10，A-3；此处再 take 兜底）。
  * @param categoriesById 分类 id→[Category] 映射（[HomeViewModel] 联表产物），按 `tx.categoryId`
  *   解析名称/图标/颜色；缺失分类时 [TransactionListItem] fallback（❔）。
  * @param onOpenNewTransaction FAB / 空态「记一笔」回调（弹 [TransactionSheet] 新增态）。
@@ -265,10 +276,13 @@ private fun HomeTopBar(
  * @param onOpenReports 「报表」入口回调（根图导航到 `reports`，§8.6「报表/预算并排入口」）。
  * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`，§8.6）。
  * @param onOpenImport 「导入账单」入口回调（根图导航到 `import`，§9.1 TASK-044 第三格）。
- * @param budgetOverBudget 当月预算是否超支（DEC-012 入口提示）；超支时预算入口叠加 `error` 红点。
+ * @param budgetOverBudget 所选月预算是否超支（DEC-012 入口提示）；超支时预算入口叠加 `error` 红点。
+ * @param onPreviousMonth 上一月回调（右滑/「‹」箭头，[HomeViewModel.previousMonth]）。
+ * @param onNextMonth 下一月回调（左滑/「›」箭头，[HomeViewModel.nextMonth]，上限当前月）。
  */
 @Composable
 private fun HomeDashboardContent(
+    month: YearMonth = YearMonth.now(),
     balance: Long,
     income: Long,
     expense: Long,
@@ -281,6 +295,8 @@ private fun HomeDashboardContent(
     onOpenBudgets: () -> Unit = {},
     onOpenImport: () -> Unit = {},
     budgetOverBudget: Boolean = false,
+    onPreviousMonth: () -> Unit = {},
+    onNextMonth: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -289,18 +305,13 @@ private fun HomeDashboardContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            NetBalanceCard(
-                title = "本月结余",
-                balanceFen = balance,
-                semantic = when {
-                    balance > 0L -> MoneySemantic.INCOME
-                    balance < 0L -> MoneySemantic.EXPENSE
-                    else -> MoneySemantic.NET_ZERO
-                },
-                rows = listOf(
-                    NetBalanceRow(label = "收入", fen = income, semantic = MoneySemantic.INCOME),
-                    NetBalanceRow(label = "支出", fen = expense, semantic = MoneySemantic.EXPENSE),
-                ),
+            MonthBalanceCard(
+                month = month,
+                balance = balance,
+                income = income,
+                expense = expense,
+                onPreviousMonth = onPreviousMonth,
+                onNextMonth = onNextMonth,
             )
         }
         item {
@@ -350,6 +361,95 @@ private fun HomeDashboardContent(
         }
     }
 }
+
+/** 结余卡左右滑动切换月份的横向滑动阈值（px 由 [androidx.compose.ui.unit.Density] 换算）。 */
+private val MONTH_SWIPE_THRESHOLD_DP = 64.dp
+
+/**
+ * 结余卡（所选月份标题 + 左右滑动/箭头切换）：包裹 [NetBalanceCard]，卡片上左右滑动
+ * （[detectHorizontalDragGestures] 累计横向位移、超阈值判定方向：左滑=下一月、右滑=上一月），
+ * 标题右端叠加「‹/›」箭头按钮辅助切换（当前月时「›」禁用）。箭头与滑动走同一
+ * [onPreviousMonth]/[onNextMonth]，由 [HomeViewModel.nextMonth] 上限当前月兜底。
+ *
+ * @param month 所选月份（标题 + 是否已达当前月的判定）。
+ * @param balance 所选月结余（分，可负）。
+ * @param income 所选月收入（分）。
+ * @param expense 所选月支出（分）。
+ * @param onPreviousMonth 右滑 /「‹」箭头回调。
+ * @param onNextMonth 左滑 /「›」箭头回调。
+ */
+@Composable
+private fun MonthBalanceCard(
+    month: YearMonth,
+    balance: Long,
+    income: Long,
+    expense: Long,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val isLatestMonth = month >= YearMonth.now()
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .pointerInput(month) {
+                var dragAccum = 0f
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        when {
+                            dragAccum < -MONTH_SWIPE_THRESHOLD_DP.toPx() -> onNextMonth()
+                            dragAccum > MONTH_SWIPE_THRESHOLD_DP.toPx() -> onPreviousMonth()
+                        }
+                        dragAccum = 0f
+                    },
+                    onDragCancel = { dragAccum = 0f },
+                ) { change, dragAmount ->
+                    change.consume()
+                    dragAccum += dragAmount
+                }
+            },
+    ) {
+        NetBalanceCard(
+            title = monthBalanceTitle(month),
+            balanceFen = balance,
+            semantic = when {
+                balance > 0L -> MoneySemantic.INCOME
+                balance < 0L -> MoneySemantic.EXPENSE
+                else -> MoneySemantic.NET_ZERO
+            },
+            rows = listOf(
+                NetBalanceRow(label = "收入", fen = income, semantic = MoneySemantic.INCOME),
+                NetBalanceRow(label = "支出", fen = expense, semantic = MoneySemantic.EXPENSE),
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onPreviousMonth) {
+                Text("‹", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onNextMonth, enabled = !isLatestMonth) {
+                Text(
+                    "›",
+                    fontSize = 22.sp,
+                    color = if (isLatestMonth) {
+                        MaterialTheme.colorScheme.outline
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** 所选月份结余卡标题：`2026年8月结余`（TimeFormatter 无中文月份口径，直接 year/monthValue 拼接）。 */
+private fun monthBalanceTitle(month: YearMonth): String =
+    "${month.year}年${month.monthValue}月结余"
 
 /**
  * 首页「报表 / 预算 / 导入账单」并排轻量入口（§8.6 设计约定 + §9.1 TASK-044 增设第三格）：
