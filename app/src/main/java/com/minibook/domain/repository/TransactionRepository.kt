@@ -40,6 +40,13 @@ interface TransactionRepository {
     suspend fun deleteById(id: String)
 
     /**
+     * 批量物理删除（记账页批量管理模式）：按 [ids] 一次删除多笔交易。
+     *
+     * @return 实际删除行数（供 UseCase/UI 判断删除是否生效）。
+     */
+    suspend fun deleteByIds(ids: List<String>): Int
+
+    /**
      * 按 [ledgerId] 批删该账本全部交易（删账本时调用，TASK-012 DeleteLedgerUseCase
      * 单事务编排；DATABASE §4.4）。
      */

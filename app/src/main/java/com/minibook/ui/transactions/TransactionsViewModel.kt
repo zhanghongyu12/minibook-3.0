@@ -8,6 +8,7 @@ import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
+import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -47,6 +48,7 @@ import kotlinx.coroutines.flow.stateIn
 class TransactionsViewModel @Inject constructor(
     observeTransactions: ObserveTransactionsUseCase,
     private val observeCategories: ObserveCategoriesUseCase,
+    private val deleteTransactions: DeleteTransactionsUseCase,
 ) : ViewModel() {
 
     /** 当前类型筛选：null=全部；EXPENSE=支出；INCOME=收入（初值全部）。 */
@@ -147,6 +149,18 @@ class TransactionsViewModel @Inject constructor(
     fun refresh() {
         refreshTick.value += 1
     }
+
+    /**
+     * 批量删除交易（记账页批量管理模式）：委托 [DeleteTransactionsUseCase]。
+     *
+     * 说明：批量管理的选中集合 / 批量模式开关为页内 `remember` 自持（[TransactionsScreen]），
+     * VM 只承载「删除」这一动作（空列表由 UseCase 短路返回 0）。删除后交易观察流（Room
+     * Flow）自动重发 → [uiState] 自动刷新，无需手动 refresh。
+     *
+     * @param ids 待删除交易 id 集合。
+     * @return 实际删除行数。
+     */
+    suspend fun deleteTransactions(ids: List<String>): Int = deleteTransactions(ids)
 
     companion object {
         /** 当前账本未初始化文案（对齐 HomeViewModel §8.5）。 */

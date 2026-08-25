@@ -2,6 +2,7 @@ package com.minibook.ui.transactions
 
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
+import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import com.minibook.testutil.FakeCategoryRepository
 import com.minibook.testutil.FakeTransactionRepository
@@ -147,6 +148,7 @@ class TransactionsViewModelCategoryFilterTest {
                 ledgerDataStore = ledgerStore,
                 categoryRepository = FakeCategoryRepository(),
             ),
+            deleteTransactions = DeleteTransactionsUseCase(transactionRepository = txRepo),
         )
     }
 

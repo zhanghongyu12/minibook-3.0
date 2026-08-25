@@ -63,6 +63,7 @@ class ImportBillUseCaseTest {
         override suspend fun insert(tx: Transaction): String = throw NotImplementedError()
         override suspend fun update(tx: Transaction): Unit = throw NotImplementedError()
         override suspend fun deleteById(id: String): Unit = throw NotImplementedError()
+        override suspend fun deleteByIds(ids: List<String>): Int = throw NotImplementedError()
         override suspend fun deleteByLedger(ledgerId: String): Unit = throw NotImplementedError()
         override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> = throw NotImplementedError()
         override fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> = throw NotImplementedError()

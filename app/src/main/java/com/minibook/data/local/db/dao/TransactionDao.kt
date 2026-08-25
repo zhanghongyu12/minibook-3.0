@@ -63,6 +63,16 @@ interface TransactionDao {
     @Query("DELETE FROM transactions WHERE id=:id AND ledgerId=:ledgerId")
     suspend fun deleteById(id: String, ledgerId: String)
 
+    /**
+     * 批量物理删除（记账页批量管理模式）：`id IN (:ids)` 一次性删除多笔交易，
+     * 返回实际删除行数（Room `DELETE` 返回值 = 受影响行数）。
+     *
+     * UUID 全局唯一，故不限定 ledgerId（与 [deleteById] 的账本维度守卫不同——批删按已选
+     * id 精确命中）；空列表由调用方（DeleteTransactionsUseCase）短路，不触本方法。
+     */
+    @Query("DELETE FROM transactions WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>): Int
+
     /** 账本内按日期分组（首页/列表）：date DESC、组内 createdAt DESC。 */
     @Query("SELECT * FROM transactions WHERE ledgerId=:ledgerId ORDER BY date DESC, createdAt DESC")
     fun observeAll(ledgerId: String): Flow<List<TransactionEntity>>

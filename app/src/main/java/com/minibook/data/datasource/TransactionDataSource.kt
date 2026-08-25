@@ -39,6 +39,14 @@ interface TransactionDataSource {
     suspend fun deleteById(id: String)
 
     /**
+     * 批量物理删除（记账页批量管理模式）：按 [ids] 一次删除多笔交易（UUID 全局唯一，
+     * 不限定 ledgerId）。**自身原子**：实现方在单事务内闭合。
+     *
+     * @return 实际删除行数；空列表由 UseCase 短路为 0，不触本方法。
+     */
+    suspend fun deleteByIds(ids: List<String>): Int
+
+    /**
      * 按 [ledgerId] 批删该账本全部交易（删账本时调用，DATABASE §4.4）。
      *
      * 与单条 [deleteById] 不同：无 id 维度、整表按账本清空；删账本原子性由

@@ -43,6 +43,8 @@ class FakeTransactionRepository : TransactionRepository {
     var lastDailyRange: Pair<String, String>? = null
     var lastMonthlyRange: Pair<String, String>? = null
     var lastAggCall: Triple<String?, TransactionType?, Pair<String, String>?>? = null
+    var lastDeletedIds: List<String>? = null
+    var deleteByIdsResult: Int = 0
 
     // ---- observe 转发（返回可配置数据 + 记录入参） ----
 
@@ -79,6 +81,12 @@ class FakeTransactionRepository : TransactionRepository {
     override suspend fun insert(tx: Transaction): String = throw NotImplementedError()
     override suspend fun update(tx: Transaction) = throw NotImplementedError()
     override suspend fun deleteById(id: String) = throw NotImplementedError()
+
+    override suspend fun deleteByIds(ids: List<String>): Int {
+        lastDeletedIds = ids
+        return deleteByIdsResult
+    }
+
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
     override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary =
         throw NotImplementedError()

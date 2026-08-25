@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,10 +27,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +55,7 @@ import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.components.TransactionTypeTab
+import kotlinx.coroutines.launch
 
 /**
  * 收支记录页（TASK-024，UI §2 P-03）。
@@ -76,14 +82,38 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
+    // 批量管理模式（页内自持，不落 VM）：selectedIds=选中 id 集合，batchMode=是否处于批量模式。
+    var batchMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // 当前筛选结果的交易 id 集合：批量「全选/取消全选」作用域（分类/类型筛选在批量模式下仍生效）。
+    val allVisibleIds = (uiState as? TransactionsUiState.Success)?.transactions?.map { it.id }.orEmpty()
+
+    /** 退出批量模式：清空选中、关闭确认框（删除完成后 / 取消时均走此路径）。 */
+    fun exitBatchMode() {
+        batchMode = false
+        selectedIds = emptySet()
+        showDeleteConfirm = false
+    }
+
+    /** 全选/取消全选：已全选当前可见 → 清空；否则选中当前全部可见。 */
+    fun toggleSelectAll() {
+        val allSelected = allVisibleIds.isNotEmpty() && allVisibleIds.all { it in selectedIds }
+        selectedIds = if (allSelected) emptySet() else allVisibleIds.toSet()
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
-            PrimaryFAB(onClick = {
-                editingTx = null
-                showTransactionSheet = true
-            })
+            // 批量模式下隐藏 FAB（行点击被复用为「选中/取消选中」，无法再新增）。
+            if (!batchMode) {
+                PrimaryFAB(onClick = {
+                    editingTx = null
+                    showTransactionSheet = true
+                })
+            }
         },
     ) { innerPadding ->
         Column(
@@ -91,6 +121,31 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+            // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 全选/删除/取消）。
+            if (batchMode) {
+                BatchModeBar(
+                    selectedCount = selectedIds.size,
+                    allSelected = allVisibleIds.isNotEmpty() && allVisibleIds.all { it in selectedIds },
+                    onToggleSelectAll = ::toggleSelectAll,
+                    onCancel = ::exitBatchMode,
+                    onDelete = { if (selectedIds.isNotEmpty()) showDeleteConfirm = true },
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = {
+                        batchMode = true
+                        selectedIds = emptySet()
+                    }) {
+                        Text("管理")
+                    }
+                }
+            }
             TransactionTypeTab(
                 selected = filterType,
                 onSelect = viewModel::setFilter,
@@ -123,6 +178,11 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 is TransactionsUiState.Success -> TransactionList(
                     transactions = state.transactions,
                     categoriesById = state.categoriesById,
+                    batchMode = batchMode,
+                    selectedIds = selectedIds,
+                    onToggleSelect = { id ->
+                        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+                    },
                     onItemClick = { tx ->
                         editingTx = tx
                         showTransactionSheet = true
@@ -132,12 +192,83 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
         }
     }
 
+    // 批量删除确认（删除选中的 N 笔交易？）：确认后调 VM 删除动作，成功即退出批量模式。
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除确认") },
+            text = { Text("删除选中的 ${selectedIds.size} 笔交易？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch {
+                            viewModel.deleteTransactions(selectedIds.toList())
+                            exitBatchMode()
+                        }
+                    },
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+            },
+        )
+    }
+
     // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
     if (showTransactionSheet) {
         TransactionSheet(
             tx = editingTx,
             onDismiss = { showTransactionSheet = false },
         )
+    }
+}
+
+/**
+ * 批量操作栏（批量模式顶部，替换普通态「管理」入口）。
+ *
+ * 第一行：左「已选 N 条」计数，右「全选/取消全选」；第二行：右「取消」退出批量模式 +
+ * 「删除」触发确认框（0 选中时禁用）。分类/类型筛选在批量模式下仍生效，「全选」作用于
+ * 当前筛选结果（见 [TransactionsScreen.allVisibleIds]）。
+ */
+@Composable
+private fun BatchModeBar(
+    selectedCount: Int,
+    allSelected: Boolean,
+    onToggleSelectAll: () -> Unit,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "已选 $selectedCount 条",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onToggleSelectAll) {
+                Text(if (allSelected) "取消全选" else "全选")
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onCancel) { Text("取消") }
+            Button(onClick = onDelete, enabled = selectedCount > 0) { Text("删除") }
+        }
     }
 }
 
@@ -387,12 +518,18 @@ private val CategoryFilterIcon: ImageVector by lazy {
  * @param categoriesById 分类 id→[Category] 映射（[TransactionsViewModel] 联表产物），按
  *   `tx.categoryId` 解析名称/图标/颜色；分类已删（map 取不到）时 [TransactionListItem]
  *   fallback（❔/outline 色），对齐首页 0c041a3。
- * @param onItemClick 行点击回调（跳编辑态）。
+ * @param batchMode 是否批量管理模式；true 时行前显示 [Checkbox]、行点击切换选中而非编辑。
+ * @param selectedIds 当前选中 id 集合。
+ * @param onToggleSelect 切换某条选中态回调。
+ * @param onItemClick 行点击回调（普通态跳编辑态；批量态不触达）。
  */
 @Composable
 private fun TransactionList(
     transactions: List<Transaction>,
     categoriesById: Map<String, Category>,
+    batchMode: Boolean,
+    selectedIds: Set<String>,
+    onToggleSelect: (String) -> Unit,
     onItemClick: (Transaction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -409,14 +546,35 @@ private fun TransactionList(
             }
             items(items = txs, key = { it.id }) { tx ->
                 val category = categoriesById[tx.categoryId]
-                TransactionListItem(
-                    tx = tx,
-                    categoryName = category?.name,
-                    categoryIcon = category?.icon,
-                    categoryColor = category?.color,
-                    onClick = { onItemClick(tx) },
-                    modifier = Modifier.animateItem(),
-                )
+                if (batchMode) {
+                    // 批量态：Checkbox 与整行点击均切换选中（复用 animateItem 保持动画）。
+                    Row(
+                        modifier = Modifier.animateItem(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = tx.id in selectedIds,
+                            onCheckedChange = { onToggleSelect(tx.id) },
+                        )
+                        TransactionListItem(
+                            tx = tx,
+                            categoryName = category?.name,
+                            categoryIcon = category?.icon,
+                            categoryColor = category?.color,
+                            onClick = { onToggleSelect(tx.id) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                } else {
+                    TransactionListItem(
+                        tx = tx,
+                        categoryName = category?.name,
+                        categoryIcon = category?.icon,
+                        categoryColor = category?.color,
+                        onClick = { onItemClick(tx) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
             }
         }
     }

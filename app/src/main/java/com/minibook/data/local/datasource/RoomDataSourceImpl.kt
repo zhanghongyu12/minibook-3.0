@@ -157,6 +157,23 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     /**
+     * 批量物理删除（记账页批量管理模式）：仅 transactions 表按 `id IN (...)` 删除
+     * （UUID 全局唯一，不涉及 debts/categories 多表分发——与单条 [deleteById] 的三表共享不同）。
+     *
+     * **自身原子（同 [deleteByLedger] 事务口径）**：单条 `DELETE ... WHERE id IN (...)` 本身
+     * 原子，仍经 [TransactionRunner.runInTransaction] 包裹，与类内事务口径一致；调用方若已在外层
+     * 事务（Room `withTransaction` 可重入）则并入外层，不产生嵌套事务。
+     *
+     * @return [TransactionDao.deleteByIds] 返回的实际删除行数。
+     */
+    override suspend fun deleteByIds(ids: List<String>): Int {
+        if (ids.isEmpty()) return 0
+        return transactionRunner.runInTransaction {
+            transactionDao().deleteByIds(ids)
+        }
+    }
+
+    /**
      * 同签名多接口共享（Transaction/Debt/Category/Budget/UserCategoryRule 均「按 ledgerId 批删」）：
      * 见类注释取舍说明。DAO 均无 `deleteByLedger` → 各表各发等价 DELETE（原始 SQL，
      * 与 deleteById 三表 DELETE 同一逃生舱）。user_category_rules 为分类自学习规则
