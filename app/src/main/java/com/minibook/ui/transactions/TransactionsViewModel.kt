@@ -50,7 +50,7 @@ import kotlinx.coroutines.flow.stateIn
 class TransactionsViewModel @Inject constructor(
     observeTransactions: ObserveTransactionsUseCase,
     private val observeCategories: ObserveCategoriesUseCase,
-    private val deleteTransactions: DeleteTransactionsUseCase,
+    private val deleteTransactionsUseCase: DeleteTransactionsUseCase,
     private val batchUpdateTransactions: BatchUpdateTransactionsUseCase,
     private val ledgerProvider: LedgerProvider,
 ) : ViewModel() {
@@ -164,7 +164,7 @@ class TransactionsViewModel @Inject constructor(
      * @param ids 待删除交易 id 集合。
      * @return 实际删除行数。
      */
-    suspend fun deleteTransactions(ids: List<String>): Int = deleteTransactions(ids)
+    suspend fun deleteTransactions(ids: List<String>): Int = deleteTransactionsUseCase(ids)
 
     /**
      * 批量改分类：委托 [BatchUpdateTransactionsUseCase.updateCategory]（含自学习副作用）。

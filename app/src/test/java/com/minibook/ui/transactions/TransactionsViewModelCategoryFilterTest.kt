@@ -138,6 +138,19 @@ class TransactionsViewModelCategoryFilterTest {
         assertEquals(null, txRepo.lastFilter?.categoryId)
     }
 
+    // ---- deleteTransactions 委托（回归：方法/属性同名曾致无限递归 StackOverflowError）----
+
+    @Test
+    fun `deleteTransactions 委托 UseCase 并透传 ids 与返回行数`() = runTest(dispatcher) {
+        val txRepo = FakeTransactionRepository().apply { deleteByIdsResult = 3 }
+        val vm = newViewModel(txRepo)
+
+        val deleted = vm.deleteTransactions(listOf("t1", "t2", "t3"))
+
+        assertEquals(listOf("t1", "t2", "t3"), txRepo.lastDeletedIds)
+        assertEquals(3, deleted)
+    }
+
     // ---- 构造 ----
 
     /** 以已设置当前账本的 LedgerDataStore 构造 VM，保证 observe 路径触达仓库（记录 filter 入参）。 */
@@ -152,7 +165,7 @@ class TransactionsViewModelCategoryFilterTest {
                 ledgerDataStore = ledgerStore,
                 categoryRepository = FakeCategoryRepository(),
             ),
-            deleteTransactions = DeleteTransactionsUseCase(transactionRepository = txRepo),
+            deleteTransactionsUseCase = DeleteTransactionsUseCase(transactionRepository = txRepo),
             batchUpdateTransactions = BatchUpdateTransactionsUseCase(
                 transactionRepository = txRepo,
                 categoryRepository = FakeCategoryRepository(),
