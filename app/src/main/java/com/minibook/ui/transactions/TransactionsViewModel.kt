@@ -12,7 +12,7 @@ import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.transaction.BatchUpdateTransactionsUseCase
 import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
-import com.minibook.ui.navigation.BillsFilterBus
+import com.minibook.ui.navigation.BillsFilterRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
 /**
  * 收支记录页 ViewModel（TASK-024，UI §2 P-03）。
@@ -141,19 +140,18 @@ class TransactionsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState.Loading)
 
-    init {
-        // 报表分类占比点击 → 消费账单筛选跳转请求：设类型/分类/日期区间/提示条后 clear。
-        viewModelScope.launch {
-            BillsFilterBus.request.collect { req ->
-                if (req == null) return@collect
-                setFilter(req.type)
-                setCategoryFilter(req.categoryId)
-                _dateFrom.value = req.dateFrom
-                _dateTo.value = req.dateTo
-                _billsFilterLabel.value = "${req.periodLabel} · ${req.categoryName ?: req.categoryId.take(6)}"
-                BillsFilterBus.clear()
-            }
-        }
+    /**
+     * 应用报表分类占比点击产生的账单筛选请求：设类型/分类/日期区间/提示条（提示条文案
+     * `周期 · 分类名`）。不在此 clear [com.minibook.ui.navigation.BillsFilterBus.request]——
+     * 由调用方（[TransactionsScreen] 组合作用域的 LaunchedEffect 消费后）负责 clear，
+     * 确保「切 Tab」先于「消费」：VM 常驻也不抢跑，切到记账页组合后才生效。
+     */
+    fun applyBillsFilter(req: BillsFilterRequest) {
+        setFilter(req.type)
+        setCategoryFilter(req.categoryId)
+        _dateFrom.value = req.dateFrom
+        _dateTo.value = req.dateTo
+        _billsFilterLabel.value = "${req.periodLabel} · ${req.categoryName ?: req.categoryId.take(6)}"
     }
 
     /**

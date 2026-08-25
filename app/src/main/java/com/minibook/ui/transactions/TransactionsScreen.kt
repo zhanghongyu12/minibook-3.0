@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.components.TransactionTypeTab
+import com.minibook.ui.navigation.BillsFilterBus
 import kotlinx.coroutines.launch
 
 /**
@@ -84,6 +86,16 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     val filterCategoryId by viewModel.filterCategoryId.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val billsFilterLabel by viewModel.billsFilterLabel.collectAsStateWithLifecycle()
+    // 报表分类占比点击 → 页面组合（切到记账 Tab）后才消费账单筛选请求：
+    // 先由 MainScreen 观察 Bus 切 Tab，再由本组合作用域消费并 clear，避免 VM 常驻抢跑（时序 bug 修复）。
+    LaunchedEffect(viewModel) {
+        BillsFilterBus.request.collect { req ->
+            if (req != null) {
+                viewModel.applyBillsFilter(req)
+                BillsFilterBus.clear()
+            }
+        }
+    }
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
