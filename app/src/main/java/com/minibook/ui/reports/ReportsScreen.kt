@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.TransactionType
-import com.minibook.domain.usecase.report.BalanceTrend
 import com.minibook.domain.usecase.report.CategorySlice
 import com.minibook.domain.usecase.report.Granularity
 import com.minibook.domain.usecase.report.ReportTrend
@@ -61,11 +60,10 @@ private val CHART_HEIGHT = 220.dp
  * 报表页（TASK-036，UI §2 P-13 / §8.2，F-07 / DEC-011）。
  *
  * 结构（对齐 §8.2 树）：[Scaffold] + 顶栏 [TopAppBar]（标题「报表」+ 返回 + 月/年 SegmentedButton）
- * + [LazyColumn]：周期切换器（◀ 当前月/年 ▶）+ 三张图表卡片（每卡独立空态）。
+ * + [LazyColumn]：周期切换器（◀ 当前月/年 ▶）+ 两张图表卡片（每卡独立空态）。
  *
  * - 图 1 收支趋势：折线 / 柱状（[TrendChartKind]）切换 + [ChartLegend]（收入 / 支出）；
- * - 图 2 分类占比：[DonutChart]（收入 / 支出二态 [categoryType]）+ [ChartLegend]（分类名 + 色块 + 占比）；
- * - 图 3 结余走势：[LineChart] 累计结余单系列（正负逐点语义色）。
+ * - 图 2 分类占比：[DonutChart]（收入 / 支出二态 [categoryType]）+ [ChartLegend]（分类名 + 色块 + 占比）。
  *
  * 页面只负责「喂数据 + 视图切换 + 图例」，五要素（口径 / 坐标系 / 图元 / 图例 / 主题）已由图表组件
  * 落地（TASK-035）；本页不参与任何算术（DEC-011）。限定当前账本（VM/UseCase `flatMapLatest`）。
@@ -85,7 +83,6 @@ fun ReportsScreen(
     val categoryType by viewModel.categoryType.collectAsStateWithLifecycle()
     val trendState by viewModel.trendState.collectAsStateWithLifecycle()
     val categoryState by viewModel.categoryState.collectAsStateWithLifecycle()
-    val balanceState by viewModel.balanceState.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -125,9 +122,6 @@ fun ReportsScreen(
                     type = categoryType,
                     onTypeChange = viewModel::setCategoryType,
                 )
-            }
-            item {
-                BalanceCard(state = balanceState)
             }
         }
     }
@@ -374,38 +368,6 @@ private fun List<CategorySlice>.toDonutSlices(fallbackColor: Color): List<DonutS
             valueFen = slice.totalFen,
         )
     }
-
-// ---------------------------------------------------------------------------
-// 图 3：结余走势
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun BalanceCard(state: ChartState<BalanceTrend>) {
-    ChartCard(title = "结余走势") {
-        when (state) {
-            ChartState.Loading -> ChartLoadingBlock()
-            ChartState.Empty -> ChartEmptyState(message = "暂无结余数据")
-            is ChartState.Error -> ChartEmptyState(message = state.message)
-            is ChartState.Success -> {
-                val balance = state.value
-                val semantic = LocalSemanticColors.current
-                LineChart(
-                    buckets = balance.buckets.map(::shortBucketLabel),
-                    series = listOf(
-                        LineChartSeries(
-                            label = "累计结余",
-                            color = semantic.netZero,
-                            valuesFen = balance.cumulativeBalanceValues,
-                            // 结余逐点正负取语义色（正=收入绿、负=支出红），可穿零轴。
-                            colorForValue = { fen -> if (fen >= 0L) semantic.income else semantic.expense },
-                        ),
-                    ),
-                    showPoints = false,
-                )
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // 通用卡片骨架

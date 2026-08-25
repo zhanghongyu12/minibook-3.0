@@ -4,10 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.TransactionType
-import com.minibook.domain.usecase.report.BalanceTrend
 import com.minibook.domain.usecase.report.CategorySlice
 import com.minibook.domain.usecase.report.Granularity
-import com.minibook.domain.usecase.report.ObserveBalanceTrendUseCase
 import com.minibook.domain.usecase.report.ObserveCategoryBreakdownUseCase
 import com.minibook.domain.usecase.report.ObserveTrendUseCase
 import com.minibook.domain.usecase.report.ReportTrend
@@ -34,10 +32,10 @@ enum class TrendChartKind {
 }
 
 /**
- * 报表图三态（图 1/2/3 各自的 Loading / Empty / Error / Success）。
+ * 报表图三态（图 1/2 各自的 Loading / Empty / Error / Success）。
  *
  * [Empty] 与 [Error] 均为对象态；[Success] 承载具体数据（[ReportTrend] /
- * `List<CategorySlice>` / [BalanceTrend]），由泛型 [T] 区分。
+ * `List<CategorySlice>`），由泛型 [T] 区分。
  */
 sealed interface ChartState<out T> {
 
@@ -57,17 +55,16 @@ sealed interface ChartState<out T> {
 /**
  * 报表页 ViewModel（TASK-036，UI §2 P-13 / §8.2）。
  *
- * 职责：组合三个报表 UseCase，将各自流折叠为 [ChartState]。页面状态：
+ * 职责：组合报表 UseCase，将各自流折叠为 [ChartState]。页面状态：
  * - 视图切换 [viewType]（月 / 年）与 [period]（`YearMonth` 当前月/年）；
  * - 图 1 形态 [trendKind]（折线 / 柱状）；
  * - 图 2 口径 [categoryType]（收入 / 支出占比切换）。
  *
- * 三图数据源：
+ * 数据源：
  * - 图 1 收支趋势 = [ObserveTrendUseCase] → [ReportsViewModel.trendState]；
- * - 图 2 分类占比 = [ObserveCategoryBreakdownUseCase] → [ReportsViewModel.categoryState]；
- * - 图 3 累计结余 = [ObserveBalanceTrendUseCase] → [ReportsViewModel.balanceState]。
+ * - 图 2 分类占比 = [ObserveCategoryBreakdownUseCase] → [ReportsViewModel.categoryState]。
  *
- * 账本维度：三个 UseCase 内部以 `currentLedgerId.flatMapLatest` 重订阅（切账本整页重算、
+ * 账本维度：UseCase 内部以 `currentLedgerId.flatMapLatest` 重订阅（切账本整页重算、
  * 仅当前账本，ARCHITECTURE §8.3）；VM 只负责把「视图/周期/口径」变化经 `flatMapLatest` 传到各自
  * UseCase，不感知账本。冷流语义与既有 observe 场景一致：`WhileSubscribed(5_000)` 保活，UI 离屏
  * 5 秒自动停订、回页重连刷新。
@@ -77,7 +74,6 @@ sealed interface ChartState<out T> {
 class ReportsViewModel @Inject constructor(
     observeTrend: ObserveTrendUseCase,
     observeCategoryBreakdown: ObserveCategoryBreakdownUseCase,
-    observeBalanceTrend: ObserveBalanceTrendUseCase,
 ) : ViewModel() {
 
     /** 视图粒度：月 / 年（默认月）。 */
@@ -112,16 +108,6 @@ class ReportsViewModel @Inject constructor(
             .flatMapLatest { (type, view, p) -> observeCategoryBreakdown.observe(type, p, view) }
             .map { slices ->
                 if (slices.isEmpty()) ChartState.Empty else ChartState.Success(slices)
-            }
-            .catch { e -> emitChartError(e) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChartState.Loading)
-
-    /** 图 3 累计结余走势三态。 */
-    val balanceState: StateFlow<ChartState<BalanceTrend>> =
-        combine(_viewType, _period) { view, p -> view to p }
-            .flatMapLatest { (view, p) -> observeBalanceTrend.observe(p, view) }
-            .map { balance ->
-                if (balance.isEmpty) ChartState.Empty else ChartState.Success(balance)
             }
             .catch { e -> emitChartError(e) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChartState.Loading)
