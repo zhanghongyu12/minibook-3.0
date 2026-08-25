@@ -3,7 +3,7 @@ package com.minibook.domain.model
 /**
  * 内置分类种子常量（TASK-011），对齐 DATABASE §8.1 / §8.2 两张表逐行一致。
  *
- * 18 条模板（12 支出 + 6 收入）作为**不可变常量**：`id`/`ledgerId`/`createdAt`/`updatedAt`
+ * 24 条模板（16 支出 + 8 收入）作为**不可变常量**：`id`/`ledgerId`/`createdAt`/`updatedAt`
  * 以空串占位（此时**不含具体 UUID**），克隆时由
  * [com.minibook.domain.usecase.category.CloneBuiltInCategoriesUseCase] 为**每个账本独立**
  * 生成 UUID + 账本 ID + 实际时间戳（DATABASE §8.3：不同账本的同名内置分类 id 不同）。
@@ -25,7 +25,7 @@ object BuiltInCategories {
     /** 模板占位时间戳：createdAt/updatedAt 在克隆时填实际值（DATABASE §9.5 ISO-8601）。 */
     private const val PLACEHOLDER_TIMESTAMP: String = ""
 
-    /** 内置支出分类模板（12），顺序即 DATABASE §8.1 展示顺序；「其他」order=99。 */
+    /** 内置支出分类模板（16），顺序即 DATABASE §8.1 展示顺序；「其他」order=99。 */
     val EXPENSE: List<Category> = listOf(
         Category(
             id = PLACEHOLDER_ID,
@@ -162,6 +162,54 @@ object BuiltInCategories {
         Category(
             id = PLACEHOLDER_ID,
             ledgerId = PLACEHOLDER_ID,
+            name = "美团",
+            icon = "🥡",
+            color = "#FFB300",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 20,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "转账",
+            icon = "💸",
+            color = "#7F8C8D",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 21,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "缴费",
+            icon = "💡",
+            color = "#F4D03F",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 22,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "付款",
+            icon = "💳",
+            color = "#EC7063",
+            type = CategoryType.EXPENSE,
+            isBuiltIn = true,
+            order = 23,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
             name = "其他",
             icon = "🔧",
             color = "#AEB6BF",
@@ -173,7 +221,7 @@ object BuiltInCategories {
         ),
     )
 
-    /** 内置收入分类模板（6），顺序即 DATABASE §8.2 展示顺序；「其他」order=99。 */
+    /** 内置收入分类模板（8），顺序即 DATABASE §8.2 展示顺序；「其他」order=99。 */
     val INCOME: List<Category> = listOf(
         Category(
             id = PLACEHOLDER_ID,
@@ -238,6 +286,30 @@ object BuiltInCategories {
         Category(
             id = PLACEHOLDER_ID,
             ledgerId = PLACEHOLDER_ID,
+            name = "收款",
+            icon = "📥",
+            color = "#5DADE2",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 20,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
+            name = "退款",
+            icon = "↩️",
+            color = "#58D68D",
+            type = CategoryType.INCOME,
+            isBuiltIn = true,
+            order = 21,
+            createdAt = PLACEHOLDER_TIMESTAMP,
+            updatedAt = PLACEHOLDER_TIMESTAMP,
+        ),
+        Category(
+            id = PLACEHOLDER_ID,
+            ledgerId = PLACEHOLDER_ID,
             name = "其他",
             icon = "💵",
             color = "#1ABC9C",
@@ -249,6 +321,6 @@ object BuiltInCategories {
         ),
     )
 
-    /** 全量内置模板（18）：支出在前、收入在后；克隆/校验共用（DATABASE §8 两表总和）。 */
+    /** 全量内置模板（24）：支出在前、收入在后；克隆/校验共用（DATABASE §8 两表总和）。 */
     val ALL: List<Category> = EXPENSE + INCOME
 }

@@ -8,6 +8,7 @@ package com.minibook.domain.model
  * - [existing]：已存在（幂等去重：既有 externalId 相交 + 文件内重复 + IGNORE 兜底，DEC-019）；
  * - [neutral]：不计收支/「/」/空（NEUTRAL）跳过数；
  * - [closed]：支付宝「交易关闭」跳过数；
+ * - [zeroAmount]：金额为 0 的支付成功订单（ZERO_AMOUNT）跳过数；
  * - [parseErrors]：解析失败逐条明细（行号+原因，PARSE_ERROR）；
  * - [unrecognized]：未识别格式（零落库）标记。
  *
@@ -18,6 +19,7 @@ data class BillImportResult(
     val existing: Int = 0,
     val neutral: Int = 0,
     val closed: Int = 0,
+    val zeroAmount: Int = 0,
     val parseErrors: List<ParseSkippedRow> = emptyList(),
     val unrecognized: Boolean = false,
 )

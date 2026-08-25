@@ -86,7 +86,7 @@ class AlipayCsvParserTest {
 
         // PARSE_ERROR 明细含行号 + 细节。
         val parseError = success.skipped.single { it.reason == ImportSkipReason.PARSE_ERROR }
-        assertEquals("金额非法或非正: abc", parseError.detail)
+        assertEquals("金额非法: abc", parseError.detail)
     }
 
     @Test
@@ -102,15 +102,17 @@ class AlipayCsvParserTest {
     }
 
     @Test
-    fun `金额非法或非正与空单号均为 PARSE_ERROR`() {
+    fun `金额 0 为 ZERO_AMOUNT - 负金额与空单号为 PARSE_ERROR`() {
         val csv = buildString {
             appendLine("交易时间,收/支,金额,交易订单号")
-            appendLine("2026-08-20 12:00:00,支出,0.00,单号1")     // 非正金额
-            appendLine("2026-08-20 12:00:00,支出,-5.00,单号2")    // 负金额（转分报错）
-            appendLine("2026-08-20 12:00:00,支出,5.00,   ")       // 空单号
+            appendLine("2026-08-20 12:00:00,支出,0.00,单号1")     // 0 元 → ZERO_AMOUNT
+            appendLine("2026-08-20 12:00:00,支出,-5.00,单号2")    // 负金额（转分报错）→ PARSE_ERROR
+            appendLine("2026-08-20 12:00:00,支出,5.00,   ")       // 空单号 → PARSE_ERROR
         }
         val success = assertSuccess(decode(csv))
         assertTrue(success.rows.isEmpty())
-        assertEquals(3, success.skipped.count { it.reason == ImportSkipReason.PARSE_ERROR })
+        val zero = success.skipped.single { it.reason == ImportSkipReason.ZERO_AMOUNT }
+        assertEquals("金额为 0", zero.detail)
+        assertEquals(2, success.skipped.count { it.reason == ImportSkipReason.PARSE_ERROR })
     }
 }

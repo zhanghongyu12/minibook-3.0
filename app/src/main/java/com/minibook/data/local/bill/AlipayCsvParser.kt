@@ -21,7 +21,7 @@ import java.io.Reader
  *   「交易时间 + 收/支 + 金额」三必需列，前导说明行数量变化不影响解析；
  * - 字段 `trim()`（含交易订单号尾部 `\t`）；金额 `strip` 后 `MoneyFormatter.toFen`；
  * - 过滤（行级，逐条计数）：收/支=不计收支/「/」/空→NEUTRAL；交易状态=交易关闭→CLOSED；
- *   时间缺失/金额非法或非正/交易订单号空→PARSE_ERROR（PRD §F-12 过滤规则）。
+ *   金额为 0→ZERO_AMOUNT；时间缺失/金额非法(负或非数字)/交易订单号空→PARSE_ERROR（PRD §F-12 过滤规则）。
  */
 object AlipayCsvParser : BillParser {
 
@@ -89,11 +89,14 @@ object AlipayCsvParser : BillParser {
         val date: String = BillText.normalizeDate(cell(BillColumn.DATE))
             ?: return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "交易时间缺失或非法")
 
-        // 4) 金额：strip 后转分；非法/非正 → PARSE_ERROR。
+        // 4) 金额：strip 后转分；非法(负或非数字) → PARSE_ERROR；0 分 → ZERO_AMOUNT（0 元购/退款归零无需记账）。
         val amountRaw = cell(BillColumn.AMOUNT)
         val amountFen: Long? = BillText.amountToFen(amountRaw)
-        if (amountFen == null || amountFen <= 0L) {
-            return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "金额非法或非正: ${amountRaw.ifEmpty { "空" }}")
+        if (amountFen == null) {
+            return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "金额非法: ${amountRaw.ifEmpty { "空" }}")
+        }
+        if (amountFen == 0L) {
+            return RowOutcome.Skip(ImportSkipReason.ZERO_AMOUNT, "金额为 0")
         }
 
         // 5) 交易订单号 → externalId；空 → PARSE_ERROR（DEC-015 #6）。

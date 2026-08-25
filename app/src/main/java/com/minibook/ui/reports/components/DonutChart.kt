@@ -1,8 +1,13 @@
 package com.minibook.ui.reports.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -10,9 +15,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.minibook.domain.model.CategoryAgg
+import com.minibook.util.MoneyFormatter
+import kotlin.math.atan2
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * 环形占比图（报表·分类占比，UI §8.2 C-29）。
@@ -32,8 +46,21 @@ fun DonutChart(
     modifier: Modifier = Modifier,
 ) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    Canvas(modifier) {
-        drawDonut(slices, trackColor)
+    val centerTextColor = MaterialTheme.colorScheme.onSurface
+    val centerTextStyle = MaterialTheme.typography.labelSmall
+    val textMeasurer = rememberTextMeasurer()
+
+    // 点击选中的切片下标（A2「点击看数值」）；null = 未选中，点出环带/角度未落切片即清空。
+    var selectedIndex by remember(slices) { mutableStateOf<Int?>(null) }
+
+    Canvas(
+        modifier.pointerInput(slices) {
+            detectTapGestures { offset ->
+                selectedIndex = hitTestSlice(offset, slices)
+            }
+        },
+    ) {
+        drawDonut(slices, trackColor, selectedIndex, textMeasurer, centerTextStyle, centerTextColor)
     }
 }
 
@@ -73,8 +100,51 @@ internal fun percentText(partFen: Long, totalFen: Long): String {
     return "${perMille / 10}.${perMille % 10}%"
 }
 
-private fun DrawScope.drawDonut(slices: List<DonutSlice>, trackColor: Color) {
+/**
+ * 环形命中检测（A2）：点相对圆心距离落在环带内（stroke 28dp 的内外半径间）且
+ * `atan2` 角度落到某切片 sweep 区间 → 选中该切片下标；否则 null。
+ */
+private fun PointerInputScope.hitTestSlice(offset: Offset, slices: List<DonutSlice>): Int? {
+    val total = slices.sumOf { it.valueFen }
+    if (total <= 0L) return null
+
     val strokeWidth = 28.dp.toPx()
+    val diameter = min(size.width.toFloat(), size.height.toFloat())
+    val radius = (diameter / 2f - strokeWidth / 2f).coerceAtLeast(1f)
+    val centerX = size.width / 2f
+    val centerY = size.height / 2f
+
+    val dx = offset.x - centerX
+    val dy = offset.y - centerY
+    val dist = sqrt(dx * dx + dy * dy)
+    val inner = (radius - strokeWidth / 2f).coerceAtLeast(0f)
+    val outer = radius + strokeWidth / 2f
+    if (dist < inner || dist > outer) return null
+
+    // 角度：0° = 右（+x），顺时针增长；drawDonut 从 -90°（12 点方向）起 sweep。
+    val deg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+    val fromTop = ((deg + 90f) % 360f + 360f) % 360f
+
+    var start = 0f
+    slices.forEachIndexed { i, s ->
+        if (s.valueFen <= 0L) return@forEachIndexed
+        val sweep = (s.valueFen.toDouble() / total.toDouble() * 360f).toFloat()
+        if (fromTop >= start && fromTop < start + sweep) return i
+        start += sweep
+    }
+    return null
+}
+
+private fun DrawScope.drawDonut(
+    slices: List<DonutSlice>,
+    trackColor: Color,
+    selectedIndex: Int?,
+    textMeasurer: TextMeasurer,
+    centerTextStyle: TextStyle,
+    centerTextColor: Color,
+) {
+    val strokeWidth = 28.dp.toPx()
+    val selectedStrokeWidth = 34.dp.toPx()
     val diameter = min(size.width, size.height)
     val radius = (diameter / 2f - strokeWidth / 2f).coerceAtLeast(1f)
     val topLeft = Offset(
@@ -99,8 +169,11 @@ private fun DrawScope.drawDonut(slices: List<DonutSlice>, trackColor: Color) {
     if (total <= 0L) return
 
     var start = -90f
-    slices.filter { it.valueFen > 0L }.forEach { slice ->
+    slices.forEachIndexed { i, slice ->
+        if (slice.valueFen <= 0L) return@forEachIndexed
         val sweep = (slice.valueFen.toDouble() / total.toDouble() * 360f).toFloat()
+        // 选中切片加粗 28dp → 34dp，其余仍 28dp（金额语义色不动）。
+        val width = if (i == selectedIndex) selectedStrokeWidth else strokeWidth
         drawArc(
             color = slice.color,
             startAngle = start,
@@ -108,8 +181,38 @@ private fun DrawScope.drawDonut(slices: List<DonutSlice>, trackColor: Color) {
             useCenter = false,
             topLeft = topLeft,
             size = arcSize,
-            style = stroke,
+            style = Stroke(width = width, cap = StrokeCap.Butt),
         )
         start += sweep
+    }
+
+    // 选中切片：环心画 分类名 + 金额 + 占比（居中 drawText）。
+    val index = selectedIndex ?: return
+    val slice = slices.getOrNull(index) ?: return
+    drawDonutCenterText(slice, total, textMeasurer, centerTextStyle, centerTextColor)
+}
+
+/** 环心三行文本（分类名 / 金额 / 占比），垂直居中、水平逐行居中（A2）。 */
+private fun DrawScope.drawDonutCenterText(
+    slice: DonutSlice,
+    total: Long,
+    textMeasurer: TextMeasurer,
+    style: TextStyle,
+    color: Color,
+) {
+    val textStyle = style.copy(color = color)
+    val lines = listOf(
+        slice.label,
+        MoneyFormatter.formatFen(slice.valueFen),
+        percentText(slice.valueFen, total),
+    )
+    val layouts = lines.map { textMeasurer.measure(it, textStyle) }
+    val lineHeight = layouts.maxOfOrNull { it.size.height } ?: return
+    val centerX = size.width / 2f
+    val centerY = size.height / 2f
+    var cursorY = centerY - lineHeight * lines.size / 2f
+    layouts.forEachIndexed { i, layout ->
+        drawText(textMeasurer, lines[i], Offset(centerX - layout.size.width / 2f, cursorY), textStyle)
+        cursorY += lineHeight
     }
 }

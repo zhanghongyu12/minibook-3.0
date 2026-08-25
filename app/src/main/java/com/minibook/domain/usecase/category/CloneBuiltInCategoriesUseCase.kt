@@ -25,7 +25,7 @@ class CloneBuiltInCategoriesUseCase @Inject constructor(
 ) {
 
     /**
-     * 为 [ledgerId] 账本克隆 18 条内置分类（12 支出 + 6 收入，DATABASE §8）。
+     * 为 [ledgerId] 账本克隆 24 条内置分类（16 支出 + 8 收入，DATABASE §8）。
      *
      * @param ledgerId 目标账本 id；该账本已有分类（`countByLedger>0`）时直接返回（幂等）。
      */

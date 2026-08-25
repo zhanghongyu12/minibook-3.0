@@ -17,10 +17,10 @@ import kotlinx.coroutines.flow.map
 /**
  * Room 数据源聚合标记（TASK-008），对齐 API §2。
  *
- * 语义：标识「Room 本地实现」这一聚合入口。**本标记不继承 6 个 `*DataSource` 接口**——
+ * 语义：标识「Room 本地实现」这一聚合入口。**本标记不继承 7 个 `*DataSource` 接口**——
  * `TransactionDataSource.getById(id): Transaction?` 与 `LedgerDataSource.getById(id): Ledger?`
  * 同签名（`getById(String)`）异返回类型，JVM 方法签名不含返回类型，单类无法同时实现；
- * 故 [RoomDataSourceImpl] 直接实现 5 接口（Transaction/Debt/Category/Budget/SyncChange），
+ * 故 [RoomDataSourceImpl] 直接实现 6 接口（Transaction/Debt/Category/Budget/SyncChange/UserCategoryRule），
  * `LedgerDataSource` 由独立 [LedgerDataSourceAdapter] 实现（同一 DatabaseGate，见 RoomDataSourceImpl）。
  */
 interface RoomDataSource {

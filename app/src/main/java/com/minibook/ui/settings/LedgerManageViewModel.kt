@@ -31,11 +31,11 @@ import kotlinx.coroutines.launch
  *   TASK-024/025）；当前账本 id 用于行高亮与「删除当前账本前先切换」判定。
  * - 切换：[switch] 纯状态写（[SwitchLedgerUseCase] 写 DataStore，全 app `flatMapLatest` Flow
  *   自动重订阅，ARCHITECTURE §8.3）。
- * - 新建：[create] 单调用 [CreateLedgerUseCase]——同一 DB 事务内 insert + 克隆 18 内置分类 +
+ * - 新建：[create] 单调用 [CreateLedgerUseCase]——同一 DB 事务内 insert + 克隆 24 内置分类 +
  *   `setCurrentLedgerId` 原子完成（新建后自动切换，ARCHITECTURE §8.4）。
  * - 删除：[delete] 默认账本拒绝（snackbar 兜底，UI 已隐藏入口）；删除当前非默认账本前先切到
  *   默认账本，避免「无当前账本」悬空态（[DeleteLedgerUseCase] 明确不承载切换，见其 KDoc）；
- *   随后单调用 [DeleteLedgerUseCase]（事务内 4 表清数据 + 删 Ledger 行，且保证至少保留一个）。
+ *   随后单调用 [DeleteLedgerUseCase]（事务内 5 表清数据 + 删 Ledger 行，且保证至少保留一个）。
  * - 编辑：[update] 直接经 [LedgerRepository.update]（TASK-029 决定：无 UpdateLedgerUseCase，
  *   VM 注入 Repository 直更）更新 name/icon/color 与 updatedAt。
  *
@@ -97,7 +97,7 @@ class LedgerManageViewModel @Inject constructor(
     /**
      * 新建账本。
      *
-     * 单调用 [CreateLedgerUseCase]：同一 DB 事务内 insert + 克隆 18 内置分类 +
+     * 单调用 [CreateLedgerUseCase]：同一 DB 事务内 insert + 克隆 24 内置分类 +
      * `setCurrentLedgerId` 原子完成（新建后自动切为当前账本，TASK-012 验收）。
      * 成功 → snackbar + emit [saved]（UI 关编辑器）。
      *
@@ -122,7 +122,7 @@ class LedgerManageViewModel @Inject constructor(
      *
      * 默认账本在此兜底拒绝（UI 已隐藏入口）；删除前若目标为当前账本，先切到默认账本
      * （避免「无当前账本」悬空态，[DeleteLedgerUseCase] 不承载切换）。随后单调用
-     * [DeleteLedgerUseCase]——事务内清 4 表数据 + 删 Ledger 行，且业务守卫保证至少保留一个、
+     * [DeleteLedgerUseCase]——事务内清 5 表数据 + 删 Ledger 行，且业务守卫保证至少保留一个、
      * 默认账本不可删（TASK-012 验收）。
      *
      * @param ledger 待删除账本（须非默认）。

@@ -6,6 +6,7 @@ import com.minibook.data.datasource.DebtDataSource
 import com.minibook.data.datasource.LedgerDataSource
 import com.minibook.data.datasource.SyncChangeDataSource
 import com.minibook.data.datasource.TransactionDataSource
+import com.minibook.data.datasource.UserCategoryRuleDataSource
 import com.minibook.data.local.datasource.LedgerDataSourceAdapter
 import com.minibook.data.local.datasource.RoomDataSourceImpl
 import com.minibook.domain.repository.BudgetRepository
@@ -18,6 +19,8 @@ import com.minibook.domain.repository.DebtRepository
 import com.minibook.domain.repository.DebtRepositoryImpl
 import com.minibook.domain.repository.TransactionRepository
 import com.minibook.domain.repository.TransactionRepositoryImpl
+import com.minibook.domain.repository.UserCategoryRuleRepository
+import com.minibook.domain.repository.UserCategoryRuleRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -26,8 +29,8 @@ import dagger.hilt.components.SingletonComponent
 /**
  * 数据源装配（ARCHITECTURE §6.3 / API §2、TASK-008）。
  *
- * 6 个 `*DataSource` 契约全部 `@Binds` 到本期 Room 实现：
- * - 5 个（Transaction/Debt/Category/Budget/SyncChange）→ [RoomDataSourceImpl]
+ * 7 个 `*DataSource` 契约全部 `@Binds` 到本期 Room 实现：
+ * - 6 个（Transaction/Debt/Category/Budget/SyncChange/UserCategoryRule）→ [RoomDataSourceImpl]
  *   （@Singleton，构造注入 DatabaseGate，见 [RoomDataSourceImpl] 类注释）；
  * - [LedgerDataSource] → [LedgerDataSourceAdapter]（因 `getById` 签名冲突独立成类，
  *   见 [RoomDataSource] 注释，二者共享同一 [com.minibook.data.local.security.DatabaseGate]）。
@@ -70,6 +73,12 @@ abstract class DataSourceModule {
 
     @Binds
     abstract fun bindLedgerRepository(impl: LedgerRepositoryImpl): LedgerRepository
+
+    @Binds
+    abstract fun bindUserCategoryRuleDataSource(impl: RoomDataSourceImpl): UserCategoryRuleDataSource
+
+    @Binds
+    abstract fun bindUserCategoryRuleRepository(impl: UserCategoryRuleRepositoryImpl): UserCategoryRuleRepository
 
     @Binds
     abstract fun bindSyncChangeDataSource(impl: RoomDataSourceImpl): SyncChangeDataSource

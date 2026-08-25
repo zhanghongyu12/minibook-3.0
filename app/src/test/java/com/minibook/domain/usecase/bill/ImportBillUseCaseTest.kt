@@ -18,6 +18,10 @@ import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
+import com.minibook.domain.model.UserCategoryRule
+import com.minibook.domain.repository.CategoryRepository
+import com.minibook.domain.repository.UserCategoryRuleRepository
+import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
 import com.minibook.testutil.FakeTransactionRunner
 import java.io.StringReader
 import java.time.YearMonth
@@ -82,6 +86,29 @@ class ImportBillUseCaseTest {
         override suspend fun countTransactionsByCategory(categoryId: String): Int = throw NotImplementedError()
     }
 
+    /** 供 [EnsureBuiltInCategoriesUseCase] 使用的极简 CategoryRepository：只实现 ensure 读取/写入路径，其余抛异常。 */
+    private class FakeCategoryRepositoryForEnsure : CategoryRepository {
+        override suspend fun upsertList(categories: List<Category>) = Unit
+        override fun observeByLedger(ledgerId: String, type: CategoryType?): Flow<List<Category>> = flowOf(emptyList())
+        override suspend fun insert(category: Category): String = throw NotImplementedError()
+        override suspend fun update(category: Category): Unit = throw NotImplementedError()
+        override suspend fun deleteById(id: String): Unit = throw NotImplementedError()
+        override suspend fun deleteByLedger(ledgerId: String): Unit = throw NotImplementedError()
+        override suspend fun countByLedger(ledgerId: String): Long = throw NotImplementedError()
+        override suspend fun countTransactionsByCategory(categoryId: String): Int = throw NotImplementedError()
+        override suspend fun deleteCategoryWithMigration(ledgerId: String, categoryId: String, targetCategoryId: String): Unit = throw NotImplementedError()
+    }
+
+    /** 极简 [UserCategoryRuleRepository]：可配置返回规则，upsert 记录入参。 */
+    private class FakeUserCategoryRuleRepository(
+        var rules: List<UserCategoryRule> = emptyList(),
+    ) : UserCategoryRuleRepository {
+        var upserted: List<UserCategoryRule> = emptyList()
+        override suspend fun upsertRule(rule: UserCategoryRule) { upserted = upserted + rule }
+        override suspend fun getRules(ledgerId: String): List<UserCategoryRule> = rules
+        override suspend fun deleteByLedger(ledgerId: String): Unit = throw NotImplementedError()
+    }
+
     private class FakeBillParser(
         override val format: TransactionSource,
         private val result: BillParseResult,
@@ -127,11 +154,12 @@ class ImportBillUseCaseTest {
         amountFen: Long,
         type: TransactionType = TransactionType.EXPENSE,
         platformCategory: String? = null,
+        counterparty: String? = null,
     ) = ParsedBillRow(
         date = "2026-08-20",
         type = type,
         amountFen = amountFen,
-        counterparty = null,
+        counterparty = counterparty,
         paymentMethod = null,
         description = "desc",
         externalId = externalId,
@@ -143,12 +171,15 @@ class ImportBillUseCaseTest {
         catDs: FakeCategoryDataSource,
         parser: BillParser?,
         runner: TransactionRunner = FakeTransactionRunner(),
+        rules: List<UserCategoryRule> = emptyList(),
     ): ImportBillUseCase = ImportBillUseCase(
         transactionRunner = runner,
         filePreparer = FakeBillFilePreparer(),
         parserFactory = FakeBillParserFactory(parser),
         categoryDataSource = catDs,
         transactionDataSource = txDs,
+        ensureBuiltInCategories = EnsureBuiltInCategoriesUseCase(FakeCategoryRepositoryForEnsure()),
+        userCategoryRuleRepository = FakeUserCategoryRuleRepository(rules),
         ioDispatcher = UnconfinedTestDispatcher(),
     )
 
@@ -220,7 +251,7 @@ class ImportBillUseCaseTest {
     }
 
     @Test
-    fun `全跳过 - 汇总 neutral 与 closed 不落库`() = runTest {
+    fun `全跳过 - 汇总 neutral closed zeroAmount 不落库`() = runTest {
         val txDs = FakeTransactionDataSource()
         val catDs = FakeCategoryDataSource()
         val parser = FakeBillParser(
@@ -231,6 +262,7 @@ class ImportBillUseCaseTest {
                     ParseSkippedRow(1, ImportSkipReason.NEUTRAL, "收/支=不计收支"),
                     ParseSkippedRow(2, ImportSkipReason.NEUTRAL, "收/支=/"),
                     ParseSkippedRow(3, ImportSkipReason.CLOSED, "交易状态=交易关闭"),
+                    ParseSkippedRow(4, ImportSkipReason.ZERO_AMOUNT, "金额为 0"),
                 ),
             ),
         )
@@ -241,7 +273,44 @@ class ImportBillUseCaseTest {
         assertEquals(0, result.existing)
         assertEquals(2, result.neutral)
         assertEquals(1, result.closed)
+        assertEquals(1, result.zeroAmount)
         assertTrue(txDs.inserted.isEmpty())
+    }
+
+    @Test
+    fun `自学习规则命中优先于类型映射`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource().apply {
+            categories = listOf(
+                category("cat-eat", "餐饮", CategoryType.EXPENSE),
+                category("cat-learn", "交通", CategoryType.EXPENSE),
+                category("cat-other-exp", "其他", CategoryType.EXPENSE),
+            )
+        }
+        val parser = FakeBillParser(
+            format = TransactionSource.ALIPAY_IMPORT,
+            result = BillParseResult.Success(
+                // 平台分类「餐饮美食」本应映射「餐饮」，但对手方「北京面馆」命中自学习规则 keyword「面馆」→ 交通。
+                rows = listOf(row("alipay:1", 100, platformCategory = "餐饮美食", counterparty = "北京面馆")),
+                skipped = emptyList(),
+            ),
+        )
+        val rules = listOf(
+            UserCategoryRule(
+                id = "r1",
+                ledgerId = LEDGER,
+                source = TransactionSource.ALIPAY_IMPORT,
+                keyword = "面馆",
+                categoryId = "cat-learn",
+                createdAt = "2026-08-01T00:00:00Z",
+                updatedAt = "2026-08-01T00:00:00Z",
+            ),
+        )
+
+        val result = useCase(txDs, catDs, parser, rules = rules)("content://bill.csv", LEDGER)
+
+        assertEquals(1, result.success)
+        assertEquals("cat-learn", txDs.inserted[0].categoryId)
     }
 
     @Test

@@ -98,7 +98,7 @@ fun ImportSummaryCard(
     result: BillImportResult,
     modifier: Modifier = Modifier,
 ) {
-    val skipped = result.existing + result.neutral + result.closed + result.parseErrors.size
+    val skipped = result.existing + result.neutral + result.closed + result.zeroAmount + result.parseErrors.size
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
@@ -139,7 +139,7 @@ fun ImportSummaryCard(
 /**
  * 跳过分原因计数区（UI §9.5 C-36）。
  *
- * 四行固定计数（已存在 / 不计收支 / 交易关闭 / 解析失败，§9.6「未命中即 0 笔仍占位保四行齐整」）；
+ * 五行固定计数（已存在 / 不计收支 / 交易关闭 / 0元订单 / 解析失败，§9.6「未命中即 0 笔仍占位保五行齐整」）；
  * 「解析失败」为可折叠分组：`≤3` 条默认展开、`>3` 默认折叠，展开逐条「第 k 行 · 原因」
  * （k = [ParseSkippedRow.rowNumber]，原因按 [parseErrorLabel] 映射为精确中文，§9.6）。
  *
@@ -159,6 +159,7 @@ fun SkippedBreakdownSection(
             ReasonCountRow(label = "已存在", count = result.existing)
             ReasonCountRow(label = "不计收支", count = result.neutral)
             ReasonCountRow(label = "交易关闭", count = result.closed)
+            ReasonCountRow(label = "0元订单", count = result.zeroAmount)
             ParseErrorBlock(parseErrors = result.parseErrors)
         }
     }

@@ -1,19 +1,27 @@
 package com.minibook.ui.reports.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -22,11 +30,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.minibook.domain.model.PeriodTrend
 import com.minibook.ui.theme.TabularFigures
+import com.minibook.util.MoneyFormatter
 import kotlin.math.absoluteValue
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.pow
+import kotlin.math.round
 
 /** 单条折线的数据点标记上限；超过只画线不画点，避免视觉噪音。 */
 private const val MAX_MARKER_POINTS = 24
@@ -58,6 +68,8 @@ fun LineChart(
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val zeroColor = MaterialTheme.colorScheme.outline
     val textColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val tooltipBg = MaterialTheme.colorScheme.surface
+    val tooltipText = MaterialTheme.colorScheme.onSurface
     val labelStyle = MaterialTheme.typography.labelSmall.merge(TabularFigures)
 
     // 各系列值截断到桶数，避免数据点与“水桶”索引错位。
@@ -66,11 +78,40 @@ fun LineChart(
     val allValues = clamped.flatMap { it.valuesFen }
     val axis = remember(allValues) { buildYAxis(allValues) }
 
-    Canvas(modifier.fillMaxWidth().height(height)) {
+    // 点击选中的桶下标（A2「点击看数值」）；null = 未选中，点出 plot 区域/越界即清空。
+    var selectedIndex by remember(buckets, series) { mutableStateOf<Int?>(null) }
+
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(height)
+            .pointerInput(buckets, series) {
+                detectTapGestures { offset ->
+                    selectedIndex = hitTestBucket(offset, buckets.size)
+                }
+            },
+    ) {
         val plot = plotArea()
         drawYGridAndLabels(axis, plot, textMeasurer, labelStyle, gridColor, zeroColor, textColor)
         drawXLabels(buckets, plot, textMeasurer, labelStyle, textColor)
         clamped.forEach { drawSeries(it, axis, plot, showPoints, pointCount) }
+        selectedIndex?.let { index ->
+            if (index in buckets.indices) {
+                drawSelectionOverlay(
+                    index = index,
+                    axis = axis,
+                    clamped = clamped,
+                    buckets = buckets,
+                    plot = plot,
+                    textMeasurer = textMeasurer,
+                    labelStyle = labelStyle,
+                    referenceColor = gridColor,
+                    tooltipBg = tooltipBg,
+                    tooltipText = tooltipText,
+                    tooltipBorder = gridColor,
+                )
+            }
+        }
     }
 }
 
@@ -215,6 +256,108 @@ internal fun DrawScope.yFor(fen: Long, axis: YAxis, plot: PlotArea): Float {
 internal fun DrawScope.xCenterFor(index: Int, bucketCount: Int, plot: PlotArea): Float =
     if (bucketCount < 2) plot.left + plot.width / 2f
     else plot.left + (index + 0.5f) / bucketCount * plot.width
+
+/**
+ * 点击命中检测（A2）：用 [PointerInputScope.size] 复刻 [DrawScope.plotArea] 的 px 平面
+ * （left=46dp/right=size.width-10dp/top=10dp/bottom=size.height-28dp），x 反解最近桶
+ * `round((x-left)/width*count - 0.5)`；点出 plot 区域或桶越界 → null（清空选中）。
+ */
+private fun PointerInputScope.hitTestBucket(offset: Offset, bucketCount: Int): Int? {
+    if (bucketCount <= 0) return null
+    val left = 46.dp.toPx()
+    val right = size.width.toFloat() - 10.dp.toPx()
+    val top = 10.dp.toPx()
+    val bottom = size.height.toFloat() - 28.dp.toPx()
+    if (offset.x < left || offset.x > right || offset.y < top || offset.y > bottom) return null
+    val width = (right - left).coerceAtLeast(1f)
+    val index = round((offset.x - left) / width * bucketCount - 0.5f).toInt()
+    return if (index in 0 until bucketCount) index else null
+}
+
+/**
+ * 选中态叠加层（A2）：竖参考线（outlineVariant）+ 放大各系列选中点（3dp→5.5dp + surface 描边环）
+ * + 点上方 tooltip（首行桶标签，其后每系列「label: ¥金额」）。
+ */
+private fun DrawScope.drawSelectionOverlay(
+    index: Int,
+    axis: YAxis,
+    clamped: List<LineChartSeries>,
+    buckets: List<String>,
+    plot: PlotArea,
+    textMeasurer: TextMeasurer,
+    labelStyle: TextStyle,
+    referenceColor: Color,
+    tooltipBg: Color,
+    tooltipText: Color,
+    tooltipBorder: Color,
+) {
+    val x = xCenterFor(index, buckets.size, plot)
+
+    // 竖参考线（outlineVariant）。
+    drawLine(referenceColor, Offset(x, plot.top), Offset(x, plot.bottom), strokeWidth = 1.dp.toPx())
+
+    // 放大各系列选中点（含无 marker 的结余单系列：点击时补画选中点便于读数）。
+    clamped.forEach { s ->
+        val v = s.valuesFen.getOrNull(index) ?: return@forEach
+        val color = s.colorForValue?.invoke(v) ?: s.color
+        val center = Offset(x, yFor(v, axis, plot))
+        drawCircle(radius = 5.5.dp.toPx(), center = center, color = color)
+        drawCircle(
+            radius = 5.5.dp.toPx(),
+            center = center,
+            color = tooltipBg,
+            style = Stroke(width = 1.5.dp.toPx()),
+        )
+    }
+
+    // tooltip 文本行：首行桶标签，其后逐系列「label: ¥金额」。
+    val lines = mutableListOf(buckets.getOrNull(index).orEmpty())
+    clamped.forEach { s ->
+        val v = s.valuesFen.getOrNull(index) ?: return@forEach
+        lines += "${s.label}: ${MoneyFormatter.formatFen(v)}"
+    }
+    drawTooltip(lines, Offset(x, plot.top), plot, textMeasurer, labelStyle, tooltipBg, tooltipText, tooltipBorder)
+}
+
+/** 轻量 tooltip：浅色圆角底 + 多行文本，定位在锚点上方并水平钳在 plot 内（A2）。 */
+private fun DrawScope.drawTooltip(
+    lines: List<String>,
+    anchor: Offset,
+    plot: PlotArea,
+    textMeasurer: TextMeasurer,
+    style: TextStyle,
+    bg: Color,
+    textColor: Color,
+    border: Color,
+) {
+    if (lines.isEmpty()) return
+    val textStyle = style.copy(color = textColor)
+    val layouts = lines.map { textMeasurer.measure(it, textStyle) }
+    val lineHeight = layouts.maxOfOrNull { it.size.height } ?: return
+    val maxWidth = layouts.maxOfOrNull { it.size.width } ?: return
+    val padH = 6.dp.toPx()
+    val padV = 4.dp.toPx()
+    val width = maxWidth + padH * 2
+    val height = lineHeight * lines.size + padV * 2
+    val corner = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+
+    val x = (anchor.x - width / 2f).coerceIn(plot.left, (plot.right - width).coerceAtLeast(plot.left))
+    val y = plot.top + 4.dp.toPx()
+
+    drawRoundRect(color = bg, topLeft = Offset(x, y), size = Size(width, height), cornerRadius = corner)
+    drawRoundRect(
+        color = border,
+        topLeft = Offset(x, y),
+        size = Size(width, height),
+        cornerRadius = corner,
+        style = Stroke(width = 1.dp.toPx()),
+    )
+    var cursorY = y + padV
+    layouts.forEachIndexed { i, _ ->
+        drawText(textMeasurer, lines[i], Offset(x + padH, cursorY), textStyle)
+        cursorY += lineHeight
+    }
+}
 
 internal fun DrawScope.drawYGridAndLabels(
     axis: YAxis,

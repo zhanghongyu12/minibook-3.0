@@ -255,7 +255,7 @@ private fun TrendCard(
 private fun TrendChartContent(trend: ReportTrend, kind: TrendChartKind) {
     val incomeColor = LocalSemanticColors.current.income
     val expenseColor = LocalSemanticColors.current.expense
-    val buckets = trend.buckets
+    val buckets = trend.buckets.map(::shortBucketLabel)
 
     when (kind) {
         TrendChartKind.LINE -> LineChart(
@@ -390,7 +390,7 @@ private fun BalanceCard(state: ChartState<BalanceTrend>) {
                 val balance = state.value
                 val semantic = LocalSemanticColors.current
                 LineChart(
-                    buckets = balance.buckets,
+                    buckets = balance.buckets.map(::shortBucketLabel),
                     series = listOf(
                         LineChartSeries(
                             label = "累计结余",
@@ -453,3 +453,13 @@ private fun ChartLoadingBlock() {
 /** 解析 DB 分类色（`#RRGGBB`）→ Compose Color；非法格式回退 fallback（同工程 CategoryComponents）。 */
 private fun parseCategoryColor(colorHex: String, fallback: Color): Color =
     runCatching { Color(AndroidColor.parseColor(colorHex)) }.getOrDefault(fallback)
+
+/**
+ * X 轴时间桶标签缩短（A3，解决日期重叠）：长度 10（`yyyy-MM-dd`）→ `M/d`（月/日去前导 0，
+ * 如 `8/1`）；长度 7（`yyyy-MM`）→ `M月`；其余原样（不自创，仅在传给图表前对标签做表示层缩放）。
+ */
+private fun shortBucketLabel(bucket: String): String = when (bucket.length) {
+    10 -> "${bucket.substring(5, 7).trimStart('0')}/${bucket.substring(8, 10).trimStart('0')}"
+    7 -> "${bucket.substring(5, 7).trimStart('0')}月"
+    else -> bucket
+}

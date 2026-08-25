@@ -5,10 +5,13 @@ import com.minibook.domain.common.InvalidTransactionInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
+import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.repository.TransactionRepository
+import com.minibook.domain.usecase.category.UpsertUserCategoryRuleUseCase
 import com.minibook.util.TimeFormatter
 import com.minibook.util.Validators
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
 /**
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.first
 class UpdateTransactionUseCase @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val ledgerProvider: LedgerProvider,
+    private val upsertUserCategoryRule: UpsertUserCategoryRuleUseCase,
 ) {
 
     /**
@@ -63,5 +67,31 @@ class UpdateTransactionUseCase @Inject constructor(
                 updatedAt = TimeFormatter.nowIso(),
             ),
         )
+
+        learnCategoryIfChanged(existing, tx, ledgerId)
+    }
+
+    /**
+     * 自学习归类（C3）：仅当「导入交易（source ∈ {wechat_import, alipay_import}）的分类被手动改
+     * 且**确实变了**、且该交易 counterparty 非空」时，upsert 一条规则
+     * （keyword=交易对方全名、categoryId=新分类、source=交易 source）。
+     *
+     * 只学「改分类」这个动作：以 `existing.categoryId != updated.categoryId` 为唯一判据，
+     * 改金额/备注/日期等其它字段（分类未变）不触发；无 counterparty 的交易不学（C5）。
+     * 规则写入为尽力而为副作用，失败不阻断已完成的编辑保存（CancellationException 照常上抛）。
+     */
+    private suspend fun learnCategoryIfChanged(existing: Transaction, updated: Transaction, ledgerId: String) {
+        if (existing.categoryId == updated.categoryId) return
+        val source = existing.source
+        if (source != TransactionSource.WECHAT_IMPORT && source != TransactionSource.ALIPAY_IMPORT) return
+        val keyword = existing.counterparty?.trim().orEmpty()
+        if (keyword.isEmpty()) return
+        try {
+            upsertUserCategoryRule(ledgerId, source, keyword, updated.categoryId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 自学习为尽力而为副作用：规则写入失败不阻断分类变更结果（已落库）。
+        }
     }
 }

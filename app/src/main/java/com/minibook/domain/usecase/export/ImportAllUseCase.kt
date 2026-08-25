@@ -300,7 +300,8 @@ class ImportAllUseCase @Inject constructor(
         )
     }
 
-    /** 清空某账本全部业务数据（transactions/debts/categories/budgets，四表等价 DELETE）。 */
+    /** 清空某账本全部业务数据（transactions/debts/categories/budgets，四接口等价 DELETE；
+     *  经 RoomDataSourceImpl 共享 `deleteByLedger` 同时清空 user_category_rules，F-12 全量替换语义）。 */
     private suspend fun clearData(ledgerId: String) {
         transactionRepository.deleteByLedger(ledgerId)
         debtRepository.deleteByLedger(ledgerId)

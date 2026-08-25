@@ -122,6 +122,22 @@ class WechatXlsxParserTest {
     }
 
     @Test
+    fun `金额 0 为 ZERO_AMOUNT`() {
+        val shared = WechatXmlRows.decodeSharedStrings(sharedXml)
+        val xml = """
+            <worksheet><sheetData>
+            <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c><c r="E1" t="s"><v>4</v></c><c r="F1" t="s"><v>5</v></c><c r="G1" t="s"><v>6</v></c><c r="H1" t="s"><v>7</v></c><c r="I1" t="s"><v>8</v></c><c r="J1" t="s"><v>9</v></c><c r="K1" t="s"><v>10</v></c></row>
+            <row r="2"><c r="A2"><v>46259</v></c><c r="E2" t="s"><v>12</v></c><c r="F2"><v>0.00</v></c><c r="I2"><v>100000003</v></c></row>
+            </sheetData></worksheet>
+        """.trimIndent()
+        val decodedRows = WechatXmlRows.decodeSheet(xml, shared)
+        val success = assertSuccess(WechatXlsxParser.mapRows(decodedRows))
+        assertTrue(success.rows.isEmpty())
+        val zero = success.skipped.single { it.reason == ImportSkipReason.ZERO_AMOUNT }
+        assertEquals("金额为 0", zero.detail)
+    }
+
+    @Test
     fun `真实 zip 层 readEntry 贯通`() {
         val tmp = java.io.File.createTempFile("wechat", ".xlsx")
         try {

@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.first
  * 新建账本（TASK-012，ARCHITECTURE §8.4 新账本创建流程）。
  *
  * 流程：插入 Ledger 行 → **同一 DB 事务**（[TransactionRunner.runInTransaction]）内
- * 克隆 18 内置分类（[CloneBuiltInCategoriesUseCase]，内部幂等 `countByLedger==0` 守卫）
+ * 克隆 24 内置分类（[CloneBuiltInCategoriesUseCase]，内部幂等 `countByLedger==0` 守卫）
  * → 切换为当前账本（[LedgerDataStore.setCurrentLedgerId]）→ 返回新账本 id。
  *
  * **事务原子性（TASK-012 验收）**：`insert` + `clone` 整体包进事务；克隆任一失败 →

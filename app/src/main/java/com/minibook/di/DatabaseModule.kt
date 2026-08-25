@@ -8,6 +8,7 @@ import com.minibook.data.local.db.dao.DebtDao
 import com.minibook.data.local.db.dao.LedgerDao
 import com.minibook.data.local.db.dao.SyncChangeDao
 import com.minibook.data.local.db.dao.TransactionDao
+import com.minibook.data.local.db.dao.UserCategoryRuleDao
 import com.minibook.data.local.security.DatabaseGate
 import com.minibook.data.local.security.DatabaseProvider
 import com.minibook.data.local.security.KeyManager
@@ -87,4 +88,9 @@ object DatabaseModule {
     fun provideSyncChangeDao(gate: DatabaseGate): SyncChangeDao =
         gate.database?.syncChangeDao()
             ?: error("DatabaseGate 未解锁/未打开，无法提供 SyncChangeDao")
+
+    @Provides
+    fun provideUserCategoryRuleDao(gate: DatabaseGate): UserCategoryRuleDao =
+        gate.database?.userCategoryRuleDao()
+            ?: error("DatabaseGate 未解锁/未打开，无法提供 UserCategoryRuleDao")
 }

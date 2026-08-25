@@ -55,11 +55,11 @@ import com.minibook.ui.components.PrimaryFAB
  * - **点击行** → [LedgerManageViewModel.switch]（纯状态切换，全 app Flow 重订阅，
  *   ARCHITECTURE §8.3）；
  * - **新建** → [LedgerEditorSheet] 新建态（name/icon/color 三必填）→ VM create
- *   （事务克隆 18 分类 + 自动切换，TASK-012 验收）；
+ *   （事务克隆 24 分类 + 自动切换，TASK-012 验收）；
  * - **编辑** → 行尾「✏️」→ [LedgerEditorSheet] 编辑态（回填 name/icon/color）→
  *   VM update（[LedgerRepository.update]，TASK-029 决定）；
  * - **删除** → 行尾「🗑」（**默认账本不显示删除入口**）→ [ConfirmDialog]（C-18 danger，
- *   「将同时删除该账本下全部数据」）→ VM delete（[DeleteLedgerUseCase]，事务清 4 表 +
+ *   「将同时删除该账本下全部数据」）→ VM delete（[DeleteLedgerUseCase]，事务清 5 表 +
  *   删账本行，至少保留一个）。
  *
  * 空态：不应发生（TASK-011 Bootstrap 保证至少一个默认账本），仍以 [EmptyState] 兜底。

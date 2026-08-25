@@ -8,7 +8,7 @@ import androidx.room.PrimaryKey
  * 账本实体，对齐 DATABASE §4.4。
  *
  * isDefault 为 Boolean（INTEGER 0/1），默认 false；至少一个账本为默认。
- * 默认账本禁删；删除非默认账本 = 事务内按 ledgerId 清 4 表后删本行。
+ * 默认账本禁删；删除非默认账本 = 事务内按 ledgerId 清 5 表后删本行。
  */
 @Entity(
     tableName = "ledgers",

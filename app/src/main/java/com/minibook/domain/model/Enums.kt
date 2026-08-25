@@ -83,11 +83,13 @@ enum class TransactionSource(val value: String) {
  * - [EXISTS]：externalId 冲突/文件内重复（幂等去重，UseCase 计数，解析器不产出）；
  * - [NEUTRAL]：收/支 = 「不计收支」/「/」/空（微信中性行）；
  * - [CLOSED]：支付宝「交易状态 = 交易关闭」；
- * - [PARSE_ERROR]：时间缺失 / 金额非法或非正 / externalId 单号为空。
+ * - [ZERO_AMOUNT]：金额为 0 的支付成功订单（0 元购/退款归零，无需记账）；
+ * - [PARSE_ERROR]：时间缺失 / 金额非法(负或非数字) / externalId 单号为空。
  */
 enum class ImportSkipReason {
     EXISTS,
     NEUTRAL,
     CLOSED,
+    ZERO_AMOUNT,
     PARSE_ERROR,
 }

@@ -137,6 +137,6 @@ class EnumRoundTripTest {
         assertEquals(2, DebtDirection.entries.size)
         assertEquals(4, SyncStatus.entries.size)
         assertEquals(3, TransactionSource.entries.size)
-        assertEquals(4, ImportSkipReason.entries.size)
+        assertEquals(5, ImportSkipReason.entries.size)
     }
 }

@@ -8,6 +8,7 @@ import com.minibook.data.datasource.DebtDataSource
 import com.minibook.data.datasource.SyncChangeDataSource
 import com.minibook.data.datasource.TransactionDataSource
 import com.minibook.data.datasource.TransactionRunner
+import com.minibook.data.datasource.UserCategoryRuleDataSource
 import com.minibook.data.local.db.CategoryAggRow
 import com.minibook.data.local.db.PeriodTrendRow
 import com.minibook.data.local.db.dao.BudgetDao
@@ -15,6 +16,7 @@ import com.minibook.data.local.db.dao.CategoryDao
 import com.minibook.data.local.db.dao.DebtDao
 import com.minibook.data.local.db.dao.SyncChangeDao
 import com.minibook.data.local.db.dao.TransactionDao
+import com.minibook.data.local.db.dao.UserCategoryRuleDao
 import com.minibook.data.local.db.entity.BudgetEntity
 import com.minibook.data.local.db.entity.TransactionEntity
 import com.minibook.data.local.security.DatabaseProvider
@@ -23,6 +25,7 @@ import com.minibook.data.mapper.CategoryMapper
 import com.minibook.data.mapper.DebtMapper
 import com.minibook.data.mapper.SyncChangeMapper
 import com.minibook.data.mapper.TransactionMapper
+import com.minibook.data.mapper.UserCategoryRuleMapper
 import com.minibook.domain.model.Budget
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryAgg
@@ -35,6 +38,7 @@ import com.minibook.domain.model.SyncChange
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
+import com.minibook.domain.model.UserCategoryRule
 import java.time.Instant
 import java.time.YearMonth
 import java.util.UUID
@@ -46,10 +50,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
- * Room 数据源唯一实现（TASK-008），聚合 5 DAO 直接实现 5 个 `*DataSource` 接口。
+ * Room 数据源唯一实现（TASK-008），聚合 6 DAO 直接实现 6 个 `*DataSource` 接口。
  *
  * 结构说明：`TransactionDataSource/DebtDataSource/CategoryDataSource/BudgetDataSource/
- * SyncChangeDataSource` 直接实现；`LedgerDataSource` 因 `getById` 签名冲突（见 [RoomDataSource]）
+ * SyncChangeDataSource/UserCategoryRuleDataSource` 直接实现；`LedgerDataSource` 因 `getById` 签名冲突（见 [RoomDataSource]）
  * 由独立 [LedgerDataSourceAdapter] 实现，经 `DataSourceModule` 的 `@Binds` 装配。
  *
  * 锁周期安全（ARCHITECTURE §7.5 / DatabaseModule 注释）：本实现**不缓存 DAO 引用**，
@@ -70,9 +74,10 @@ import kotlinx.coroutines.flow.map
  *   防误删守卫（DEC-007）。方法内部经 [TransactionRunner] 事务包裹，**自身原子**
  *   （TASK-013 评审 W4，不依赖调用方闭合事务）。
  * - TASK-012 回溯补齐的 `deleteByLedger(ledgerId)` 亦同签名被 Transaction/Debt/Category/
- *   Budget 四接口共享（无法在单实现内按接口分发到不同表），单方法对四表各发等价 DELETE
- *   ——ledgerId 为各表外键维度，四表全部命中（删账本场景，DATABASE §4.4）；分类无
- *   `isBuiltIn=0` 守卫（删账本时内置分类一并清空），预算无「先删后插」语义。方法内部
+ *   Budget/UserCategoryRule 五接口共享（无法在单实现内按接口分发到不同表），单方法对五表各发等价 DELETE
+ *   ——ledgerId 为各表外键维度，五表全部命中（删账本场景，DATABASE §4.4）；分类无
+ *   `isBuiltIn=0` 守卫（删账本时内置分类一并清空），预算无「先删后插」语义，
+ *   user_category_rules 随账本一并清空（F-12 分类自学习规则，C5）。方法内部
  *   同样经 [TransactionRunner] 事务包裹，**自身原子**（TASK-013 评审 W4）。
  * - 无 ledgerId 入参的 `getById(id)` 经 `gate.database.openHelper.writableDatabase` 直接查询
  *   （Room 官方逃生舱）；`Category.observeByLedger(type=null)` 由 expense+income 双流 [combine]。
@@ -88,7 +93,8 @@ class RoomDataSourceImpl @Inject constructor(
     DebtDataSource,
     CategoryDataSource,
     BudgetDataSource,
-    SyncChangeDataSource {
+    SyncChangeDataSource,
+    UserCategoryRuleDataSource {
 
     // ===== TransactionDataSource =====
 
@@ -151,11 +157,12 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     /**
-     * 同签名四接口共享（Transaction/Debt/Category/Budget 均「按 ledgerId 批删」）：
-     * 见类注释取舍说明。DAO 均无 `deleteByLedger` → 四表各发等价 DELETE（原始 SQL，
-     * 与 deleteById 三表 DELETE 同一逃生舱）。
+     * 同签名多接口共享（Transaction/Debt/Category/Budget/UserCategoryRule 均「按 ledgerId 批删」）：
+     * 见类注释取舍说明。DAO 均无 `deleteByLedger` → 各表各发等价 DELETE（原始 SQL，
+     * 与 deleteById 三表 DELETE 同一逃生舱）。user_category_rules 为分类自学习规则
+     * （F-12，C5「删账本随账本清空」），同批删除。
      *
-     * **自身原子（TASK-013 评审 W4）**：四表 DELETE 整体包进
+     * **自身原子（TASK-013 评审 W4）**：各表 DELETE 整体包进
      * [TransactionRunner.runInTransaction]——方法自身闭合事务，不依赖调用方；
      * 调用方 [com.minibook.domain.usecase.ledger.DeleteLedgerUseCase] 外层已包事务时
      * （Room `withTransaction` 可重入）并入外层事务，不产生嵌套事务。
@@ -172,6 +179,7 @@ class RoomDataSourceImpl @Inject constructor(
             db.delete("debts", "ledgerId = ?", arrayOf(ledgerId))
             db.delete("categories", "ledgerId = ?", arrayOf(ledgerId))
             db.delete("budgets", "ledgerId = ?", arrayOf(ledgerId))
+            db.delete("user_category_rules", "ledgerId = ?", arrayOf(ledgerId))
         }
     }
 
@@ -303,6 +311,23 @@ class RoomDataSourceImpl @Inject constructor(
                 .map { list -> list.map(CategoryMapper::toDomain) }
         }
 
+    // ===== UserCategoryRuleDataSource（F-12 分类自学习，DB version 3） =====
+
+    override suspend fun upsertRule(rule: UserCategoryRule) {
+        val now = Instant.now().toString()
+        userCategoryRuleDao().upsert(
+            UserCategoryRuleMapper.toEntity(
+                rule.copy(
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            ),
+        )
+    }
+
+    override suspend fun getRules(ledgerId: String): List<UserCategoryRule> =
+        userCategoryRuleDao().queryByLedger(ledgerId).map(UserCategoryRuleMapper::toDomain)
+
     // ===== BudgetDataSource（Phase 2 预留，本期骨架） =====
 
     override suspend fun upsertTotal(ledgerId: String, month: YearMonth, amount: Long) {
@@ -388,6 +413,9 @@ class RoomDataSourceImpl @Inject constructor(
 
     private fun syncChangeDao(): SyncChangeDao = gate.database?.syncChangeDao()
         ?: error("DatabaseGate 未解锁/未打开，无法提供 SyncChangeDao")
+
+    private fun userCategoryRuleDao(): UserCategoryRuleDao = gate.database?.userCategoryRuleDao()
+        ?: error("DatabaseGate 未解锁/未打开，无法提供 UserCategoryRuleDao")
 
     /** 当前打开库的可写连接（Room 官方逃生舱，供无 DAO 的等价 SQL 操作使用）。 */
     private fun writableDatabase(): SupportSQLiteDatabase = gate.database?.openHelper?.writableDatabase

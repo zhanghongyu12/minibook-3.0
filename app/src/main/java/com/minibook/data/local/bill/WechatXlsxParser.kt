@@ -102,11 +102,14 @@ object WechatXlsxParser : BillParser {
         val date: String = resolveDate(cell(BillColumn.DATE))
             ?: return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "交易时间缺失或非法")
 
-        // 3) 金额：字面量转分；非法/非正 → PARSE_ERROR。
+        // 3) 金额：字面量转分；非法(负或非数字) → PARSE_ERROR；0 分 → ZERO_AMOUNT。
         val amountRaw = cell(BillColumn.AMOUNT)
         val amountFen: Long? = BillText.amountToFen(amountRaw)
-        if (amountFen == null || amountFen <= 0L) {
-            return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "金额非法或非正: ${amountRaw.ifEmpty { "空" }}")
+        if (amountFen == null) {
+            return RowOutcome.Skip(ImportSkipReason.PARSE_ERROR, "金额非法: ${amountRaw.ifEmpty { "空" }}")
+        }
+        if (amountFen == 0L) {
+            return RowOutcome.Skip(ImportSkipReason.ZERO_AMOUNT, "金额为 0")
         }
 
         // 4) 交易单号 → externalId；空 → PARSE_ERROR。

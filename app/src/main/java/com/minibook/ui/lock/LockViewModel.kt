@@ -119,7 +119,7 @@ class LockViewModel @Inject constructor(
 
     /**
      * 解锁成功（[AppLockController.unlock] `onResult(true)`，DB 已打开）后触发首启引导
-     * （TASK-011 [BootstrapUseCase]）：插入默认账本 + 克隆 18 内置分类 + 写当前账本 id。
+     * （TASK-011 [BootstrapUseCase]）：插入默认账本 + 克隆 24 内置分类 + 写当前账本 id。
      *
      * **时序保证**：`onResult(true)` 仅在 [AppLockController.unlock] 开库成功（
      * [com.minibook.data.local.security.DatabaseGate] 已打开）之后回调，故本处协程内调用

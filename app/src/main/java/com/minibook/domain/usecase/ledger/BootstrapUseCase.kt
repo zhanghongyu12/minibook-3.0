@@ -14,7 +14,7 @@ import javax.inject.Inject
  *
  * 流程：`ledgers` 空（[LedgerRepository.getDefault] == null）→ 插入默认账本
  * （`isDefault=true`，name="默认账本"，内置 icon/color，position=0）→ 为该账本克隆
- * 18 内置分类（[CloneBuiltInCategoriesUseCase]）→ `LedgerDataStore.setCurrentLedgerId`
+ * 24 内置分类（[CloneBuiltInCategoriesUseCase]）→ `LedgerDataStore.setCurrentLedgerId`
  * 写入默认账本 id。
  *
  * **事务原子性（TASK-013 评审 W3）**：插入默认账本 + 克隆分类 + 写当前账本三步整体包进
@@ -57,7 +57,7 @@ class BootstrapUseCase @Inject constructor(
                 ),
             )
 
-            // 为该默认账本克隆 18 内置分类（12 支出 + 6 收入，内部幂等守卫 countByLedger==0）。
+            // 为该默认账本克隆 24 内置分类（16 支出 + 8 收入，内部幂等守卫 countByLedger==0）。
             cloneBuiltInCategories(defaultLedgerId)
 
             // 写入当前账本 id（ARCHITECTURE §8.4 步骤 3；上游幂等守卫保证此时尚无默认账本）。

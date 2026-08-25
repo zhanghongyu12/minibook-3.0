@@ -1,4 +1,4 @@
-﻿package com.minibook.domain.usecase.bill
+package com.minibook.domain.usecase.bill
 
 import com.minibook.data.datasource.CategoryDataSource
 import com.minibook.data.datasource.TransactionDataSource
@@ -16,6 +16,9 @@ import com.minibook.domain.model.SyncStatus
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
+import com.minibook.domain.model.UserCategoryRule
+import com.minibook.domain.repository.UserCategoryRuleRepository
+import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
 import com.minibook.util.TimeFormatter
 import java.util.UUID
 import javax.inject.Inject
@@ -46,11 +49,18 @@ class ImportBillUseCase @Inject constructor(
     private val parserFactory: BillParserFactory,
     private val categoryDataSource: CategoryDataSource,
     private val transactionDataSource: TransactionDataSource,
+    private val ensureBuiltInCategories: EnsureBuiltInCategoriesUseCase,
+    private val userCategoryRuleRepository: UserCategoryRuleRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
 
     suspend operator fun invoke(uriString: String, ledgerId: String): BillImportResult =
         withContext(ioDispatcher) {
+            // 导入前先补齐该账本缺失的内置分类（B2 增量补种：美团/转账/缴费/收款/退款）。
+            // 选型见 EnsureBuiltInCategoriesUseCase 注释——Bootstrap 幂等早退，无法覆盖已有账本，
+            // 此处 ensure 保证「导入前分类齐全」，稳态下幂等零写入。
+            ensureBuiltInCategories(ledgerId)
+
             val prepared = try {
                 filePreparer.prepare(uriString)
             } catch (e: Exception) {
@@ -77,14 +87,16 @@ class ImportBillUseCase @Inject constructor(
         source: TransactionSource,
         ledgerId: String,
     ): BillImportResult {
-        // 行级过滤计数（DEC-015：NEUTRAL/CLOSED 计数、PARSE_ERROR 保留明细）。
+        // 行级过滤计数（DEC-015：NEUTRAL/CLOSED/ZERO_AMOUNT 计数、PARSE_ERROR 保留明细）。
         var neutral = 0
         var closed = 0
+        var zeroAmount = 0
         val parseErrors = mutableListOf<ParseSkippedRow>()
         for (skip in parseResult.skipped) {
             when (skip.reason) {
                 ImportSkipReason.NEUTRAL -> neutral++
                 ImportSkipReason.CLOSED -> closed++
+                ImportSkipReason.ZERO_AMOUNT -> zeroAmount++
                 ImportSkipReason.PARSE_ERROR -> parseErrors += skip
                 ImportSkipReason.EXISTS -> Unit // 解析器不产出 EXISTS（防御分支）
             }
@@ -97,6 +109,10 @@ class ImportBillUseCase @Inject constructor(
         val othersByName: Map<CategoryType, String> = categories
             .filter { it.name == BillCategoryMapping.OTHERS_CATEGORY_NAME }
             .associate { it.type to it.id }
+        val validCategoryIds: Set<String> = categories.map { it.id }.toSet()
+
+        // 自学习规则：按 ledgerId 一次查出，循环内按 source 内存子串匹配（C4「不逐行查库」）。
+        val rules: List<UserCategoryRule> = userCategoryRuleRepository.getRules(ledgerId)
 
         val now = TimeFormatter.nowIso()
 
@@ -119,7 +135,7 @@ class ImportBillUseCase @Inject constructor(
                     continue
                 }
 
-                val categoryId = resolveCategoryId(row, source, byTypeAndName, othersByName)
+                val categoryId = resolveCategoryId(row, source, byTypeAndName, othersByName, validCategoryIds, rules)
                     ?: error("账本 $ledgerId 缺少 ${row.type.value} 的「${BillCategoryMapping.OTHERS_CATEGORY_NAME}」兜底分类")
 
                 toInsert += Transaction(
@@ -151,22 +167,66 @@ class ImportBillUseCase @Inject constructor(
             existing = existing,
             neutral = neutral,
             closed = closed,
+            zeroAmount = zeroAmount,
             parseErrors = parseErrors,
             unrecognized = false,
         )
     }
 
-    /** 平台分类 → 目标内置分类名 → (type,name) 精确解析 categoryId；查不到回退「其他」锚点。 */
+    /**
+     * 分类决策（F-12 自动分类 + 分类校准 + 自学习，B4/C4 优先级逐条落地）：
+     * 1. 用户自学习规则：counterparty 含 rule.keyword（子串）命中即用 rule.categoryId；
+     *    多条命中取 keyword 最长者（最具体优先）、再按 updatedAt 最新兜底；命中分类须仍属当前账本
+     *    （`rule.categoryId in validCategoryIds`），否则视为失效、继续下探。
+     * 2. 内置类型映射 [BillCategoryMapping.resolve]（红包/转账/群收款/退款/收款 命中即用；
+     *    商户消费/扫码付款等无类型映射 → null）。
+     * 3. 仅当 2 未命中且 source=wechat：[BillCategoryMapping.resolveByCounterparty] 对手方关键词。
+     * 4. 仍未命中且微信「扫二维码付款」→ 目标分类名「付款」；其余（含商户消费未命中）→「其他」兜底。
+     * 支付宝：1 → 2 →「其他」，**不走** counterparty 关键词与「扫二维码付款」分支。
+     */
     private fun resolveCategoryId(
         row: ParsedBillRow,
         source: TransactionSource,
         byTypeAndName: Map<Pair<CategoryType, String>, String>,
         othersByName: Map<CategoryType, String>,
+        validCategoryIds: Set<String>,
+        rules: List<UserCategoryRule>,
     ): String? {
         val type = row.type.toCategoryType()
+
+        // 第 1 步：用户自学习规则（子串命中）。
+        val counterparty = row.counterparty?.trim().orEmpty()
+        if (counterparty.isNotEmpty()) {
+            val rule = rules.asSequence()
+                .filter { it.source == source && counterparty.contains(it.keyword) }
+                // 多条 keyword 命中：优先取 keyword 最长者（更具体）；等长按 updatedAt 最新（ISO 字典序==时间序）。
+                .sortedWith(compareByDescending<UserCategoryRule> { it.keyword.length }.thenByDescending { it.updatedAt })
+                .firstOrNull()
+            if (rule != null && rule.categoryId in validCategoryIds) {
+                return rule.categoryId
+            }
+        }
+
+        // 第 2 步：内置类型映射。
         val mappedName = BillCategoryMapping.resolve(source, row.platformCategory, row.type)
-        val resolved = if (mappedName != null) byTypeAndName[type to mappedName] else null
-        return resolved ?: othersByName[type]
+        if (mappedName != null) {
+            return byTypeAndName[type to mappedName] ?: othersByName[type]
+        }
+
+        // 第 3 步：仅微信走对手方关键词（支付宝不走，避免误分类）。
+        if (source == TransactionSource.WECHAT_IMPORT) {
+            val keywordName = BillCategoryMapping.resolveByCounterparty(source, row.counterparty, row.type)
+            if (keywordName != null) {
+                return byTypeAndName[type to keywordName] ?: othersByName[type]
+            }
+        }
+
+        // 第 4 步：微信「扫二维码付款」→「付款」；其余 →「其他」。
+        if (source == TransactionSource.WECHAT_IMPORT && row.platformCategory?.contains("扫二维码付款") == true) {
+            return byTypeAndName[type to "付款"] ?: othersByName[type]
+        }
+
+        return othersByName[type]
     }
 
     private fun TransactionType.toCategoryType(): CategoryType = when (this) {
