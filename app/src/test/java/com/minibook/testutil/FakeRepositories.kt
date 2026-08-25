@@ -12,10 +12,12 @@ import com.minibook.domain.model.PeriodTrend
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
+import com.minibook.domain.model.UserCategoryRule
 import com.minibook.domain.repository.BudgetRepository
 import com.minibook.domain.repository.CategoryRepository
 import com.minibook.domain.repository.DebtRepository
 import com.minibook.domain.repository.TransactionRepository
+import com.minibook.domain.repository.UserCategoryRuleRepository
 import java.time.YearMonth
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -34,6 +36,7 @@ class FakeTransactionRepository : TransactionRepository {
     var dailyTrend: List<PeriodTrend> = emptyList()
     var monthlyTrend: List<PeriodTrend> = emptyList()
     var categoryAgg: List<CategoryAgg> = emptyList()
+    var transactionsById: Map<String, Transaction> = emptyMap()
 
     // ==== 调用记录 ====
     var lastObservedLedgerId: String? = null
@@ -45,6 +48,12 @@ class FakeTransactionRepository : TransactionRepository {
     var lastAggCall: Triple<String?, TransactionType?, Pair<String, String>?>? = null
     var lastDeletedIds: List<String>? = null
     var deleteByIdsResult: Int = 0
+    var lastUpdateCategoryIds: List<String>? = null
+    var lastUpdateCategoryId: String? = null
+    var updateCategoryByIdsResult: Int = 0
+    var lastUpdateTypeIds: List<String>? = null
+    var lastUpdateType: TransactionType? = null
+    var updateTypeByIdsResult: Int = 0
 
     // ---- observe 转发（返回可配置数据 + 记录入参） ----
 
@@ -87,10 +96,22 @@ class FakeTransactionRepository : TransactionRepository {
         return deleteByIdsResult
     }
 
+    override suspend fun updateCategoryByIds(ids: List<String>, categoryId: String): Int {
+        lastUpdateCategoryIds = ids
+        lastUpdateCategoryId = categoryId
+        return updateCategoryByIdsResult
+    }
+
+    override suspend fun updateTypeByIds(ids: List<String>, type: TransactionType): Int {
+        lastUpdateTypeIds = ids
+        lastUpdateType = type
+        return updateTypeByIdsResult
+    }
+
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
     override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary =
         throw NotImplementedError()
-    override suspend fun getById(id: String): Transaction? = throw NotImplementedError()
+    override suspend fun getById(id: String): Transaction? = transactionsById[id]
     override suspend fun countTransactionsByCategory(categoryId: String): Int =
         throw NotImplementedError()
     override suspend fun insertBatch(txs: List<Transaction>): Int = throw NotImplementedError()
@@ -202,4 +223,22 @@ class FakeTransactionRunner : TransactionRunner {
         transactionsRun++
         return block()
     }
+}
+
+/**
+ * Fake [UserCategoryRuleRepository]：记录 upsert 的规则（供批量改分类自学习单测断言），
+ * 返回可配置的规则列表（供导入匹配测试复用）。
+ */
+class FakeUserCategoryRuleRepository : UserCategoryRuleRepository {
+
+    var rules: List<UserCategoryRule> = emptyList()
+    val upsertedRules: MutableList<UserCategoryRule> = mutableListOf()
+
+    override suspend fun upsertRule(rule: UserCategoryRule) {
+        upsertedRules += rule
+    }
+
+    override suspend fun getRules(ledgerId: String): List<UserCategoryRule> = rules
+
+    override suspend fun deleteByLedger(ledgerId: String): Unit = throw NotImplementedError()
 }

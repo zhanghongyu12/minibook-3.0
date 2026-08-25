@@ -3,11 +3,13 @@ package com.minibook.ui.transactions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.domain.common.LedgerNotFound
+import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
+import com.minibook.domain.usecase.transaction.BatchUpdateTransactionsUseCase
 import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -49,6 +51,8 @@ class TransactionsViewModel @Inject constructor(
     observeTransactions: ObserveTransactionsUseCase,
     private val observeCategories: ObserveCategoriesUseCase,
     private val deleteTransactions: DeleteTransactionsUseCase,
+    private val batchUpdateTransactions: BatchUpdateTransactionsUseCase,
+    private val ledgerProvider: LedgerProvider,
 ) : ViewModel() {
 
     /** 当前类型筛选：null=全部；EXPENSE=支出；INCOME=收入（初值全部）。 */
@@ -161,6 +165,21 @@ class TransactionsViewModel @Inject constructor(
      * @return 实际删除行数。
      */
     suspend fun deleteTransactions(ids: List<String>): Int = deleteTransactions(ids)
+
+    /**
+     * 批量改分类：委托 [BatchUpdateTransactionsUseCase.updateCategory]（含自学习副作用）。
+     * 当前账本经 [LedgerProvider] 取（对齐 ImportViewModel 口径）。
+     */
+    suspend fun batchUpdateCategory(ids: List<String>, categoryId: String) {
+        batchUpdateTransactions.updateCategory(ledgerProvider.currentLedgerId(), ids, categoryId)
+    }
+
+    /**
+     * 批量改类型：委托 [BatchUpdateTransactionsUseCase.updateType]（分类归位「其他」，不触发自学习）。
+     */
+    suspend fun batchUpdateType(ids: List<String>, type: TransactionType) {
+        batchUpdateTransactions.updateType(ledgerProvider.currentLedgerId(), ids, type)
+    }
 
     companion object {
         /** 当前账本未初始化文案（对齐 HomeViewModel §8.5）。 */

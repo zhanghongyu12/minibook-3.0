@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +50,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
+import com.minibook.domain.model.TransactionType
+import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.EmptyState
@@ -86,6 +90,8 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     var batchMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showCategoryPicker by remember { mutableStateOf(false) }
+    var showTypePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // 当前筛选结果的交易 id 集合：批量「全选/取消全选」作用域（分类/类型筛选在批量模式下仍生效）。
@@ -129,6 +135,8 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                     onToggleSelectAll = ::toggleSelectAll,
                     onCancel = ::exitBatchMode,
                     onDelete = { if (selectedIds.isNotEmpty()) showDeleteConfirm = true },
+                    onChangeCategory = { if (selectedIds.isNotEmpty()) showCategoryPicker = true },
+                    onChangeType = { if (selectedIds.isNotEmpty()) showTypePicker = true },
                 )
             } else {
                 Row(
@@ -217,6 +225,39 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
         )
     }
 
+    // 批量改分类：复用 [CategoryPickerSheet]（与记一笔/编辑同款分类选择组件），选中后批量改 + 退出批量模式。
+    if (showCategoryPicker) {
+        CategoryPickerSheet(
+            categories = categories,
+            type = null,
+            excludeId = null,
+            initialId = null,
+            title = "改分类",
+            onPick = { category ->
+                showCategoryPicker = false
+                scope.launch {
+                    viewModel.batchUpdateCategory(selectedIds.toList(), category.id)
+                    exitBatchMode()
+                }
+            },
+            onDismiss = { showCategoryPicker = false },
+        )
+    }
+
+    // 批量改类型：支出/收入二选（底部动作条），提示改类型后分类归「其他」；确认后批量改 + 退出批量模式。
+    if (showTypePicker) {
+        TypePickerSheet(
+            onPick = { type ->
+                showTypePicker = false
+                scope.launch {
+                    viewModel.batchUpdateType(selectedIds.toList(), type)
+                    exitBatchMode()
+                }
+            },
+            onDismiss = { showTypePicker = false },
+        )
+    }
+
     // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
     if (showTransactionSheet) {
         TransactionSheet(
@@ -229,8 +270,8 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
 /**
  * 批量操作栏（批量模式顶部，替换普通态「管理」入口）。
  *
- * 第一行：左「已选 N 条」计数，右「全选/取消全选」；第二行：右「取消」退出批量模式 +
- * 「删除」触发确认框（0 选中时禁用）。分类/类型筛选在批量模式下仍生效，「全选」作用于
+ * 第一行：左「已选 N 条」计数，右「全选/取消全选」；第二行：右「改分类」「改类型」「删除」
+ * （0 选中时三者禁用）与「取消」退出批量模式。分类/类型筛选在批量模式下仍生效，「全选」作用于
  * 当前筛选结果（见 [TransactionsScreen.allVisibleIds]）。
  */
 @Composable
@@ -240,6 +281,8 @@ private fun BatchModeBar(
     onToggleSelectAll: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
+    onChangeCategory: () -> Unit,
+    onChangeType: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth()) {
@@ -262,12 +305,54 @@ private fun BatchModeBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = onCancel) { Text("取消") }
+            TextButton(onClick = onChangeCategory, enabled = selectedCount > 0) { Text("改分类") }
+            TextButton(onClick = onChangeType, enabled = selectedCount > 0) { Text("改类型") }
             Button(onClick = onDelete, enabled = selectedCount > 0) { Text("删除") }
+            TextButton(onClick = onCancel) { Text("取消") }
+        }
+    }
+}
+
+/**
+ * 批量改类型底部动作条：支出/收入二选，附「改类型后分类将归为「其他」」提示。
+ * 纯 UI 组件（状态由 [TransactionsScreen] 页内自持），确认回调 [onPick] 传入所选类型。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TypePickerSheet(
+    onPick: (TransactionType) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Text("改类型", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "改类型后分类将归为「其他」",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Button(onClick = { onPick(TransactionType.EXPENSE) }, modifier = Modifier.weight(1f)) {
+                    Text("支出")
+                }
+                Button(onClick = { onPick(TransactionType.INCOME) }, modifier = Modifier.weight(1f)) {
+                    Text("收入")
+                }
+            }
         }
     }
 }

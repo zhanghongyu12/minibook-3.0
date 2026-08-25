@@ -1,11 +1,15 @@
 package com.minibook.ui.transactions
 
+import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
+import com.minibook.domain.usecase.category.UpsertUserCategoryRuleUseCase
+import com.minibook.domain.usecase.transaction.BatchUpdateTransactionsUseCase
 import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import com.minibook.testutil.FakeCategoryRepository
 import com.minibook.testutil.FakeTransactionRepository
+import com.minibook.testutil.FakeUserCategoryRuleRepository
 import com.minibook.testutil.fakeLedgerDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +153,12 @@ class TransactionsViewModelCategoryFilterTest {
                 categoryRepository = FakeCategoryRepository(),
             ),
             deleteTransactions = DeleteTransactionsUseCase(transactionRepository = txRepo),
+            batchUpdateTransactions = BatchUpdateTransactionsUseCase(
+                transactionRepository = txRepo,
+                categoryRepository = FakeCategoryRepository(),
+                upsertUserCategoryRule = UpsertUserCategoryRuleUseCase(FakeUserCategoryRuleRepository()),
+            ),
+            ledgerProvider = LedgerProvider(ledgerStore),
         )
     }
 

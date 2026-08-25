@@ -39,6 +39,7 @@ import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.model.UserCategoryRule
+import com.minibook.util.TimeFormatter
 import java.time.Instant
 import java.time.YearMonth
 import java.util.UUID
@@ -170,6 +171,31 @@ class RoomDataSourceImpl @Inject constructor(
         if (ids.isEmpty()) return 0
         return transactionRunner.runInTransaction {
             transactionDao().deleteByIds(ids)
+        }
+    }
+
+    /**
+     * 批量改分类（记账页批量管理）：仅 transactions 表按 `id IN (...)` 更新 categoryId 与
+     * updatedAt。**自身原子（同 [deleteByIds] 事务口径）**：单条 UPDATE 本身原子，仍经
+     * [TransactionRunner.runInTransaction] 包裹，与类内事务口径一致。updatedAt 由本层取
+     * [TimeFormatter.nowIso]（不依赖调用方）。
+     */
+    override suspend fun updateCategoryByIds(ids: List<String>, categoryId: String): Int {
+        if (ids.isEmpty()) return 0
+        return transactionRunner.runInTransaction {
+            transactionDao().updateCategoryByIds(ids, categoryId, TimeFormatter.nowIso())
+        }
+    }
+
+    /**
+     * 批量改类型（记账页批量管理）：仅 transactions 表按 `id IN (...)` 更新 type（存储值
+     * 'expense'/'income'）与 updatedAt。**自身原子**：同 [updateCategoryByIds] 事务口径；
+     * 分类归位「其他」由 UseCase 另行编排（改类型本身不改 categoryId）。
+     */
+    override suspend fun updateTypeByIds(ids: List<String>, type: TransactionType): Int {
+        if (ids.isEmpty()) return 0
+        return transactionRunner.runInTransaction {
+            transactionDao().updateTypeByIds(ids, type.value, TimeFormatter.nowIso())
         }
     }
 

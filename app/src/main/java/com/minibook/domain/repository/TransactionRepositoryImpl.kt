@@ -32,6 +32,12 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override suspend fun deleteByIds(ids: List<String>): Int = dataSource.deleteByIds(ids)
 
+    override suspend fun updateCategoryByIds(ids: List<String>, categoryId: String): Int =
+        dataSource.updateCategoryByIds(ids, categoryId)
+
+    override suspend fun updateTypeByIds(ids: List<String>, type: TransactionType): Int =
+        dataSource.updateTypeByIds(ids, type)
+
     override suspend fun deleteByLedger(ledgerId: String) = dataSource.deleteByLedger(ledgerId)
 
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =

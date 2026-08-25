@@ -47,6 +47,22 @@ interface TransactionDataSource {
     suspend fun deleteByIds(ids: List<String>): Int
 
     /**
+     * 批量改分类（记账页批量管理）：按 [ids] 一次更新多笔交易的分类与 updatedAt。
+     * **自身原子**：实现方在单事务内闭合；updatedAt 由实现方刷新为当前时间。
+     *
+     * @return 实际更新行数；空列表由 UseCase 短路，不触本方法。
+     */
+    suspend fun updateCategoryByIds(ids: List<String>, categoryId: String): Int
+
+    /**
+     * 批量改类型（支出/收入）：按 [ids] 一次更新多笔交易的 type 与 updatedAt。
+     * **自身原子**：实现方在单事务内闭合；updatedAt 由实现方刷新为当前时间。
+     *
+     * @return 实际更新行数；空列表由 UseCase 短路，不触本方法。
+     */
+    suspend fun updateTypeByIds(ids: List<String>, type: TransactionType): Int
+
+    /**
      * 按 [ledgerId] 批删该账本全部交易（删账本时调用，DATABASE §4.4）。
      *
      * 与单条 [deleteById] 不同：无 id 维度、整表按账本清空；删账本原子性由

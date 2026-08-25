@@ -73,6 +73,20 @@ interface TransactionDao {
     @Query("DELETE FROM transactions WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>): Int
 
+    /**
+     * 批量改分类（记账页批量管理）：`id IN (:ids)` 一次更新多笔交易的分类与 updatedAt，
+     * 返回实际更新行数（UUID 全局唯一，不限定 ledgerId；空列表由 UseCase 短路）。
+     */
+    @Query("UPDATE transactions SET categoryId = :categoryId, updatedAt = :updatedAt WHERE id IN (:ids)")
+    suspend fun updateCategoryByIds(ids: List<String>, categoryId: String, updatedAt: String): Int
+
+    /**
+     * 批量改类型（支出/收入）：`id IN (:ids)` 一次更新多笔交易的 type 与 updatedAt，
+     * 返回实际更新行数。`type` 为存储值（'expense'/'income'，与 [update] 的 String 列同口径）。
+     */
+    @Query("UPDATE transactions SET type = :type, updatedAt = :updatedAt WHERE id IN (:ids)")
+    suspend fun updateTypeByIds(ids: List<String>, type: String, updatedAt: String): Int
+
     /** 账本内按日期分组（首页/列表）：date DESC、组内 createdAt DESC。 */
     @Query("SELECT * FROM transactions WHERE ledgerId=:ledgerId ORDER BY date DESC, createdAt DESC")
     fun observeAll(ledgerId: String): Flow<List<TransactionEntity>>

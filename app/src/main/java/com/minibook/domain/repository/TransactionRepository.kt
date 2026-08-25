@@ -47,6 +47,20 @@ interface TransactionRepository {
     suspend fun deleteByIds(ids: List<String>): Int
 
     /**
+     * 批量改分类（记账页批量管理）：按 [ids] 一次更新多笔交易的分类。
+     *
+     * @return 实际更新行数。
+     */
+    suspend fun updateCategoryByIds(ids: List<String>, categoryId: String): Int
+
+    /**
+     * 批量改类型（支出/收入）：按 [ids] 一次更新多笔交易的 type。
+     *
+     * @return 实际更新行数。
+     */
+    suspend fun updateTypeByIds(ids: List<String>, type: TransactionType): Int
+
+    /**
      * 按 [ledgerId] 批删该账本全部交易（删账本时调用，TASK-012 DeleteLedgerUseCase
      * 单事务编排；DATABASE §4.4）。
      */
