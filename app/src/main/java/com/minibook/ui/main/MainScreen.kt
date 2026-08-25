@@ -7,6 +7,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -17,9 +18,12 @@ import androidx.navigation.compose.rememberNavController
 import com.minibook.ui.categories.CategoriesScreen
 import com.minibook.ui.debts.DebtsScreen
 import com.minibook.ui.home.HomeScreen
+import com.minibook.ui.navigation.BillsFilterBus
 import com.minibook.ui.navigation.Destination
 import com.minibook.ui.settings.SettingsScreen
 import com.minibook.ui.transactions.TransactionsScreen
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 
 /**
  * 底部导航 Tab 定义（TASK-021，UI §4 C-07 简化版）。
@@ -73,6 +77,12 @@ fun MainScreen(
             launchSingleTop = true
             restoreState = true
         }
+    }
+
+    // 报表分类占比点击 → 跳「记账」Tab（账单 VM 消费总线后 clear，此处不 clear）。
+    LaunchedEffect(Unit) {
+        BillsFilterBus.request.filterNotNull().first()
+        navigateToTab(Destination.Transactions.route)
     }
 
     Scaffold(

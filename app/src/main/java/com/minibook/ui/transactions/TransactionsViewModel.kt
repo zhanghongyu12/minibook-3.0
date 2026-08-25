@@ -12,6 +12,7 @@ import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.transaction.BatchUpdateTransactionsUseCase
 import com.minibook.domain.usecase.transaction.DeleteTransactionsUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
+import com.minibook.ui.navigation.BillsFilterBus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * 收支记录页 ViewModel（TASK-024，UI §2 P-03）。
@@ -67,6 +69,24 @@ class TransactionsViewModel @Inject constructor(
     /** 对外只读的分类筛选态。 */
     val filterCategoryId: StateFlow<String?> = _filterCategoryId.asStateFlow()
 
+    /** 账单筛选跳转的区间起点 `yyyy-MM-dd`；null=未设日期区间（报表跳转前为空）。 */
+    private val _dateFrom = MutableStateFlow<String?>(null)
+
+    /** 对外只读的账单筛选区间起点。 */
+    val dateFrom: StateFlow<String?> = _dateFrom.asStateFlow()
+
+    /** 账单筛选跳转的区间终点 `yyyy-MM-dd`；null=未设日期区间。 */
+    private val _dateTo = MutableStateFlow<String?>(null)
+
+    /** 对外只读的账单筛选区间终点。 */
+    val dateTo: StateFlow<String?> = _dateTo.asStateFlow()
+
+    /** 账单筛选提示条文案（`周期 · 分类名`）；null=无跳转筛选来源（初始/清除后）。 */
+    private val _billsFilterLabel = MutableStateFlow<String?>(null)
+
+    /** 对外只读的账单筛选提示条文案。 */
+    val billsFilterLabel: StateFlow<String?> = _billsFilterLabel.asStateFlow()
+
     /** 手动刷新触发：递增使 `flatMapLatest` 重订阅观察流（冷流重连，供错误重试）。 */
     private val refreshTick = MutableStateFlow(0)
 
@@ -89,9 +109,11 @@ class TransactionsViewModel @Inject constructor(
      * （协调日志 2026-08-21 commit 0c041a3 同款模式）。
      */
     val uiState: StateFlow<TransactionsUiState> = combine(
-        combine(_filterType, _filterCategoryId, refreshTick) { type, categoryId, _ -> type to categoryId }
-            .flatMapLatest { (type, categoryId) ->
-                observeTransactions.observe(TransactionFilter(type = type, categoryId = categoryId))
+        combine(_filterType, _filterCategoryId, _dateFrom, _dateTo, refreshTick) { type, categoryId, from, to, _ ->
+            TransactionFilter(type = type, categoryId = categoryId, dateFrom = from, dateTo = to)
+        }
+            .flatMapLatest { filter ->
+                observeTransactions.observe(filter)
             },
         observeCategories.observe(),
     ) { transactions, categories ->
@@ -119,6 +141,21 @@ class TransactionsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState.Loading)
 
+    init {
+        // 报表分类占比点击 → 消费账单筛选跳转请求：设类型/分类/日期区间/提示条后 clear。
+        viewModelScope.launch {
+            BillsFilterBus.request.collect { req ->
+                if (req == null) return@collect
+                setFilter(req.type)
+                setCategoryFilter(req.categoryId)
+                _dateFrom.value = req.dateFrom
+                _dateTo.value = req.dateTo
+                _billsFilterLabel.value = "${req.periodLabel} · ${req.categoryName ?: req.categoryId.take(6)}"
+                BillsFilterBus.clear()
+            }
+        }
+    }
+
     /**
      * 设置类型筛选；null=全部（含空态「清除筛选」回调）。
      *
@@ -138,12 +175,16 @@ class TransactionsViewModel @Inject constructor(
     }
 
     /**
-     * 清除全部筛选（类型 + 分类）：供空态「清除筛选」动作使用。空态 [hasActiveFilter]
-     * 现为「type 或 categoryId 任一非空」，故须一并复位，避免只清类型残留分类。
+     * 清除全部筛选（类型 + 分类 + 日期区间 + 提示条）：供空态「清除筛选」与提示条「清除」
+     * 动作使用。空态 [hasActiveFilter] 现为「type 或 categoryId 任一非空」，故须一并复位
+     * 日期区间与提示条文案，避免只清类型残留分类/日期。
      */
     fun clearFilter() {
         _filterType.value = null
         _filterCategoryId.value = null
+        _dateFrom.value = null
+        _dateTo.value = null
+        _billsFilterLabel.value = null
     }
 
     /**

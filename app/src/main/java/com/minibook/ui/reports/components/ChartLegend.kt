@@ -1,6 +1,7 @@
 package com.minibook.ui.reports.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -25,12 +26,15 @@ import androidx.compose.ui.unit.dp
  *
  * 色块 + 名称（+ 可选占比 %）。环形旁展示分类占比，折线/柱状下方展示系列色块。
  * 色值一律由调用方传入语义色/分类色（走 token，不在此硬编码）。
+ *
+ * @param onItemClick 非空时整行可点击并回调其下标（如分类占比图例 → 跳转筛明细）；null 不可点击。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChartLegend(
     items: List<LegendItem>,
     modifier: Modifier = Modifier,
+    onItemClick: ((Int) -> Unit)? = null,
 ) {
     FlowRow(
         modifier = modifier.fillMaxWidth(),
@@ -38,7 +42,9 @@ fun ChartLegend(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         itemVerticalAlignment = Alignment.CenterVertically,
     ) {
-        items.forEach { LegendItemRow(it) }
+        items.forEachIndexed { index, item ->
+            LegendItemRow(item = item, onClick = onItemClick?.let { cb -> { cb(index) } })
+        }
     }
 }
 
@@ -50,8 +56,11 @@ data class LegendItem(
 )
 
 @Composable
-private fun LegendItemRow(item: LegendItem) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun LegendItemRow(item: LegendItem, onClick: (() -> Unit)? = null) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+    ) {
         Spacer(
             Modifier
                 .width(12.dp)

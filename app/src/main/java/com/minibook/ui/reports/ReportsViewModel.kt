@@ -9,6 +9,9 @@ import com.minibook.domain.usecase.report.Granularity
 import com.minibook.domain.usecase.report.ObserveCategoryBreakdownUseCase
 import com.minibook.domain.usecase.report.ObserveTrendUseCase
 import com.minibook.domain.usecase.report.ReportTrend
+import com.minibook.domain.usecase.report.periodEnd
+import com.minibook.domain.usecase.report.periodStart
+import com.minibook.ui.navigation.BillsFilterRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.YearMonth
 import javax.inject.Inject
@@ -145,6 +148,13 @@ class ReportsViewModel @Inject constructor(
         _categoryType.value = type
     }
 
+    /**
+     * 分类占比点击 → 构建账单筛选跳转请求（分类 + 当前口径 + 当前周期/粒度）。
+     * 纯计算由顶层 [buildBillsFilterRequest] 承担，本方法仅注入当前 VM 状态。
+     */
+    fun buildBillsFilterRequest(slice: CategorySlice): BillsFilterRequest =
+        buildBillsFilterRequest(slice, _categoryType.value, _period.value, _viewType.value)
+
     /** 观察流异常折叠为 [ChartState.Error]（账本未初始化走引导文案）；[CancellationException] 透传。 */
     private suspend fun <T> FlowCollector<ChartState<T>>.emitChartError(e: Throwable) {
         if (e is CancellationException) throw e
@@ -160,3 +170,26 @@ class ReportsViewModel @Inject constructor(
         const val LOAD_ERROR_MESSAGE = "加载失败，请稍后重试"
     }
 }
+
+/**
+ * 纯函数：分类切片 + 口径/周期/粒度 → 账单筛选跳转请求（报表 → 记账 Tab 联动）。
+ *
+ * 日期区间对齐报表同口径（[periodStart]/[periodEnd]）：月视图 = 当月首/末日、
+ * 年视图 = 当年首/末日；periodLabel 月如「2026年8月」、年如「2026年」。
+ */
+internal fun buildBillsFilterRequest(
+    slice: CategorySlice,
+    type: TransactionType,
+    period: YearMonth,
+    granularity: Granularity,
+): BillsFilterRequest = BillsFilterRequest(
+    categoryId = slice.categoryId,
+    categoryName = slice.category?.name,
+    type = type,
+    dateFrom = periodStart(period, granularity),
+    dateTo = periodEnd(period, granularity),
+    periodLabel = when (granularity) {
+        Granularity.MONTHLY -> "${period.year}年${period.monthValue}月"
+        Granularity.YEARLY -> "${period.year}年"
+    },
+)

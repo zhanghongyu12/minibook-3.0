@@ -22,7 +22,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import com.minibook.domain.model.CategoryAgg
 import com.minibook.util.MoneyFormatter
 import kotlin.math.atan2
 import kotlin.math.min
@@ -36,14 +35,16 @@ import kotlin.math.sqrt
  *
  * 降级：0 有效数据只画浅色空环不崩（空态文案由 [ChartEmptyState] 呈现）；1 个分类画满圈。
  *
- * @param slices 环形切片（分类名 + 分类色 + 金额），由调用方从 [List<CategoryAgg>] 映射而来；
+ * @param slices 环形切片（分类名 + 分类色 + 金额），由调用方映射而来；
  *   分类自有 color 为唯一允许的硬编码色来源。
  * @param modifier 尺寸控制（建议正方形，绘制时按内容居中并取最小边）。
+ * @param onSliceClick 点击命中某扇区时回调其下标（保留既有选中高亮）；null 表示仅选中不高亮跳转。
  */
 @Composable
 fun DonutChart(
     slices: List<DonutSlice>,
     modifier: Modifier = Modifier,
+    onSliceClick: ((Int) -> Unit)? = null,
 ) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val centerTextColor = MaterialTheme.colorScheme.onSurface
@@ -56,26 +57,14 @@ fun DonutChart(
     Canvas(
         modifier.pointerInput(slices) {
             detectTapGestures { offset ->
-                selectedIndex = hitTestSlice(offset, slices)
+                val hit = hitTestSlice(offset, slices)
+                selectedIndex = hit
+                if (hit != null) onSliceClick?.invoke(hit)
             }
         },
     ) {
         drawDonut(slices, trackColor, selectedIndex, textMeasurer, centerTextStyle, centerTextColor)
     }
-}
-
-/**
- * 便捷重载：直接从 [List<CategoryAgg>] 渲染，[visualFor] 完成「分类 → 切片（名称/色/金额）」映射。
- *
- * 分类名/图标/色由 UI 经既有分类流做 id→元信息映射（DATABASE §10.3），由调用方注入。
- */
-@Composable
-fun DonutChart(
-    aggregates: List<CategoryAgg>,
-    modifier: Modifier = Modifier,
-    visualFor: (CategoryAgg) -> DonutSlice,
-) {
-    DonutChart(aggregates.map { visualFor(it) }, modifier)
 }
 
 /** 环形切片：名称 + 分类色 + 金额（分）。 */

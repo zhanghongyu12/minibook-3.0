@@ -39,6 +39,7 @@ import com.minibook.domain.usecase.report.CategorySlice
 import com.minibook.domain.usecase.report.Granularity
 import com.minibook.domain.usecase.report.ReportTrend
 import com.minibook.ui.components.SkeletonBlock
+import com.minibook.ui.navigation.BillsFilterBus
 import com.minibook.ui.reports.components.BarChart
 import com.minibook.ui.reports.components.BarChartSeries
 import com.minibook.ui.reports.components.ChartEmptyState
@@ -121,6 +122,10 @@ fun ReportsScreen(
                     state = categoryState,
                     type = categoryType,
                     onTypeChange = viewModel::setCategoryType,
+                    onCategoryClick = { slice ->
+                        BillsFilterBus.post(viewModel.buildBillsFilterRequest(slice))
+                        onBack()
+                    },
                 )
             }
         }
@@ -308,6 +313,7 @@ private fun CategoryCard(
     state: ChartState<List<CategorySlice>>,
     type: TransactionType,
     onTypeChange: (TransactionType) -> Unit,
+    onCategoryClick: (CategorySlice) -> Unit,
 ) {
     ChartCard(
         title = "分类占比",
@@ -323,11 +329,19 @@ private fun CategoryCard(
             ChartState.Empty -> ChartEmptyState(message = "暂无分类数据")
             is ChartState.Error -> ChartEmptyState(message = state.message)
             is ChartState.Success -> {
-                val slices = state.value.toDonutSlices(fallbackColor = MaterialTheme.colorScheme.outline)
-                DonutChart(slices = slices, modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT))
+                val categorySlices = state.value
+                val slices = categorySlices.toDonutSlices(fallbackColor = MaterialTheme.colorScheme.outline)
+                DonutChart(
+                    slices = slices,
+                    onSliceClick = { index -> onCategoryClick(categorySlices[index]) },
+                    modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
+                )
                 if (slices.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
-                    ChartLegend(items = buildDonutLegendItems(slices))
+                    ChartLegend(
+                        items = buildDonutLegendItems(slices),
+                        onItemClick = { index -> onCategoryClick(categorySlices[index]) },
+                    )
                 }
             }
         }

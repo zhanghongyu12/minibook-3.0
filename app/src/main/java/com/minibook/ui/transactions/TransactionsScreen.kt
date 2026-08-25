@@ -83,6 +83,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     val filterType by viewModel.filterType.collectAsStateWithLifecycle()
     val filterCategoryId by viewModel.filterCategoryId.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
+    val billsFilterLabel by viewModel.billsFilterLabel.collectAsStateWithLifecycle()
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
@@ -127,6 +128,10 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+            // 报表分类占比跳转后的筛选来源提示条（可「清除」复位全部筛选）。
+            billsFilterLabel?.let { label ->
+                BillsFilterBanner(label = label, onClear = viewModel::clearFilter)
+            }
             // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 全选/删除/取消）。
             if (batchMode) {
                 BatchModeBar(
@@ -264,6 +269,37 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
             tx = editingTx,
             onDismiss = { showTransactionSheet = false },
         )
+    }
+}
+
+/**
+ * 账单筛选提示条：报表分类占比点击跳转后，顶部展示「周期 · 分类」筛选来源 + 「清除」按钮。
+ * 清除 = 复位类型/分类/日期区间/提示条全部筛选（走 [com.minibook.ui.transactions.TransactionsViewModel.clearFilter]）。
+ */
+@Composable
+private fun BillsFilterBanner(
+    label: String,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TextButton(onClick = onClear) { Text("清除") }
+        }
     }
 }
 
