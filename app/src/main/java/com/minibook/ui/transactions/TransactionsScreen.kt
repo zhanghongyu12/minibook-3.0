@@ -1,27 +1,47 @@
 package com.minibook.ui.transactions
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Category
+import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.sheets.TransactionSheet
@@ -51,6 +71,8 @@ import com.minibook.ui.components.TransactionTypeTab
 fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val filterType by viewModel.filterType.collectAsStateWithLifecycle()
+    val filterCategoryId by viewModel.filterCategoryId.collectAsStateWithLifecycle()
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
     // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
     var showTransactionSheet by remember { mutableStateOf(false) }
     var editingTx by remember { mutableStateOf<Transaction?>(null) }
@@ -76,6 +98,14 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            CategoryFilterBar(
+                categories = categories,
+                selectedCategoryId = filterCategoryId,
+                onSelect = viewModel::setCategoryFilter,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            )
             when (val state = uiState) {
                 TransactionsUiState.Loading -> LoadingState(
                     modifier = Modifier
@@ -88,7 +118,7 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                 )
                 is TransactionsUiState.Empty -> EmptyTransactions(
                     hasActiveFilter = state.hasActiveFilter,
-                    onClearFilter = { viewModel.setFilter(null) },
+                    onClearFilter = viewModel::clearFilter,
                 )
                 is TransactionsUiState.Success -> TransactionList(
                     transactions = state.transactions,
@@ -109,6 +139,242 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
             onDismiss = { showTransactionSheet = false },
         )
     }
+}
+
+/**
+ * 分类筛选栏（常驻显示，不随列表 Empty 消失）：横向可滚动 chip 行 + 右端下拉选择器。
+ *
+ * chip 行：首个「全部」chip（选中 = 清空分类筛选），其后每个分类一个 chip（emoji + 名称）；
+ * 选中的 chip 以主题配色高亮（primaryContainer / onPrimaryContainer，对齐 SearchScreen 的
+ * [CategoryFilterChip] 手写 Surface 风格，工程未引入 material-icons、分类 icon 为 emoji 文本）。
+ *
+ * 下拉选择器：chip 行右端一个筛选图标按钮（[CategoryFilterIcon]），点开 [DropdownMenu]
+ * 按支出/收入分组列出全部分类（带 emoji），点击设同一 categoryId；选中某分类时下拉入口
+ * 显示选中态（primaryContainer 底色）。chip 与下拉共用 [selectedCategoryId] / [onSelect]，
+ * 清除分类筛选走「全部」chip。
+ *
+ * @param categories 候选分类（VM [com.minibook.ui.transactions.TransactionsViewModel.categories]，
+ *   当前账本全类型，order 升序）。
+ * @param selectedCategoryId 当前选中分类 id；null=全部分类。
+ * @param onSelect 选中回调；null=清空分类筛选（「全部」chip）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryFilterBar(
+    categories: List<Category>,
+    selectedCategoryId: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 横向可滚动 chip 行：内容超宽时可滑动，下拉入口固定在右端不随 chip 滚动。
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CategoryFilterChip(
+                icon = null,
+                name = "全部",
+                selected = selectedCategoryId == null,
+                onClick = { onSelect(null) },
+            )
+            categories.forEach { category ->
+                CategoryFilterChip(
+                    icon = category.icon,
+                    name = category.name,
+                    selected = category.id == selectedCategoryId,
+                    onClick = { onSelect(category.id) },
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        CategoryFilterDropdown(
+            categories = categories,
+            selectedCategoryId = selectedCategoryId,
+            onSelect = onSelect,
+        )
+    }
+}
+
+/**
+ * 单个分类筛选 chip（手写 Surface，对齐 SearchScreen 的 [CategoryFilterChip] 配色口径）：
+ * 选中 → primaryContainer/onPrimaryContainer + primary 描边；未选 → surfaceVariant/onSurfaceVariant。
+ *
+ * @param icon 分类 emoji 文本；null 表示「全部」chip（不展示图标）。
+ * @param name chip 文案。
+ * @param selected 是否选中。
+ * @param onClick 点击回调。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryFilterChip(
+    icon: String?,
+    name: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Text(icon, fontSize = 14.sp)
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                name,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 分类下拉选择器：筛选图标按钮 + [DropdownMenu]（按支出/收入分组，带 emoji + 选中标记）。
+ *
+ * 入口与 chip 联动：选中某分类时入口用 primaryContainer 底色 + onPrimaryContainer 图标
+ * 呈现「选中态」。选中项在菜单内以主题 primary「✓」标记；点击分类即关闭菜单并回传同一
+ * categoryId（清除分类筛选仍走「全部」chip，故菜单不重复提供「全部」项）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryFilterDropdown(
+    categories: List<Category>,
+    selectedCategoryId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            onClick = { expanded = true },
+            shape = MaterialTheme.shapes.small,
+            color = if (selectedCategoryId != null) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            },
+            border = BorderStroke(
+                1.dp,
+                if (selectedCategoryId != null) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outline
+                },
+            ),
+        ) {
+            Icon(
+                imageVector = CategoryFilterIcon,
+                contentDescription = "分类筛选",
+                tint = if (selectedCategoryId != null) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier
+                    .padding(6.dp)
+                    .size(20.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            CategoryDropdownSection(
+                title = "支出",
+                items = categories.filter { it.type == CategoryType.EXPENSE },
+                selectedCategoryId = selectedCategoryId,
+                onPick = { id ->
+                    expanded = false
+                    onSelect(id)
+                },
+            )
+            CategoryDropdownSection(
+                title = "收入",
+                items = categories.filter { it.type == CategoryType.INCOME },
+                selectedCategoryId = selectedCategoryId,
+                onPick = { id ->
+                    expanded = false
+                    onSelect(id)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 下拉菜单分组：组标题 + 该组分类项（emoji + 名称），选中项右侧主题 primary「✓」。
+ * 分组无分类时整组不渲染（避免空标题悬挂）。
+ */
+@Composable
+private fun CategoryDropdownSection(
+    title: String,
+    items: List<Category>,
+    selectedCategoryId: String?,
+    onPick: (String) -> Unit,
+) {
+    if (items.isEmpty()) return
+    Text(
+        title,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+    items.forEach { category ->
+        DropdownMenuItem(
+            text = { Text("${category.icon} ${category.name}") },
+            trailingIcon = if (category.id == selectedCategoryId) {
+                { Text("✓", color = MaterialTheme.colorScheme.primary) }
+            } else {
+                null
+            },
+            onClick = { onPick(category.id) },
+        )
+    }
+}
+
+/**
+ * 分类筛选图标：Material「filter_list」path 本地构造（工程未引入 material-icons，同
+ * [EmptyReceiptIcon] 手法）。纯填充矢量，tint 由 [Icon] 统一上色，fill 仅占位（不参与渲染）。
+ */
+private val CategoryFilterIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "CategoryFilter",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = addPathNodes(
+            "M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z",
+        ),
+        fill = SolidColor(Color.Black),
+    ).build()
 }
 
 /**
@@ -159,8 +425,9 @@ private fun TransactionList(
 /**
  * 空态：按是否有筛选分两种文案，有筛选时提供「清除筛选」动作。
  *
- * @param hasActiveFilter true=当前处于类型筛选态（展示清除动作）；false=无任何筛选。
- * @param onClearFilter 「清除筛选」回调（[com.minibook.ui.transactions.TransactionsViewModel.setFilter] null）。
+ * @param hasActiveFilter true=当前处于筛选态（类型或分类任一非空，展示清除动作）；false=无任何筛选。
+ * @param onClearFilter 「清除筛选」回调（[com.minibook.ui.transactions.TransactionsViewModel.clearFilter]，
+ *   一并复位类型 + 分类）。
  */
 @Composable
 private fun EmptyTransactions(
