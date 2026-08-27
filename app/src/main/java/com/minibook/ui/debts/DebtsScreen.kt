@@ -266,6 +266,8 @@ private fun DebtDetailsList(
     val grouped = remember(details) {
         details.groupBy { it.date }.toSortedMap(reverseOrder())
     }
+    // 单实例展开：当前左滑展开的债务 id（至多一行展开），滑另一行时旧行自动回收。
+    var expandedId by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp), // 预留 FAB 浮层空间，末条不被遮挡
@@ -280,6 +282,8 @@ private fun DebtDetailsList(
                     onClick = { onItemClick(debt) },
                     onEdit = { onEditClick(debt) },
                     onDelete = { onDeleteClick(debt) },
+                    expanded = expandedId == debt.id,
+                    onExpand = { expandedId = debt.id },
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -301,11 +305,15 @@ private fun DebtRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onExpand: () -> Unit = {},
 ) {
     var showMenu by remember { mutableStateOf(false) }
     SwipeToRevealContainer(
         onDeleteClick = onDelete,
         modifier = modifier,
+        expanded = expanded,
+        onExpandRequest = onExpand,
     ) {
         Box {
             DebtDetailRow(

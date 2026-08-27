@@ -718,6 +718,8 @@ private fun TransactionList(
     val grouped = remember(transactions) {
         transactions.groupBy { it.date }.toSortedMap(reverseOrder())
     }
+    // 单实例展开：当前左滑展开的交易 id（至多一行展开），滑另一行时旧行自动回收。
+    var expandedId by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp), // 预留 FAB 浮层空间，末条不被遮挡
@@ -755,6 +757,8 @@ private fun TransactionList(
                         onEdit = { onEditClick(tx) },
                         onDelete = { onDeleteClick(tx) },
                         onBatchManage = onBatchManage,
+                        expanded = expandedId == tx.id,
+                        onExpand = { expandedId = tx.id },
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -780,11 +784,15 @@ private fun TransactionRow(
     onDelete: () -> Unit,
     onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onExpand: () -> Unit = {},
 ) {
     var showMenu by remember { mutableStateOf(false) }
     SwipeToRevealContainer(
         onDeleteClick = onDelete,
         modifier = modifier,
+        expanded = expanded,
+        onExpandRequest = onExpand,
     ) {
         Box {
             TransactionListItem(

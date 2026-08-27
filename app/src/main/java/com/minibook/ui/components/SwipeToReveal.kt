@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -31,36 +33,59 @@ import kotlin.math.roundToInt
  * （删除不可恢复，由调用方做强确认弹窗后执行，本容器不自动删）。右滑（start→end）从关闭态
  * 无效果、从展开态仅回弹关闭。手势仅横向识别，不干扰宿主 `LazyColumn` 纵向滚动。
  *
+ * 删除按钮经 `matchParentSize` 覆盖区精确等高：外层 Box 高度由前景 [content] 决定，
+ * 覆盖区与其等高、内部红底右对齐固定宽 88dp，红底上下边缘与账单框严格齐平。
+ *
+ * 单实例展开：任意时刻至多一行展开。本行滑到展开态即回调 [onExpandRequest] 通知外部标记；
+ * 外部将 [expanded] 仅置 true 于当前行，其余行收 false 经 [LaunchedEffect] 自动回收到关闭态。
+ *
  * @param onDeleteClick 露出后「删除」按钮点击回调（恒为「请求删除」）。
+ * @param expanded 本行当前是否被标记为展开（外部单实例状态；false 且未关闭时自动回收）。
+ * @param onExpandRequest 本行滑动到展开态时通知外部（用于单实例展开的标记切换）。
  * @param content 可滑动的列表行。
  */
 @Composable
 fun SwipeToRevealContainer(
     onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onExpandRequest: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     val actionWidth = 88.dp
     val actionWidthPx = with(LocalDensity.current) { actionWidth.toPx() }
     val offsetX = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    val currentOnExpandRequest = rememberUpdatedState(onExpandRequest)
+
+    // 外部标记本行非展开时自动回收到关闭态（单实例展开：同时至多一行展开）。
+    LaunchedEffect(expanded) {
+        if (!expanded && offsetX.value != 0f) {
+            offsetX.animateTo(0f)
+        }
+    }
 
     Box(modifier = modifier.fillMaxWidth().clipToBounds()) {
-        // 背景：右对齐红底删除按钮，左滑露出后点击触发删除。
+        // 背景删除按钮：matchParentSize 覆盖区与前景 content 严格等高（前景决定外层 Box 高度），
+        // 内部红底右对齐固定宽 actionWidth，红底上下边缘与账单框齐平。
         Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(actionWidth)
-                .background(MaterialTheme.colorScheme.error)
-                .clickable(onClick = onDeleteClick),
-            contentAlignment = Alignment.Center,
+            modifier = Modifier.matchParentSize(),
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            Text(
-                "删除",
-                color = MaterialTheme.colorScheme.onError,
-                style = MaterialTheme.typography.bodyLarge,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(actionWidth)
+                    .background(MaterialTheme.colorScheme.error)
+                    .clickable(onClick = onDeleteClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "删除",
+                    color = MaterialTheme.colorScheme.onError,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
         }
 
         // 前景：不透明 surface 层遮住背景删除按钮，且置于 `.offset` 之后、随偏移整体左移
@@ -78,6 +103,7 @@ fun SwipeToRevealContainer(
                                 val target =
                                     if (offsetX.value < -actionWidthPx / 2f) -actionWidthPx else 0f
                                 offsetX.animateTo(target)
+                                if (target < 0f) currentOnExpandRequest.value()
                             }
                         },
                         onDragCancel = { scope.launch { offsetX.animateTo(0f) } },
