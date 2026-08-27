@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Category
@@ -765,9 +766,9 @@ private fun TransactionList(
 /**
  * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/删除/批量管理」菜单。
  *
- * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹 [DropdownMenu]。左滑删除按钮点击后
- * 只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。「批量管理」进入
- * 批量模式（对齐原顶部「管理」按钮行为）。批量模式下 [TransactionList] 走 Checkbox 分支，
+ * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹屏幕居中 [Dialog] 菜单。左滑删除按钮
+ * 点击后只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。「批量管理」
+ * 进入批量模式（对齐原顶部「管理」按钮行为）。批量模式下 [TransactionList] 走 Checkbox 分支，
  * 不经此行，避免与批量勾选手势冲突。
  */
 @Composable
@@ -780,7 +781,7 @@ private fun TransactionRow(
     onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     SwipeToRevealContainer(
         onDeleteClick = onDelete,
         modifier = modifier,
@@ -792,30 +793,36 @@ private fun TransactionRow(
                 categoryIcon = category?.icon,
                 categoryColor = category?.color,
                 onClick = onClick,
-                onLongClick = { menuExpanded = true },
+                onLongClick = { showMenu = true },
             )
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                DropdownMenuItem(
-                    text = { Text("编辑") },
-                    onClick = {
-                        menuExpanded = false
-                        onEdit()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
-                    onClick = {
-                        menuExpanded = false
-                        onDelete()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("批量管理") },
-                    onClick = {
-                        menuExpanded = false
-                        onBatchManage()
-                    },
-                )
+        }
+    }
+
+    // 长按菜单：屏幕居中 Dialog（替代锚定行的 DropdownMenu），选项点击后先关菜单再执行。
+    if (showMenu) {
+        Dialog(onDismissRequest = { showMenu = false }) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(Modifier.padding(vertical = 8.dp)) {
+                    TextButton(
+                        onClick = { showMenu = false; onEdit() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("编辑") }
+                    TextButton(
+                        onClick = { showMenu = false; onDelete() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    TextButton(
+                        onClick = { showMenu = false; onBatchManage() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("批量管理") }
+                    TextButton(
+                        onClick = { showMenu = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("取消") }
+                }
             }
         }
     }

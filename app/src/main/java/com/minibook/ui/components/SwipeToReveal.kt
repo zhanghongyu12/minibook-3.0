@@ -63,10 +63,12 @@ fun SwipeToRevealContainer(
             )
         }
 
-        // 前景：仅横向可拖，偏移钳制在 [-actionWidth, 0]（只允许左滑露出，右滑要么无效果要么回弹关闭）。
+        // 前景：不透明 surface 层遮住背景删除按钮（默认 offset=0 时完全隐藏红底），左滑露出；
+        // 仅横向可拖，偏移钳制在 [-actionWidth, 0]（只允许左滑露出，右滑要么无效果要么回弹关闭）。
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(

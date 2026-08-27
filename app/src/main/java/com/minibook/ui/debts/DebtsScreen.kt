@@ -11,12 +11,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +33,7 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Debt
@@ -288,9 +288,9 @@ private fun DebtDetailsList(
 }
 
 /**
- * 债务明细行（长按菜单 + 左滑删除）。
+ * 债务明细行（长按居中菜单 + 左滑删除）。
  *
- * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹 [DropdownMenu]。左滑露出「删除」，
+ * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹屏幕居中 [Dialog]。左滑露出「删除」，
  * 点击后只触发外层强确认弹窗（[onDelete]），确认后才真正删除。明细 Tab 无批量模式，
  * 故无需规避批量勾选手势冲突。
  */
@@ -302,7 +302,7 @@ private fun DebtRow(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     SwipeToRevealContainer(
         onDeleteClick = onDelete,
         modifier = modifier,
@@ -311,23 +311,32 @@ private fun DebtRow(
             DebtDetailRow(
                 debt = debt,
                 onClick = onClick,
-                onLongClick = { menuExpanded = true },
+                onLongClick = { showMenu = true },
             )
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                DropdownMenuItem(
-                    text = { Text("编辑") },
-                    onClick = {
-                        menuExpanded = false
-                        onEdit()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
-                    onClick = {
-                        menuExpanded = false
-                        onDelete()
-                    },
-                )
+        }
+    }
+
+    // 长按菜单：屏幕居中 Dialog（替代锚定行的 DropdownMenu），选项点击后先关菜单再执行。
+    if (showMenu) {
+        Dialog(onDismissRequest = { showMenu = false }) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(Modifier.padding(vertical = 8.dp)) {
+                    TextButton(
+                        onClick = { showMenu = false; onEdit() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("编辑") }
+                    TextButton(
+                        onClick = { showMenu = false; onDelete() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    TextButton(
+                        onClick = { showMenu = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("取消") }
+                }
             }
         }
     }
