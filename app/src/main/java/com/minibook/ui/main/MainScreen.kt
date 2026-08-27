@@ -62,15 +62,21 @@ private val mainTabs = listOf(
  * @param onNavigateToImport 账单导入导航回调（根图跳转到 `import`，MiniBookNavHost 接线传入）。
  * @param onOpenTransaction 交易详情页导航回调（根图跳转到 `transaction-detail`，null=新增；
  *   MiniBookNavHost 接线传入，分发到 Home / Transactions 两个 Tab 的入口）。
+ * @param onOpenTransactionEdit 交易详情页「编辑态」导航回调（根图跳转到 `transaction-detail?edit=1`，
+ *   列表长按菜单「编辑」用）；分发到 Transactions Tab。
  * @param onOpenDebt 债务详情页导航回调（根图跳转到 `debt-detail`；id=null 新增/还款预填时传
  *   party/direction）；MiniBookNavHost 接线传入，分发到 Debts Tab 入口。
+ * @param onOpenDebtEdit 债务详情页「编辑态」导航回调（根图跳转到 `debt-detail?edit=1`，列表
+ *   长按菜单「编辑」用）；分发到 Debts Tab。
  */
 @Composable
 fun MainScreen(
     onNavigateToLedgerManage: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
     onOpenTransaction: (String?) -> Unit = {},
+    onOpenTransactionEdit: (String) -> Unit = {},
     onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
+    onOpenDebtEdit: (String) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -123,9 +129,17 @@ fun MainScreen(
                 )
             }
             composable(Destination.Transactions.route) {
-                TransactionsScreen(onOpenTransaction = onOpenTransaction)
+                TransactionsScreen(
+                    onOpenTransaction = onOpenTransaction,
+                    onOpenTransactionEdit = onOpenTransactionEdit,
+                )
             }
-            composable(Destination.Debts.route) { DebtsScreen(onOpenDebt = onOpenDebt) }
+            composable(Destination.Debts.route) {
+                DebtsScreen(
+                    onOpenDebt = onOpenDebt,
+                    onOpenDebtEdit = onOpenDebtEdit,
+                )
+            }
             composable(Destination.Categories.route) { CategoriesScreen() }
             composable(Destination.Settings.route) {
                 SettingsScreen(

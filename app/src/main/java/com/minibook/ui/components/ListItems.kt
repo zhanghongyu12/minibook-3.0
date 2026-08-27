@@ -1,8 +1,10 @@
 package com.minibook.ui.components
 
 import android.graphics.Color as AndroidColor
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,6 +46,7 @@ import kotlin.math.absoluteValue
  * （语义色，经 [MoneyText]）+ 日期。分类展示字段（名称/图标/颜色）由调用方从分类表联表后注入；
  * 金额符号由 `tx.type` 决定语义色（收入绿/支出红）。金额/日期/语义色右列与分类圆底色规则不变。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TransactionListItem(
     tx: Transaction,
@@ -52,14 +55,20 @@ fun TransactionListItem(
     categoryColor: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val fallback = MaterialTheme.colorScheme.outline
     val iconColor = remember(categoryColor) { parseCategoryHex(categoryColor, fallback) }
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .then(clickModifier)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -189,19 +198,26 @@ fun PartyNetRow(
  * 中文 kind 标签默认映射（可经 [kindLabel] 覆盖）：
  * 借出（lend×owe_me）/ 借入（lend×i_owe）/ 收到还款（repay×owe_me）/ 我还款（repay×i_owe）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DebtDetailRow(
     debt: Debt,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     kindLabel: (Debt) -> String = { standardKindLabel(it) },
+    onLongClick: (() -> Unit)? = null,
 ) {
     val (fen, semantic) = netContribution(debt)
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .then(clickModifier)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

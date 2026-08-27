@@ -58,12 +58,14 @@ import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.CategoryPickerSheet
+import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.components.dateToUtcMillis
 import com.minibook.ui.components.utcMillisToDate
 import com.minibook.ui.components.EmptyState
 import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.PrimaryFAB
+import com.minibook.ui.components.SwipeToRevealContainer
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.components.TransactionTypeTab
 import com.minibook.ui.navigation.BillsFilterBus
@@ -87,12 +89,14 @@ import kotlinx.coroutines.launch
  * @param onBack 可选返回回调。非空时（根图明细态，如统计页跳转来的账单明细）页顶显示返回按钮（←），
  *   点击触发 [onBack]；为空时（嵌套 Tab 态，底部导航「记账」入口）保持现状无返回按钮。
  * @param onOpenTransaction 打开交易详情页回调（null=新增 / 非空=查看该 id）；由 MainScreen 注入根图导航。
+ * @param onOpenTransactionEdit 打开交易详情页并直接进编辑态（列表长按菜单「编辑」）；由 MainScreen 注入根图导航。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
 fun TransactionsScreen(
     onBack: (() -> Unit)? = null,
     onOpenTransaction: (String?) -> Unit = {},
+    onOpenTransactionEdit: (String) -> Unit = {},
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -118,6 +122,8 @@ fun TransactionsScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showCategoryPicker by remember { mutableStateOf(false) }
     var showTypePicker by remember { mutableStateOf(false) }
+    // 单条删除目标（长按菜单「删除」/ 左滑「删除」→ 强确认后删除）。
+    var deleteTarget by remember { mutableStateOf<Transaction?>(null) }
     val scope = rememberCoroutineScope()
 
     // 当前筛选结果的交易 id 集合：批量「全选/取消全选」作用域（分类/类型筛选在批量模式下仍生效）。
@@ -236,6 +242,8 @@ fun TransactionsScreen(
                         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
                     },
                     onItemClick = { tx -> onOpenTransaction(tx.id) },
+                    onEditClick = { tx -> onOpenTransactionEdit(tx.id) },
+                    onDeleteClick = { tx -> deleteTarget = tx },
                 )
             }
         }
@@ -296,6 +304,21 @@ fun TransactionsScreen(
                 }
             },
             onDismiss = { showTypePicker = false },
+        )
+    }
+
+    // 单条删除强确认（长按菜单「删除」/ 左滑「删除」）：确认后调 VM 删除，列表 Flow 自动刷新。
+    deleteTarget?.let { target ->
+        ConfirmDialog(
+            title = "删除这笔交易",
+            message = "确定删除这笔交易吗？删除后不可恢复。",
+            confirmLabel = "删除",
+            danger = true,
+            onConfirm = {
+                deleteTarget = null
+                scope.launch { viewModel.deleteTransactions(listOf(target.id)) }
+            },
+            onDismiss = { deleteTarget = null },
         )
     }
 
@@ -670,7 +693,9 @@ private fun CategoryDropdownSection(
  * @param batchMode 是否批量管理模式；true 时行前显示 [Checkbox]、行点击切换选中而非编辑。
  * @param selectedIds 当前选中 id 集合。
  * @param onToggleSelect 切换某条选中态回调。
- * @param onItemClick 行点击回调（普通态跳编辑态；批量态不触达）。
+ * @param onItemClick 行点击回调（普通态跳查看态；批量态不触达）。
+ * @param onEditClick 长按菜单「编辑」回调（跳详情页编辑态）。
+ * @param onDeleteClick 长按菜单「删除」/ 左滑「删除」回调（触发单条删除强确认）。
  */
 @Composable
 private fun TransactionList(
@@ -680,6 +705,8 @@ private fun TransactionList(
     selectedIds: Set<String>,
     onToggleSelect: (String) -> Unit,
     onItemClick: (Transaction) -> Unit,
+    onEditClick: (Transaction) -> Unit,
+    onDeleteClick: (Transaction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = remember(transactions) {
@@ -715,15 +742,65 @@ private fun TransactionList(
                         )
                     }
                 } else {
-                    TransactionListItem(
+                    TransactionRow(
                         tx = tx,
-                        categoryName = category?.name,
-                        categoryIcon = category?.icon,
-                        categoryColor = category?.color,
+                        category = category,
                         onClick = { onItemClick(tx) },
+                        onEdit = { onEditClick(tx) },
+                        onDelete = { onDeleteClick(tx) },
                         modifier = Modifier.animateItem(),
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/删除」菜单。
+ *
+ * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹 [DropdownMenu]。左滑删除按钮点击后
+ * 只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。批量模式下
+ * [TransactionList] 走 Checkbox 分支，不经此行，避免与批量勾选手势冲突。
+ */
+@Composable
+private fun TransactionRow(
+    tx: Transaction,
+    category: Category?,
+    onClick: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    SwipeToRevealContainer(
+        onDeleteClick = onDelete,
+        modifier = modifier,
+    ) {
+        Box {
+            TransactionListItem(
+                tx = tx,
+                categoryName = category?.name,
+                categoryIcon = category?.icon,
+                categoryColor = category?.color,
+                onClick = onClick,
+                onLongClick = { menuExpanded = true },
+            )
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("编辑") },
+                    onClick = {
+                        menuExpanded = false
+                        onEdit()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        menuExpanded = false
+                        onDelete()
+                    },
+                )
             }
         }
     }

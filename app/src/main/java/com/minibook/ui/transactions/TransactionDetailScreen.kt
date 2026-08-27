@@ -75,6 +75,7 @@ import com.minibook.util.Validators
  * 承载查看态全字段回填。查看态↔编辑态切换为页内 `remember { mutableStateOf }`（默认查看）。
  *
  * @param txId 目标交易 id（null = 新增）。
+ * @param initialEdit 初始是否直接进编辑态（列表长按「编辑」经 `?edit=1` 传入）；仅 [txId] 非空时生效。
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  * @param viewModel 复用记一笔 VM；默认经 Hilt 注入（作用域为当前 nav backStack entry）。
  */
@@ -83,6 +84,7 @@ import com.minibook.util.Validators
 fun TransactionDetailScreen(
     txId: String?,
     onBack: () -> Unit,
+    initialEdit: Boolean = false,
     viewModel: TransactionSheetViewModel = hiltViewModel(),
 ) {
     val type by viewModel.type.collectAsStateWithLifecycle()
@@ -98,14 +100,14 @@ fun TransactionDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showCategoryPicker by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    // 查看态↔编辑态（页内自持，默认查看态；新增态恒为表单）。
-    var editing by remember(txId) { mutableStateOf(false) }
+    // 查看态↔编辑态（页内自持，默认查看态；新增态恒为表单；`edit=1` 时直接进编辑态）。
+    var editing by remember(txId, initialEdit) { mutableStateOf(initialEdit && txId != null) }
 
     val isNew = txId == null
 
-    // 打开时初始化：编辑回填（含 detailTx 全字段）or 新增重置。
+    // 打开时初始化：编辑回填（含 detailTx 全字段）or 新增重置；长按编辑入口直接进编辑态。
     LaunchedEffect(txId) {
-        editing = false
+        editing = initialEdit && txId != null
         if (txId != null) viewModel.initEdit(txId) else viewModel.initNew()
     }
 

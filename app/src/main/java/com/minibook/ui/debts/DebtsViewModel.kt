@@ -5,11 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtFilter
+import com.minibook.domain.usecase.debt.DeleteDebtUseCase
 import com.minibook.domain.usecase.debt.NetByPartyUseCase
 import com.minibook.domain.usecase.debt.ObserveDebtsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -42,6 +44,7 @@ import kotlinx.coroutines.flow.stateIn
 class DebtsViewModel @Inject constructor(
     private val observeDebts: ObserveDebtsUseCase,
     private val netByParty: NetByPartyUseCase,
+    private val deleteDebtUseCase: DeleteDebtUseCase,
 ) : ViewModel() {
 
     /** 当前页签：0=明细，1=按对象（初值明细）。 */
@@ -49,6 +52,12 @@ class DebtsViewModel @Inject constructor(
 
     /** 对外只读页签态。 */
     val tabIndex: StateFlow<Int> = _tabIndex.asStateFlow()
+
+    /** 轻提示消息（单条删除失败等）；null=无提示。 */
+    private val _snackbar = MutableStateFlow<String?>(null)
+
+    /** 对外只读的轻提示消息。 */
+    val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
 
     /** 显式刷新触发：递增使 `flatMapLatest` 重订阅观察流（冷流重连）。 */
     private val refreshTick = MutableStateFlow(0)
@@ -95,6 +104,29 @@ class DebtsViewModel @Inject constructor(
      */
     fun refresh() {
         refreshTick.value++
+    }
+
+    /**
+     * 删除一条债务（列表长按菜单「删除」/ 左滑「删除」）。
+     *
+     * 删除成功列表 Flow 自动刷新（[uiState] 重订阅）；失败（如债务已不存在）经 [snackbar]
+     * 轻提示「删除失败」，不抛异常中断 UI。
+     *
+     * @param id 目标债务 id。
+     */
+    fun deleteDebt(id: String) {
+        viewModelScope.launch {
+            try {
+                deleteDebtUseCase(id)
+            } catch (_: Exception) {
+                _snackbar.value = "删除失败"
+            }
+        }
+    }
+
+    /** 清除轻提示（UI 展示后调用，防重复触发）。 */
+    fun clearSnackbar() {
+        _snackbar.value = null
     }
 
     /**

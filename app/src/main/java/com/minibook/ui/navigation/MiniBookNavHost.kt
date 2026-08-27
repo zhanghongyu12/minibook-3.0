@@ -59,7 +59,21 @@ private val sheetIdArguments = listOf(
     },
 )
 
-/** 债务详情页查询参数：`id`（债务 id）+ `party`（还款预填对方，URL 编码）+ `direction`（枚举 name）。 */
+/** 交易详情页查询参数：`id`（交易 id）+ `edit`（1=直接进编辑态）。 */
+private val transactionDetailArguments = listOf(
+    navArgument("id") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("edit") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+)
+
+/** 债务详情页查询参数：`id`（债务 id）+ `party`（还款预填对方，URL 编码）+ `direction`（枚举 name）+ `edit`。 */
 private val debtDetailArguments = listOf(
     navArgument("id") {
         type = NavType.StringType
@@ -72,6 +86,11 @@ private val debtDetailArguments = listOf(
         defaultValue = null
     },
     navArgument("direction") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("edit") {
         type = NavType.StringType
         nullable = true
         defaultValue = null
@@ -135,8 +154,14 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             onOpenTransaction = { txId ->
                                 rootController.navigate(Destination.TransactionDetail.createRoute(txId))
                             },
+                            onOpenTransactionEdit = { txId ->
+                                rootController.navigate(Destination.TransactionDetail.createRoute(txId, edit = true))
+                            },
                             onOpenDebt = { id, party, dir ->
                                 rootController.navigate(Destination.DebtDetail.createRoute(id, party, dir))
+                            },
+                            onOpenDebtEdit = { debtId ->
+                                rootController.navigate(Destination.DebtDetail.createRoute(debtId, edit = true))
                             },
                         )
                     }
@@ -174,15 +199,19 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         onOpenTransaction = { txId ->
                             rootController.navigate(Destination.TransactionDetail.createRoute(txId))
                         },
+                        onOpenTransactionEdit = { txId ->
+                            rootController.navigate(Destination.TransactionDetail.createRoute(txId, edit = true))
+                        },
                     )
                 }
-                // 交易详情全屏页（新增/查看/编辑三合一，P-07）：`?id={id}` 可选（null=新增）。
+                // 交易详情全屏页（新增/查看/编辑三合一，P-07）：`?id={id}` 可选（null=新增）、`edit=1` 直接进编辑态。
                 composable(
                     Destination.TransactionDetail.route,
-                    arguments = sheetIdArguments,
+                    arguments = transactionDetailArguments,
                 ) { entry ->
                     TransactionDetailScreen(
                         txId = entry.arguments?.getString("id"),
+                        initialEdit = entry.arguments?.getString("edit") == "1",
                         onBack = { rootController.popBackStack() },
                     )
                 }
@@ -196,6 +225,7 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         prefillParty = entry.arguments?.getString("party")?.let { Uri.decode(it) },
                         prefillDirection = entry.arguments?.getString("direction")
                             ?.let { runCatching { DebtDirection.valueOf(it) }.getOrNull() },
+                        initialEdit = entry.arguments?.getString("edit") == "1",
                         onBack = { rootController.popBackStack() },
                     )
                 }

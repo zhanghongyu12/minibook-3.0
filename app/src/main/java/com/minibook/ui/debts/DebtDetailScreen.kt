@@ -76,6 +76,7 @@ import kotlin.math.abs
  * @param debtId 目标债务 id（null = 新增/还款预填）。
  * @param prefillParty 还款预填对方姓名（非空 = 直接进还款态）。
  * @param prefillDirection 还款预填方向（非空时与 prefillParty 配套）。
+ * @param initialEdit 初始是否直接进编辑态（列表长按「编辑」经 `?edit=1` 传入）；仅 [debtId] 非空时生效。
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  * @param viewModel 复用债务 VM；默认经 Hilt 注入（作用域为当前 nav backStack entry）。
  */
@@ -86,6 +87,7 @@ fun DebtDetailScreen(
     prefillParty: String?,
     prefillDirection: DebtDirection?,
     onBack: () -> Unit,
+    initialEdit: Boolean = false,
     viewModel: DebtSheetViewModel = hiltViewModel(),
 ) {
     val partyName by viewModel.partyName.collectAsStateWithLifecycle()
@@ -105,12 +107,12 @@ fun DebtDetailScreen(
     // 页态：isNew=新增表单；isPrefillRepay=入口直接还款；editing/repaying=查看态内切换。
     val isNew = debtId == null && prefillParty == null
     val isPrefillRepay = debtId == null && prefillParty != null
-    var editing by remember(debtId, prefillParty) { mutableStateOf(false) }
+    var editing by remember(debtId, prefillParty, initialEdit) { mutableStateOf(initialEdit && debtId != null) }
     var repaying by remember(debtId, prefillParty) { mutableStateOf(false) }
 
-    // 打开时初始化：编辑回填（含 detailDebt） / 还款预填 / 新增重置。
+    // 打开时初始化：编辑回填（含 detailDebt） / 还款预填 / 新增重置；长按编辑入口直接进编辑态。
     LaunchedEffect(debtId, prefillParty, prefillDirection) {
-        editing = false
+        editing = initialEdit && debtId != null
         repaying = false
         when {
             debtId != null -> viewModel.initEdit(debtId)

@@ -55,12 +55,17 @@ sealed class Destination(val route: String) {
 
     // —— 交易详情（P-07） ——
 
-    /** 交易详情全屏页（P-07）：新增/查看/编辑三合一，替代旧 ModalBottomSheet；`?id={id}` 可选（null=新增）。 */
-    data object TransactionDetail : Destination("transaction-detail?id={id}") {
-        /** 构造带可选 `id` 的导航 route（id 为空时返回无参 base route，即新增态）。 */
-        fun createRoute(id: String? = null): String {
+    /** 交易详情全屏页（P-07）：新增/查看/编辑三合一，替代旧 ModalBottomSheet；
+     *  `?id={id}` 可选（null=新增）、`?edit=1` 可选（true=直接进编辑态，配合列表长按「编辑」）。 */
+    data object TransactionDetail : Destination("transaction-detail?id={id}&edit={edit}") {
+        /** 构造带可选 `id` / `edit` 的导航 route（id 为空且 edit=false 时返回无参 base route，即新增态）。 */
+        fun createRoute(id: String? = null, edit: Boolean = false): String {
             val base = route.substringBefore('?')
-            return if (id == null) base else "$base?id=$id"
+            val params = buildList {
+                id?.let { add("id=$it") }
+                if (edit) add("edit=1")
+            }
+            return if (params.isEmpty()) base else "$base?${params.joinToString("&")}"
         }
     }
 
@@ -68,19 +73,21 @@ sealed class Destination(val route: String) {
 
     /** 债务详情全屏页（P-08/P-09）：新增/查看/编辑/还款四态合一，替代旧 ModalBottomSheet。
      *  查询参数：`id`（债务 id，null=新增/还款预填）、`party`（还款预填对方，URL 编码）、
-     *  `direction`（还款预填方向，枚举 name 序列化）；三者均可选。 */
-    data object DebtDetail : Destination("debt-detail?id={id}&party={party}&direction={direction}") {
+     *  `direction`（还款预填方向，枚举 name 序列化）、`edit`（1=直接进编辑态）；四者均可选。 */
+    data object DebtDetail : Destination("debt-detail?id={id}&party={party}&direction={direction}&edit={edit}") {
         /** 构造带可选参数的导航 route：无参返回 base route（新增态）。 */
         fun createRoute(
             debtId: String? = null,
             partyName: String? = null,
             direction: DebtDirection? = null,
+            edit: Boolean = false,
         ): String {
             val base = route.substringBefore('?')
             val params = buildList {
                 debtId?.let { add("id=$it") }
                 partyName?.let { add("party=${Uri.encode(it)}") }
                 direction?.let { add("direction=${it.name}") }
+                if (edit) add("edit=1")
             }
             return if (params.isEmpty()) base else "$base?${params.joinToString("&")}"
         }

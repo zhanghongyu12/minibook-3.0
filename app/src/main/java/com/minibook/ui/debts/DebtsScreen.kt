@@ -1,5 +1,6 @@
 package com.minibook.ui.debts
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,10 +11,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +49,7 @@ import com.minibook.ui.components.NetBalanceCard
 import com.minibook.ui.components.NetBalanceRow
 import com.minibook.ui.components.PartyNetRow
 import com.minibook.ui.components.PrimaryFAB
+import com.minibook.ui.components.SwipeToRevealContainer
 
 /**
  * 债务管理页（TASK-025，UI §2 P-04）。
@@ -58,22 +66,38 @@ import com.minibook.ui.components.PrimaryFAB
  *   我还款，PRD F-02 口径）。
  *
  * FAB / 行点击 / 快捷还款已接线：经 [onOpenDebt] 跳根图全屏债务详情页（P-08/P-09 四态合一）。
+ * 明细行长按「编辑」经 [onOpenDebtEdit] 跳编辑态；「删除」经 [DebtsViewModel.deleteDebt] 强确认后删除。
  *
  * @param onOpenDebt 打开债务详情页回调（debtId=null 新增 / 非空查看；prefillParty+prefillDirection
  *   非空即进还款态预填）；由 MainScreen 注入根图导航。
+ * @param onOpenDebtEdit 打开债务详情页并直接进编辑态（长按菜单「编辑」）；由 MainScreen 注入根图导航。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
 fun DebtsScreen(
     onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
+    onOpenDebtEdit: (String) -> Unit = {},
     viewModel: DebtsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val tabIndex by viewModel.tabIndex.collectAsStateWithLifecycle()
+    val snackbarMessage by viewModel.snackbar.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
     var showCriterion by remember { mutableStateOf(false) }
+    // 单条删除目标（长按菜单「删除」/ 左滑「删除」→ 强确认后删除）。
+    var deleteTarget by remember { mutableStateOf<Debt?>(null) }
+
+    // 单条删除失败等轻提示：展示后立即清除（防重复触发）。
+    LaunchedEffect(snackbarMessage) {
+        snackbarMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearSnackbar()
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             PrimaryFAB(onClick = { onOpenDebt(null, null, null) })
         },
@@ -126,6 +150,8 @@ fun DebtsScreen(
                         DebtDetailsList(
                             details = state.details,
                             onItemClick = { debt -> onOpenDebt(debt.id, null, null) },
+                            onEditClick = { debt -> onOpenDebtEdit(debt.id) },
+                            onDeleteClick = { debt -> deleteTarget = debt },
                         )
                     } else {
                         DebtByPartyList(
@@ -156,6 +182,21 @@ fun DebtsScreen(
             confirmLabel = "知道了",
             onConfirm = { showCriterion = false },
             onDismiss = { showCriterion = false },
+        )
+    }
+
+    // 单条删除强确认（长按菜单「删除」/ 左滑「删除」）：确认后调 VM 删除，列表 Flow 自动刷新。
+    deleteTarget?.let { target ->
+        ConfirmDialog(
+            title = "删除这笔债务",
+            message = "确定删除「${target.partyName}」的这笔记录吗？删除后不可恢复。",
+            confirmLabel = "删除",
+            danger = true,
+            onConfirm = {
+                deleteTarget = null
+                viewModel.deleteDebt(target.id)
+            },
+            onDismiss = { deleteTarget = null },
         )
     }
 }
@@ -210,12 +251,16 @@ private fun NetBalanceHeader(
  * 前缀与行 key（`id`）隔离，`animateItem` 提供条目增删/移动的位移动画。
  *
  * @param details 扁平列表（DAO 已按 createdAt DESC 排序，故组内天然倒序）。
- * @param onItemClick 行点击回调（跳编辑/详情态）。
+ * @param onItemClick 行点击回调（跳详情/编辑态）。
+ * @param onEditClick 长按菜单「编辑」回调（跳详情页编辑态）。
+ * @param onDeleteClick 长按菜单「删除」/ 左滑「删除」回调（触发单条删除强确认）。
  */
 @Composable
 private fun DebtDetailsList(
     details: List<Debt>,
     onItemClick: (Debt) -> Unit,
+    onEditClick: (Debt) -> Unit,
+    onDeleteClick: (Debt) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = remember(details) {
@@ -230,10 +275,58 @@ private fun DebtDetailsList(
                 DateSectionHeader(date = date)
             }
             items(items = debts, key = { it.id }) { debt ->
-                DebtDetailRow(
+                DebtRow(
                     debt = debt,
                     onClick = { onItemClick(debt) },
+                    onEdit = { onEditClick(debt) },
+                    onDelete = { onDeleteClick(debt) },
                     modifier = Modifier.animateItem(),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 债务明细行（长按菜单 + 左滑删除）。
+ *
+ * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹 [DropdownMenu]。左滑露出「删除」，
+ * 点击后只触发外层强确认弹窗（[onDelete]），确认后才真正删除。明细 Tab 无批量模式，
+ * 故无需规避批量勾选手势冲突。
+ */
+@Composable
+private fun DebtRow(
+    debt: Debt,
+    onClick: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    SwipeToRevealContainer(
+        onDeleteClick = onDelete,
+        modifier = modifier,
+    ) {
+        Box {
+            DebtDetailRow(
+                debt = debt,
+                onClick = onClick,
+                onLongClick = { menuExpanded = true },
+            )
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("编辑") },
+                    onClick = {
+                        menuExpanded = false
+                        onEdit()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        menuExpanded = false
+                        onDelete()
+                    },
                 )
             }
         }
