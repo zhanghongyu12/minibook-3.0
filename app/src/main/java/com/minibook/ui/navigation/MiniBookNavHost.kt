@@ -141,7 +141,12 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 // 根图账单明细页：统计页（报表/预算）跳转账单筛选明细复用，返回一次回到来源统计页
                 // （跳转用 navigate 前压栈而非 popBackStack 弹出来源页，故返回栈保留来源页）。
                 composable(Destination.Transactions.route) {
-                    TransactionsScreen(onBack = { rootController.popBackStack() })
+                    TransactionsScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenTransaction = { txId ->
+                            rootController.navigate(Destination.TransactionDetail.createRoute(txId))
+                        },
+                    )
                 }
                 // 交易详情全屏页（新增/查看/编辑三合一，P-07）：`?id={id}` 可选（null=新增）。
                 composable(

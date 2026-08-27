@@ -150,12 +150,10 @@ fun TransactionsScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 全选/删除/取消）。
+            // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 改分类/改类型/删除/取消，全选已下放到列表上方）。
             if (batchMode) {
                 BatchModeBar(
                     selectedCount = selectedIds.size,
-                    allSelected = allVisibleIds.isNotEmpty() && allVisibleIds.all { it in selectedIds },
-                    onToggleSelectAll = ::toggleSelectAll,
                     onCancel = ::exitBatchMode,
                     onDelete = { if (selectedIds.isNotEmpty()) showDeleteConfirm = true },
                     onChangeCategory = { if (selectedIds.isNotEmpty()) showCategoryPicker = true },
@@ -208,6 +206,13 @@ fun TransactionsScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
             )
+            // 批量模式：全选行紧贴列表上方（Checkbox「全选」，作用于当前筛选结果 allVisibleIds）。
+            if (batchMode) {
+                SelectAllRow(
+                    checked = allVisibleIds.isNotEmpty() && allVisibleIds.all { it in selectedIds },
+                    onToggle = ::toggleSelectAll,
+                )
+            }
             when (val state = uiState) {
                 TransactionsUiState.Loading -> LoadingState(
                     modifier = Modifier
@@ -299,15 +304,13 @@ fun TransactionsScreen(
 /**
  * 批量操作栏（批量模式顶部，替换普通态「管理」入口）。
  *
- * 第一行：左「已选 N 条」计数，右「全选/取消全选」；第二行：右「改分类」「改类型」「删除」
- * （0 选中时三者禁用）与「取消」退出批量模式。分类/类型筛选在批量模式下仍生效，「全选」作用于
- * 当前筛选结果（见 [TransactionsScreen.allVisibleIds]）。
+ * 第一行：左「已选 N 条」计数；第二行：右「改分类」「改类型」「删除」（0 选中时三者禁用）
+ * 与「取消」退出批量模式。「全选」已下放到列表上方的 [SelectAllRow]，作用于当前筛选结果
+ * （见 [TransactionsScreen.allVisibleIds]）。
  */
 @Composable
 private fun BatchModeBar(
     selectedCount: Int,
-    allSelected: Boolean,
-    onToggleSelectAll: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onChangeCategory: () -> Unit,
@@ -326,9 +329,6 @@ private fun BatchModeBar(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onToggleSelectAll) {
-                Text(if (allSelected) "取消全选" else "全选")
-            }
         }
         Row(
             modifier = Modifier
@@ -343,6 +343,29 @@ private fun BatchModeBar(
             Button(onClick = onDelete, enabled = selectedCount > 0) { Text("删除") }
             TextButton(onClick = onCancel) { Text("取消") }
         }
+    }
+}
+
+/**
+ * 批量模式全选行（列表上方、紧贴列表）：左 [Checkbox]「全选」，整行可点切换，风格对齐
+ * 批量态列表行的 Checkbox 形态。选中态 [checked] 由调用方按 [TransactionsScreen.allVisibleIds]
+ * 计算（全选 = 当前筛选结果全部选中）。
+ */
+@Composable
+private fun SelectAllRow(
+    checked: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        Text("全选", style = MaterialTheme.typography.bodyLarge)
     }
 }
 
