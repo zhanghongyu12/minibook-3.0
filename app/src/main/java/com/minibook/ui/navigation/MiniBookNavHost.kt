@@ -26,6 +26,7 @@ import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
 import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
+import com.minibook.ui.transactions.TransactionDetailScreen
 import com.minibook.ui.transactions.TransactionsScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -109,13 +110,21 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             onNavigateToImport = {
                                 rootController.navigate(Destination.Import.route)
                             },
+                            onOpenTransaction = { txId ->
+                                rootController.navigate(Destination.TransactionDetail.createRoute(txId))
+                            },
                         )
                     }
                 }
 
                 // Phase 2 真实页（P-12~14，TASK-033/036/038 落地）：顶栏返回 → 根图 popBackStack。
                 composable(Destination.Search.route) {
-                    SearchScreen(onBack = { rootController.popBackStack() })
+                    SearchScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenTransactionDetail = { txId ->
+                            rootController.navigate(Destination.TransactionDetail.createRoute(txId))
+                        },
+                    )
                 }
                 composable(Destination.Reports.route) {
                     ReportsScreen(
@@ -133,6 +142,16 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 // （跳转用 navigate 前压栈而非 popBackStack 弹出来源页，故返回栈保留来源页）。
                 composable(Destination.Transactions.route) {
                     TransactionsScreen(onBack = { rootController.popBackStack() })
+                }
+                // 交易详情全屏页（新增/查看/编辑三合一，P-07）：`?id={id}` 可选（null=新增）。
+                composable(
+                    Destination.TransactionDetail.route,
+                    arguments = sheetIdArguments,
+                ) { entry ->
+                    TransactionDetailScreen(
+                        txId = entry.arguments?.getString("id"),
+                        onBack = { rootController.popBackStack() },
+                    )
                 }
                 composable(Destination.Import.route) {
                     ImportScreen(onBack = { rootController.popBackStack() })

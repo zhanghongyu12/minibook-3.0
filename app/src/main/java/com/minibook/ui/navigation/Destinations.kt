@@ -50,6 +50,17 @@ sealed class Destination(val route: String) {
     /** 账本管理（P-11：账本列表/切换/新增/重命名/删除）。 */
     data object LedgerManage : Destination("ledger-manage")
 
+    // —— 交易详情（P-07） ——
+
+    /** 交易详情全屏页（P-07）：新增/查看/编辑三合一，替代旧 ModalBottomSheet；`?id={id}` 可选（null=新增）。 */
+    data object TransactionDetail : Destination("transaction-detail?id={id}") {
+        /** 构造带可选 `id` 的导航 route（id 为空时返回无参 base route，即新增态）。 */
+        fun createRoute(id: String? = null): String {
+            val base = route.substringBefore('?')
+            return if (id == null) base else "$base?id=$id"
+        }
+    }
+
     // —— 底部弹层（sheets）家族：route 含可选 `{id}` 查询参数（UUID，§12），本期注册占位 ——
 
     /** 记一笔弹层（F-01/F-02 新增交易）。 */

@@ -61,7 +61,6 @@ import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.DateSectionHeader
 import com.minibook.ui.components.dateToUtcMillis
 import com.minibook.ui.components.utcMillisToDate
-import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.EmptyState
 import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.PrimaryFAB
@@ -74,7 +73,7 @@ import kotlinx.coroutines.launch
  * 收支记录页（TASK-024，UI §2 P-03）。
  *
  * 页面结构：顶部 [TransactionTypeTab] 类型筛选（全部/支出/收入，切筛选即由 ViewModel
- * 重订阅）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（弹 [TransactionSheet]）。
+ * 重订阅）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（跳全屏交易详情页）。
  *
  * 列表按 `date` 分组（组头 [DateSectionHeader]，组内 createdAt DESC 由 DAO 保证），
  * `LazyColumn + key=id + animateItem` 保证千条级滚动流畅与条目复用稳定。分类信息经
@@ -82,15 +81,18 @@ import kotlinx.coroutines.launch
  * [TransactionListItem] 按 `tx.categoryId` 取真实 `categoryName/categoryIcon/categoryColor`；
  * 分类已删（map 取不到）传 null 走组件 fallback（❔/outline 色），不崩溃。
  *
- * FAB / 行点击已接线：页内状态弹 [TransactionSheet]（P-07，新增/编辑态），不走 NavHost route。
+ * FAB / 行点击已接线：经 [onOpenTransaction] 跳根图全屏交易详情页（P-07，新增/查看/编辑三合一），
+ * 不再页内弹 [androidx.compose.material3.ModalBottomSheet]。
  *
  * @param onBack 可选返回回调。非空时（根图明细态，如统计页跳转来的账单明细）页顶显示返回按钮（←），
  *   点击触发 [onBack]；为空时（嵌套 Tab 态，底部导航「记账」入口）保持现状无返回按钮。
+ * @param onOpenTransaction 打开交易详情页回调（null=新增 / 非空=查看该 id）；由 MainScreen 注入根图导航。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
 fun TransactionsScreen(
     onBack: (() -> Unit)? = null,
+    onOpenTransaction: (String?) -> Unit = {},
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -110,9 +112,6 @@ fun TransactionsScreen(
             }
         }
     }
-    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
-    var showTransactionSheet by remember { mutableStateOf(false) }
-    var editingTx by remember { mutableStateOf<Transaction?>(null) }
     // 批量管理模式（页内自持，不落 VM）：selectedIds=选中 id 集合，batchMode=是否处于批量模式。
     var batchMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -142,10 +141,7 @@ fun TransactionsScreen(
         floatingActionButton = {
             // 批量模式下隐藏 FAB（行点击被复用为「选中/取消选中」，无法再新增）。
             if (!batchMode) {
-                PrimaryFAB(onClick = {
-                    editingTx = null
-                    showTransactionSheet = true
-                })
+                PrimaryFAB(onClick = { onOpenTransaction(null) })
             }
         },
     ) { innerPadding ->
@@ -234,10 +230,7 @@ fun TransactionsScreen(
                     onToggleSelect = { id ->
                         selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
                     },
-                    onItemClick = { tx ->
-                        editingTx = tx
-                        showTransactionSheet = true
-                    },
+                    onItemClick = { tx -> onOpenTransaction(tx.id) },
                 )
             }
         }
@@ -301,14 +294,7 @@ fun TransactionsScreen(
         )
     }
 
-    // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
-    if (showTransactionSheet) {
-        TransactionSheet(
-            tx = editingTx,
-            onDismiss = { showTransactionSheet = false },
-        )
     }
-}
 
 /**
  * 批量操作栏（批量模式顶部，替换普通态「管理」入口）。

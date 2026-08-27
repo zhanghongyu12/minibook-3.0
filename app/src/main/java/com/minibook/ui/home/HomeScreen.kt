@@ -50,7 +50,6 @@ import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.EmptyState
-import com.minibook.ui.sheets.TransactionSheet
 import com.minibook.ui.components.LedgerSelector
 import com.minibook.ui.components.LoadingState
 import com.minibook.ui.components.MoneySemantic
@@ -117,25 +116,24 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
  * （id→[Category]）折叠为 [HomeUiState.Success.categoriesById]；[HomeScreen] 据此给
  * [TransactionListItem] 传真实 `categoryName/categoryIcon/categoryColor`（缺失时组件 fallback ❔）。
  *
- * **导航已接线**：FAB / 空态「记一笔」/ 最近交易行点击 → 页内弹 [TransactionSheet]（P-07，
- * 新增/编辑态，由页内状态驱动不走 NavHost route）；LedgerSelector → 账本管理（P-11）；
+ * **导航已接线**：FAB / 空态「记一笔」/ 最近交易行点击 → 经 [onOpenTransaction] 跳根图全屏
+ * 交易详情页（P-07，新增/查看/编辑三合一）；LedgerSelector → 账本管理（P-11）；
  * 「查看全部」→ transactions（P-03，经 [onNavigateToTransactions] 由 MainScreen 嵌套导航）。
  *
  * @param viewModel 首页 VM；默认经 [hiltViewModel] 解析。
  * @param onNavigateToTransactions 「查看全部」回调（MainScreen 内嵌导航到 [Destination.Transactions]）。
  * @param onNavigateToLedgerManage 账本入口回调（MainScreen 中转根图导航到 ledger-manage）。
+ * @param onOpenTransaction 打开交易详情页回调（null=新增 / 非空=查看该 id）；由 MainScreen 注入根图导航。
  */
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onNavigateToTransactions: () -> Unit = {},
     onNavigateToLedgerManage: () -> Unit = {},
+    onOpenTransaction: (String?) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
-    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 tx）。
-    var showTransactionSheet by remember { mutableStateOf(false) }
-    var editingTx by remember { mutableStateOf<Transaction?>(null) }
     // 首页跨层根导航（搜索/报表/预算）：由 MiniBookNavHost 经 LocalHomeNavigation 注入；
     // 当月预算超支红点（DEC-012 入口轻量提示）：观察 budgetOverBudget。
     val homeNavigation = LocalHomeNavigation.current
@@ -150,10 +148,7 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            PrimaryFAB(onClick = {
-                editingTx = null
-                showTransactionSheet = true
-            })
+            PrimaryFAB(onClick = { onOpenTransaction(null) })
         },
     ) { innerPadding ->
         Box(
@@ -174,14 +169,8 @@ fun HomeScreen(
                     expense = 0L,
                     transactions = emptyList(),
                     categoriesById = emptyMap(),
-                    onOpenNewTransaction = {
-                        editingTx = null
-                        showTransactionSheet = true
-                    },
-                    onOpenEditTransaction = { tx ->
-                        editingTx = tx
-                        showTransactionSheet = true
-                    },
+                    onOpenNewTransaction = { onOpenTransaction(null) },
+                    onOpenEditTransaction = { tx -> onOpenTransaction(tx.id) },
                     onNavigateToTransactions = onNavigateToTransactions,
                     onOpenReports = {
                         ReportMonthSync.set(selectedMonth)
@@ -200,14 +189,8 @@ fun HomeScreen(
                     expense = state.expense,
                     transactions = state.recentTransactions,
                     categoriesById = state.categoriesById,
-                    onOpenNewTransaction = {
-                        editingTx = null
-                        showTransactionSheet = true
-                    },
-                    onOpenEditTransaction = { tx ->
-                        editingTx = tx
-                        showTransactionSheet = true
-                    },
+                    onOpenNewTransaction = { onOpenTransaction(null) },
+                    onOpenEditTransaction = { tx -> onOpenTransaction(tx.id) },
                     onNavigateToTransactions = onNavigateToTransactions,
                     onOpenReports = {
                         ReportMonthSync.set(selectedMonth)
@@ -221,14 +204,6 @@ fun HomeScreen(
                 )
             }
         }
-    }
-
-    // 记一笔 / 编辑记一笔 Sheet（P-07）：页内状态驱动，tx=null 新增态 / tx 非空编辑态。
-    if (showTransactionSheet) {
-        TransactionSheet(
-            tx = editingTx,
-            onDismiss = { showTransactionSheet = false },
-        )
     }
 }
 
@@ -281,8 +256,8 @@ private fun HomeTopBar(
  * @param transactions 所选月最近交易（调用方已截断前 10，A-3；此处再 take 兜底）。
  * @param categoriesById 分类 id→[Category] 映射（[HomeViewModel] 联表产物），按 `tx.categoryId`
  *   解析名称/图标/颜色；缺失分类时 [TransactionListItem] fallback（❔）。
- * @param onOpenNewTransaction FAB / 空态「记一笔」回调（弹 [TransactionSheet] 新增态）。
- * @param onOpenEditTransaction 最近交易行点击回调（弹 [TransactionSheet] 编辑态，传被点 tx）。
+ * @param onOpenNewTransaction FAB / 空态「记一笔」回调（跳全屏交易详情页，新增态）。
+ * @param onOpenEditTransaction 最近交易行点击回调（跳全屏交易详情页，查看态，传被点 tx）。
  * @param onNavigateToTransactions 「查看全部」回调（跳 transactions 页，P-03）。
  * @param onOpenReports 「报表」入口回调（根图导航到 `reports`，§8.6「报表/预算并排入口」）。
  * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`，§8.6）。

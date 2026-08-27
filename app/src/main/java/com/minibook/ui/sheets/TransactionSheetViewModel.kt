@@ -78,6 +78,10 @@ class TransactionSheetViewModel @Inject constructor(
     private val _isEditMode = MutableStateFlow(false)
     val isEditMode: StateFlow<Boolean> = _isEditMode.asStateFlow()
 
+    /** 查看回填的完整交易（详情页查看态展示全字段用；新增态/未回填为 null）。 */
+    private val _detailTx = MutableStateFlow<Transaction?>(null)
+    val detailTx: StateFlow<Transaction?> = _detailTx.asStateFlow()
+
     /** 编辑目标 id（删除用）。 */
     private val _editingId = MutableStateFlow<String?>(null)
     val editingId: StateFlow<String?> = _editingId.asStateFlow()
@@ -138,6 +142,7 @@ class TransactionSheetViewModel @Inject constructor(
     /** 重置为新增态（Sheet 以 `tx=null` 打开时调用，复用 VM 实例场景防串态）。 */
     fun initNew() {
         originalTx = null
+        _detailTx.value = null
         _isEditMode.value = false
         _editingId.value = null
         _type.value = TransactionType.EXPENSE
@@ -160,6 +165,7 @@ class TransactionSheetViewModel @Inject constructor(
                 return@launch
             }
             originalTx = tx
+            _detailTx.value = tx
             _isEditMode.value = true
             _editingId.value = tx.id
             _type.value = tx.type

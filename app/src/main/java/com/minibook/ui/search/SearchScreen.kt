@@ -78,11 +78,16 @@ import java.time.ZoneOffset
  * 范围限当前账本（SearchViewModel 经两个 UseCase 内置账本切换重订阅，UI 不感知账本）。
  *
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
+ * @param onOpenTransactionDetail 打开交易详情页回调（根图 `navigate(transaction-detail?id=…)`，查看态）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(onBack: () -> Unit, viewModel: SearchViewModel = hiltViewModel()) {
+fun SearchScreen(
+    onBack: () -> Unit,
+    onOpenTransactionDetail: (String) -> Unit = {},
+    viewModel: SearchViewModel = hiltViewModel(),
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val tab by viewModel.tab.collectAsStateWithLifecycle()
     val amountRangeInvalid by viewModel.amountRangeInvalid.collectAsStateWithLifecycle()
@@ -99,8 +104,7 @@ fun SearchScreen(onBack: () -> Unit, viewModel: SearchViewModel = hiltViewModel(
     val partyName by viewModel.partyName.collectAsStateWithLifecycle()
     val direction by viewModel.direction.collectAsStateWithLifecycle()
 
-    // 页内状态：只读明细 Sheet / 分类选择弹层（页面级，不走 NavHost route）。
-    var detailTx by remember { mutableStateOf<Transaction?>(null) }
+    // 页内状态：债务只读明细 Sheet / 分类选择弹层（页面级）；交易明细改走根图全屏详情页。
     var detailDebt by remember { mutableStateOf<Debt?>(null) }
     var showCategoryPicker by remember { mutableStateOf(false) }
 
@@ -171,7 +175,7 @@ fun SearchScreen(onBack: () -> Unit, viewModel: SearchViewModel = hiltViewModel(
                         transactions = state.transactions,
                         debts = state.debts,
                         categoriesById = state.categoriesById,
-                        onTxClick = { detailTx = it },
+                        onTxClick = { onOpenTransactionDetail(it.id) },
                         onDebtClick = { detailDebt = it },
                     )
                 }
@@ -191,18 +195,6 @@ fun SearchScreen(onBack: () -> Unit, viewModel: SearchViewModel = hiltViewModel(
                 showCategoryPicker = false
             },
             onDismiss = { showCategoryPicker = false },
-        )
-    }
-
-    // 只读明细 Sheet：交易
-    detailTx?.let { tx ->
-        val category = categories.firstOrNull { it.id == tx.categoryId }
-        TransactionDetailSheet(
-            tx = tx,
-            categoryName = category?.name,
-            categoryIcon = category?.icon,
-            categoryColor = category?.color,
-            onDismiss = { detailTx = null },
         )
     }
 
