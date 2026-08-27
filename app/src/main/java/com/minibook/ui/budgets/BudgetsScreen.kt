@@ -74,18 +74,21 @@ import java.time.YearMonth
  * →「设置月度总预算」引导；Error=观察流异常 + 重试；Success=两区渲染。
  *
  * 跳转账单：总额卡（已用=当月支出汇总）或分类预算行点击 → [BillsFilterBus] post 当月支出筛选
- * （总额=全部支出 / 分类行=该分类支出）+ onBack 回主屏记账 Tab（账单页 applyBillsFilter 填入查询框）。
+ * （总额=全部支出 / 分类行=该分类支出）+ [onOpenBills] 前压栈跳根图账单明细页（账单页
+ * applyBillsFilter 填入查询框，返回一次回到本页）。
  *
  * 编辑入口：总额卡「编辑总额/设预算」→ [BudgetEditorSheet]（TOTAL mode）；区头「+ 添加」或
  * 分类行尾「编辑」→ [BudgetEditorSheet]（CATEGORY mode，可删除）。保存/删除走
  * [BudgetsViewModel]（总额先删后插 & 分类 UNIQUE，DEC-008）。
  *
  * @param onBack 顶栏返回回调（NavHost 接线传入 `popBackStack()`）。
+ * @param onOpenBills 跳转账单明细回调（根图 `navigate(transactions)` 前压栈，返回回到本页；不再 `onBack`）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
 fun BudgetsScreen(
     onBack: () -> Unit,
+    onOpenBills: () -> Unit = {},
     viewModel: BudgetsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -104,11 +107,11 @@ fun BudgetsScreen(
     // 编辑总额预填：取当前 Success 进度的总额（>0 才回填，否则按「设置」处理）。
     val successProgress = (uiState as? BudgetsUiState.Success)?.progress
 
-    // 点击跳转账单：总额卡=当月全部支出、分类预算行=该分类当月支出。post + onBack 回主屏
-    // （MainScreen LaunchedEffect 观察 Bus → 切记账 Tab，账单页 applyBillsFilter 填入查询框）。
+    // 点击跳转账单：总额卡=当月全部支出、分类预算行=该分类当月支出。post + onOpenBills 前压栈
+    // 跳根图账单明细页（返回一次回到本页；账单页 applyBillsFilter 填入查询框）。
     val jumpToExpenses: (CategoryBudgetProgress?) -> Unit = { item ->
         BillsFilterBus.post(buildBillsFilterRequest(month, item?.category))
-        onBack()
+        onOpenBills()
     }
 
     // 轻提示：展示后经 VM 清除（避免重复展示）。

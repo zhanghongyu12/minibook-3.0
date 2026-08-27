@@ -73,12 +73,14 @@ private val CHART_HEIGHT = 220.dp
  * 落地（TASK-035）；本页不参与任何算术（DEC-011）。限定当前账本（VM/UseCase `flatMapLatest`）。
  *
  * @param onBack 顶栏返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
+ * @param onOpenBills 跳转账单明细回调（根图 `navigate(transactions)` 前压栈，返回回到本页；不再 `onBack`）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
     onBack: () -> Unit,
+    onOpenBills: () -> Unit = {},
     viewModel: ReportsViewModel = hiltViewModel(),
 ) {
     val viewType by viewModel.viewType.collectAsStateWithLifecycle()
@@ -120,7 +122,7 @@ fun ReportsScreen(
                     onKindChange = viewModel::setTrendKind,
                     onBucketClick = { bucket ->
                         BillsFilterBus.post(viewModel.buildTrendBillsFilterRequest(bucket))
-                        onBack()
+                        onOpenBills()
                     },
                 )
             }
@@ -131,7 +133,7 @@ fun ReportsScreen(
                     onTypeChange = viewModel::setCategoryType,
                     onCategoryClick = { slice ->
                         BillsFilterBus.post(viewModel.buildBillsFilterRequest(slice))
-                        onBack()
+                        onOpenBills()
                     },
                 )
             }

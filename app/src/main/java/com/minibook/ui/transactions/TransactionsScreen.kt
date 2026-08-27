@@ -24,6 +24,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -45,6 +46,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,10 +84,15 @@ import kotlinx.coroutines.launch
  *
  * FAB / 行点击已接线：页内状态弹 [TransactionSheet]（P-07，新增/编辑态），不走 NavHost route。
  *
+ * @param onBack 可选返回回调。非空时（根图明细态，如统计页跳转来的账单明细）页顶显示返回按钮（←），
+ *   点击触发 [onBack]；为空时（嵌套 Tab 态，底部导航「记账」入口）保持现状无返回按钮。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
-fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
+fun TransactionsScreen(
+    onBack: (() -> Unit)? = null,
+    viewModel: TransactionsViewModel = hiltViewModel(),
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val filterType by viewModel.filterType.collectAsStateWithLifecycle()
     val filterCategoryId by viewModel.filterCategoryId.collectAsStateWithLifecycle()
@@ -164,6 +172,15 @@ fun TransactionsScreen(viewModel: TransactionsViewModel = hiltViewModel()) {
                         .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Text(
+                                "←",
+                                fontSize = 22.sp,
+                                modifier = Modifier.semantics { contentDescription = "返回" },
+                            )
+                        }
+                    }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = {
                         batchMode = true

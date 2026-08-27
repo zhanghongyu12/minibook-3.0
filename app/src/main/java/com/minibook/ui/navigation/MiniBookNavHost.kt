@@ -26,6 +26,7 @@ import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
 import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
+import com.minibook.ui.transactions.TransactionsScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.StateFlow
@@ -117,10 +118,21 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                     SearchScreen(onBack = { rootController.popBackStack() })
                 }
                 composable(Destination.Reports.route) {
-                    ReportsScreen(onBack = { rootController.popBackStack() })
+                    ReportsScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenBills = { rootController.navigate(Destination.Transactions.route) },
+                    )
                 }
                 composable(Destination.Budgets.route) {
-                    BudgetsScreen(onBack = { rootController.popBackStack() })
+                    BudgetsScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenBills = { rootController.navigate(Destination.Transactions.route) },
+                    )
+                }
+                // 根图账单明细页：统计页（报表/预算）跳转账单筛选明细复用，返回一次回到来源统计页
+                // （跳转用 navigate 前压栈而非 popBackStack 弹出来源页，故返回栈保留来源页）。
+                composable(Destination.Transactions.route) {
+                    TransactionsScreen(onBack = { rootController.popBackStack() })
                 }
                 composable(Destination.Import.route) {
                     ImportScreen(onBack = { rootController.popBackStack() })
