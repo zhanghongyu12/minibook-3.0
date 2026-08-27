@@ -106,6 +106,10 @@ class DebtSheetViewModel @Inject constructor(
     /** 编辑回填的原始债务：update/delete 复用其 id/ledgerId/createdAt 等只读字段。 */
     private var originalDebt: Debt? = null
 
+    /** 查看回填的完整债务（详情页查看态展示全字段用；新增/还款/未回填为 null）。 */
+    private val _detailDebt = MutableStateFlow<Debt?>(null)
+    val detailDebt: StateFlow<Debt?> = _detailDebt.asStateFlow()
+
     /**
      * 对方当前净额（分）：正值=对方欠我，负值=我欠对方（NetByPartyUseCase 口径）。
      *
@@ -156,12 +160,33 @@ class DebtSheetViewModel @Inject constructor(
     /** 重置为新增态（Sheet 以 `debt=null` 打开时调用）。 */
     fun initNew() {
         originalDebt = null
+        _detailDebt.value = null
         _isEditMode.value = false
         _editingId.value = null
         _partyName.value = ""
         _amountFen.value = null
         _kind.value = DebtKind.LEND
         _direction.value = DebtDirection.OWE_ME
+        _date.value = today()
+        _remark.value = ""
+    }
+
+    /**
+     * 还款预填态（快捷还款入口 / 查看态点「还款」）：对方与方向预填只读，[kind] 固定 REPAY，
+     * 新增态保存走 [AddDebtUseCase] 落一条 `REPAY×direction`。
+     *
+     * @param partyName 对方姓名（预填）。
+     * @param direction 还款方向（预填，决定收到还款/我还款）。
+     */
+    fun initRepay(partyName: String, direction: DebtDirection) {
+        originalDebt = null
+        _detailDebt.value = null
+        _isEditMode.value = false
+        _editingId.value = null
+        _partyName.value = partyName
+        _amountFen.value = null
+        _kind.value = DebtKind.REPAY
+        _direction.value = direction
         _date.value = today()
         _remark.value = ""
     }
@@ -179,6 +204,7 @@ class DebtSheetViewModel @Inject constructor(
                 return@launch
             }
             originalDebt = debt
+            _detailDebt.value = debt
             _isEditMode.value = true
             _editingId.value = debt.id
             _partyName.value = debt.partyName

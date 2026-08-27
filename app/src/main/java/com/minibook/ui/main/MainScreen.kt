@@ -15,6 +15,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.minibook.domain.model.DebtDirection
 import com.minibook.ui.categories.CategoriesScreen
 import com.minibook.ui.debts.DebtsScreen
 import com.minibook.ui.home.HomeScreen
@@ -61,12 +62,15 @@ private val mainTabs = listOf(
  * @param onNavigateToImport 账单导入导航回调（根图跳转到 `import`，MiniBookNavHost 接线传入）。
  * @param onOpenTransaction 交易详情页导航回调（根图跳转到 `transaction-detail`，null=新增；
  *   MiniBookNavHost 接线传入，分发到 Home / Transactions 两个 Tab 的入口）。
+ * @param onOpenDebt 债务详情页导航回调（根图跳转到 `debt-detail`；id=null 新增/还款预填时传
+ *   party/direction）；MiniBookNavHost 接线传入，分发到 Debts Tab 入口。
  */
 @Composable
 fun MainScreen(
     onNavigateToLedgerManage: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
     onOpenTransaction: (String?) -> Unit = {},
+    onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -121,7 +125,7 @@ fun MainScreen(
             composable(Destination.Transactions.route) {
                 TransactionsScreen(onOpenTransaction = onOpenTransaction)
             }
-            composable(Destination.Debts.route) { DebtsScreen() }
+            composable(Destination.Debts.route) { DebtsScreen(onOpenDebt = onOpenDebt) }
             composable(Destination.Categories.route) { CategoriesScreen() }
             composable(Destination.Settings.route) {
                 SettingsScreen(

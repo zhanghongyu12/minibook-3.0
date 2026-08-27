@@ -42,46 +42,40 @@ import com.minibook.ui.components.NetBalanceCard
 import com.minibook.ui.components.NetBalanceRow
 import com.minibook.ui.components.PartyNetRow
 import com.minibook.ui.components.PrimaryFAB
-import com.minibook.ui.sheets.DebtSheet
-import com.minibook.ui.sheets.RepaySheet
 
 /**
  * 债务管理页（TASK-025，UI §2 P-04）。
  *
  * 页面结构：顶部 [DebtViewTab]（明细/按对象）+ [NetBalanceCard] 净额卡（卡旁「?」口径说明
- * 按钮 → [ConfirmDialog]）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（弹 [DebtSheet]）。
+ * 按钮 → [ConfirmDialog]）+ 中部三态内容区 + 右下 [PrimaryFAB] 新增入口（跳 [DebtDetailScreen]）。
  *
  * - **明细 Tab**：按 `date` 分组（组头 [DateSectionHeader]），行用 [DebtDetailRow]（C-15，
  *   已内置四态 netContribution 口径与 kind 标签，±金额按净额贡献语义着色）；行点击 →
- *   [DebtSheet] 编辑/详情态。
+ *   [DebtDetailScreen] 查看态。
  * - **按对象 Tab**：遍历 `byParty`，行用 [PartyNetRow]（C-14，net>0 对方欠我绿 / net<0
- *   我欠对方红 / net==0 两清灰，行尾「还款」快捷入口）；「还款」→ [RepaySheet] 并按净额
- *   推导方向预填（netFen>0 → [DebtDirection.OWE_ME] 收到还款 / netFen<0 → [DebtDirection.I_OWE]
+ *   我欠对方红 / net==0 两清灰，行尾「还款」快捷入口）；「还款」→ [DebtDetailScreen] 还款态并按
+ *   净额推导方向预填（netFen>0 → [DebtDirection.OWE_ME] 收到还款 / netFen<0 → [DebtDirection.I_OWE]
  *   我还款，PRD F-02 口径）。
  *
- * FAB / 行点击 / 快捷还款已接线：页内状态弹 [DebtSheet]/[RepaySheet]，不走 NavHost route。
+ * FAB / 行点击 / 快捷还款已接线：经 [onOpenDebt] 跳根图全屏债务详情页（P-08/P-09 四态合一）。
  *
+ * @param onOpenDebt 打开债务详情页回调（debtId=null 新增 / 非空查看；prefillParty+prefillDirection
+ *   非空即进还款态预填）；由 MainScreen 注入根图导航。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
-fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
+fun DebtsScreen(
+    onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
+    viewModel: DebtsViewModel = hiltViewModel(),
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val tabIndex by viewModel.tabIndex.collectAsStateWithLifecycle()
     var showCriterion by remember { mutableStateOf(false) }
-    // 页内 Sheet 弹起状态：不走 NavHost route，Sheet 直接接收领域对象（编辑态 debt）。
-    var showDebtSheet by remember { mutableStateOf(false) }
-    var editingDebt by remember { mutableStateOf<Debt?>(null) }
-    var showRepaySheet by remember { mutableStateOf(false) }
-    var repayParty by remember { mutableStateOf("") }
-    var repayDirection by remember { mutableStateOf(DebtDirection.OWE_ME) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
-            PrimaryFAB(onClick = {
-                editingDebt = null
-                showDebtSheet = true
-            })
+            PrimaryFAB(onClick = { onOpenDebt(null, null, null) })
         },
     ) { innerPadding ->
         Column(
@@ -131,10 +125,7 @@ fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
                     if (tabIndex == 0) {
                         DebtDetailsList(
                             details = state.details,
-                            onItemClick = { debt ->
-                                editingDebt = debt
-                                showDebtSheet = true
-                            },
+                            onItemClick = { debt -> onOpenDebt(debt.id, null, null) },
                         )
                     } else {
                         DebtByPartyList(
@@ -144,36 +135,18 @@ fun DebtsScreen(viewModel: DebtsViewModel = hiltViewModel()) {
                                 //   netFen > 0（对方欠我）→ 收到还款（OWE_ME）；
                                 //   netFen < 0（我欠对方）→ 我还款（I_OWE）；
                                 //   netFen == 0（两清）→ 默认收到还款预填，仍允许补记。
-                                repayParty = party
-                                repayDirection = when {
+                                val direction = when {
                                     netFen > 0L -> DebtDirection.OWE_ME
                                     netFen < 0L -> DebtDirection.I_OWE
                                     else -> DebtDirection.OWE_ME
                                 }
-                                showRepaySheet = true
+                                onOpenDebt(null, party, direction)
                             },
                         )
                     }
                 }
             }
         }
-    }
-
-    // 债务新增 / 编辑 Sheet（P-08）：debt=null 新增态 / debt 非空编辑态。
-    if (showDebtSheet) {
-        DebtSheet(
-            debt = editingDebt,
-            onDismiss = { showDebtSheet = false },
-        )
-    }
-
-    // 快捷还款 Sheet（P-09）：按对象视图行尾「还款」拉起，partyName/direction 预填只读。
-    if (showRepaySheet) {
-        RepaySheet(
-            partyName = repayParty,
-            direction = repayDirection,
-            onDismiss = { showRepaySheet = false },
-        )
     }
 
     if (showCriterion) {

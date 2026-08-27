@@ -73,12 +73,13 @@ import java.time.ZoneOffset
  * - `TopAppBar`「搜索」＋ 返回 ← ＋「重置」（清空当前组条件）；
  * - 条件区（Column，可滚动）：`SegmentedButton`「交易 | 债务」切换，展示当前组的条件字段；
  * - 结果区（LazyColumn）：交易 / 债务两组、组内时间倒序、行复用 [TransactionListItem]/
- *   [DebtDetailRow]（只读点击 → 只读明细 Sheet）；空态 / min>max 错误态复用 [EmptyState]。
+ *   [DebtDetailRow]（只读点击 → 根图全屏详情页）；空态 / min>max 错误态复用 [EmptyState]。
  *
  * 范围限当前账本（SearchViewModel 经两个 UseCase 内置账本切换重订阅，UI 不感知账本）。
  *
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  * @param onOpenTransactionDetail 打开交易详情页回调（根图 `navigate(transaction-detail?id=…)`，查看态）。
+ * @param onOpenDebtDetail 打开债务详情页回调（根图 `navigate(debt-detail?id=…)`，查看态）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +87,7 @@ import java.time.ZoneOffset
 fun SearchScreen(
     onBack: () -> Unit,
     onOpenTransactionDetail: (String) -> Unit = {},
+    onOpenDebtDetail: (String) -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -104,8 +106,7 @@ fun SearchScreen(
     val partyName by viewModel.partyName.collectAsStateWithLifecycle()
     val direction by viewModel.direction.collectAsStateWithLifecycle()
 
-    // 页内状态：债务只读明细 Sheet / 分类选择弹层（页面级）；交易明细改走根图全屏详情页。
-    var detailDebt by remember { mutableStateOf<Debt?>(null) }
+    // 页内状态：分类选择弹层（页面级）；交易/债务明细均改走根图全屏详情页。
     var showCategoryPicker by remember { mutableStateOf(false) }
 
     val selectedCategory = remember(categories, categoryId) {
@@ -176,7 +177,7 @@ fun SearchScreen(
                         debts = state.debts,
                         categoriesById = state.categoriesById,
                         onTxClick = { onOpenTransactionDetail(it.id) },
-                        onDebtClick = { detailDebt = it },
+                        onDebtClick = { onOpenDebtDetail(it.id) },
                     )
                 }
             }
@@ -195,14 +196,6 @@ fun SearchScreen(
                 showCategoryPicker = false
             },
             onDismiss = { showCategoryPicker = false },
-        )
-    }
-
-    // 只读明细 Sheet：债务
-    detailDebt?.let { debt ->
-        DebtDetailSheet(
-            debt = debt,
-            onDismiss = { detailDebt = null },
         )
     }
 }

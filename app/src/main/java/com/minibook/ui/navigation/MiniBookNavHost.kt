@@ -1,5 +1,6 @@
 package com.minibook.ui.navigation
 
+import android.net.Uri
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -17,7 +18,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.minibook.data.local.security.AppLockController
+import com.minibook.domain.model.DebtDirection
 import com.minibook.ui.budgets.BudgetsScreen
+import com.minibook.ui.debts.DebtDetailScreen
 import com.minibook.ui.home.HomeNavigation
 import com.minibook.ui.home.LocalHomeNavigation
 import com.minibook.ui.billimport.ImportScreen
@@ -50,6 +53,25 @@ class NavRootViewModel @Inject constructor(
 /** sheets 家族共享的 `{id}` 查询参数（UUID，§12）：可空、默认 null，未传时匹配 base route。 */
 private val sheetIdArguments = listOf(
     navArgument("id") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+)
+
+/** 债务详情页查询参数：`id`（债务 id）+ `party`（还款预填对方，URL 编码）+ `direction`（枚举 name）。 */
+private val debtDetailArguments = listOf(
+    navArgument("id") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("party") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("direction") {
         type = NavType.StringType
         nullable = true
         defaultValue = null
@@ -113,6 +135,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             onOpenTransaction = { txId ->
                                 rootController.navigate(Destination.TransactionDetail.createRoute(txId))
                             },
+                            onOpenDebt = { id, party, dir ->
+                                rootController.navigate(Destination.DebtDetail.createRoute(id, party, dir))
+                            },
                         )
                     }
                 }
@@ -123,6 +148,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         onBack = { rootController.popBackStack() },
                         onOpenTransactionDetail = { txId ->
                             rootController.navigate(Destination.TransactionDetail.createRoute(txId))
+                        },
+                        onOpenDebtDetail = { debtId ->
+                            rootController.navigate(Destination.DebtDetail.createRoute(debtId))
                         },
                     )
                 }
@@ -155,6 +183,19 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 ) { entry ->
                     TransactionDetailScreen(
                         txId = entry.arguments?.getString("id"),
+                        onBack = { rootController.popBackStack() },
+                    )
+                }
+                // 债务详情全屏页（新增/查看/编辑/还款四态合一，P-08/P-09）：参数均为可选（null=新增）。
+                composable(
+                    Destination.DebtDetail.route,
+                    arguments = debtDetailArguments,
+                ) { entry ->
+                    DebtDetailScreen(
+                        debtId = entry.arguments?.getString("id"),
+                        prefillParty = entry.arguments?.getString("party")?.let { Uri.decode(it) },
+                        prefillDirection = entry.arguments?.getString("direction")
+                            ?.let { runCatching { DebtDirection.valueOf(it) }.getOrNull() },
                         onBack = { rootController.popBackStack() },
                     )
                 }
