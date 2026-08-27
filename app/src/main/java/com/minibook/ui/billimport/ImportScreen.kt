@@ -24,6 +24,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -115,7 +121,7 @@ private fun ImportTopBar(onBack: () -> Unit) {
 /**
  * Idle 提示页（§9.2）：引导说明 + 微信/支付宝两张 [PlatformGuideCard] + 主按钮「去选择文件」。
  *
- * @param onSelectFile 「去选择文件」回调（触发 SAF `OpenDocument`）。
+ * @param onSelectFile 「去选择文件」回调（触发 SAF `OpenDocument`）；顶部引导文字中的「选择文件」同为可点击链接，点击即触发本回调。
  */
 @Composable
 private fun ImportIdleContent(onSelectFile: () -> Unit) {
@@ -124,8 +130,28 @@ private fun ImportIdleContent(onSelectFile: () -> Unit) {
             .fillMaxSize()
             .padding(16.dp),
     ) {
+        val guideText = buildAnnotatedString {
+            append("支持微信账单（.xlsx）与支付宝账单（.csv），先按下方步骤导出文件，再")
+            withLink(
+                LinkAnnotation.Clickable(
+                    tag = "select_file",
+                    styles = TextLinkStyles(
+                        style = SpanStyle(
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline,
+                        ),
+                    ),
+                    linkInteractionListener = { _ ->
+                        onSelectFile()
+                    },
+                ),
+            ) {
+                append("选择文件")
+            }
+            append("导入。")
+        }
         Text(
-            text = "支持微信账单（.xlsx）与支付宝账单（.csv），先按下方步骤导出文件，再选择文件导入。",
+            text = guideText,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
