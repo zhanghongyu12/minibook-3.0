@@ -171,6 +171,7 @@ fun TransactionDetailScreen(
                     tx = viewTx,
                     categories = categories,
                     onEdit = { editing = true },
+                    onBack = onBack,
                 )
             }
         }
@@ -321,6 +322,7 @@ private fun TransactionViewContent(
     tx: Transaction,
     categories: List<Category>,
     onEdit: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val category = categories.firstOrNull { it.id == tx.categoryId }
     val fallback = MaterialTheme.colorScheme.outline
@@ -379,6 +381,8 @@ private fun TransactionViewContent(
 
         Spacer(Modifier.height(16.dp))
         Button(onClick = onEdit, modifier = Modifier.fillMaxWidth()) { Text("编辑") }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("返回") }
     }
 }
 

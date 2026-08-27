@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -207,6 +209,7 @@ fun DebtDetailScreen(
                         viewModel.initRepay(viewDebt.partyName, viewDebt.direction)
                         repaying = true
                     },
+                    onBack = onBack,
                 )
             }
         }
@@ -409,6 +412,7 @@ private fun DebtViewContent(
     debt: Debt,
     onEdit: () -> Unit,
     onRepay: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val (netFen, semantic) = debtNetContribution(debt)
     Column {
@@ -446,6 +450,8 @@ private fun DebtViewContent(
             OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) { Text("编辑") }
             Button(onClick = onRepay, modifier = Modifier.weight(1f)) { Text("还款") }
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("返回") }
     }
 }
 
