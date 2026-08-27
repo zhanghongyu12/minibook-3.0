@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -156,7 +157,8 @@ fun TransactionsScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 顶部栏：普通态右侧「管理」入口；批量态替换为批量操作栏（已选 N 条 + 改分类/改类型/删除/取消，全选已下放到列表上方）。
+            // 顶部栏：普通态仅返回按钮（批量管理入口已移到长按菜单「批量管理」）；批量态替换为
+            // 批量操作栏（已选 N 条 + 改分类/改类型/删除/取消，全选已下放到列表上方）。
             if (batchMode) {
                 BatchModeBar(
                     selectedCount = selectedIds.size,
@@ -180,13 +182,6 @@ fun TransactionsScreen(
                                 modifier = Modifier.semantics { contentDescription = "返回" },
                             )
                         }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = {
-                        batchMode = true
-                        selectedIds = emptySet()
-                    }) {
-                        Text("管理")
                     }
                 }
             }
@@ -244,6 +239,10 @@ fun TransactionsScreen(
                     onItemClick = { tx -> onOpenTransaction(tx.id) },
                     onEditClick = { tx -> onOpenTransactionEdit(tx.id) },
                     onDeleteClick = { tx -> deleteTarget = tx },
+                    onBatchManage = {
+                        batchMode = true
+                        selectedIds = emptySet()
+                    },
                 )
             }
         }
@@ -523,7 +522,9 @@ private fun DateFilterChip(
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier
+                .heightIn(min = 40.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -600,7 +601,9 @@ private fun CategoryFilterEntry(
             ),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("分类：", style = MaterialTheme.typography.labelMedium, color = contentColor)
@@ -696,6 +699,7 @@ private fun CategoryDropdownSection(
  * @param onItemClick 行点击回调（普通态跳查看态；批量态不触达）。
  * @param onEditClick 长按菜单「编辑」回调（跳详情页编辑态）。
  * @param onDeleteClick 长按菜单「删除」/ 左滑「删除」回调（触发单条删除强确认）。
+ * @param onBatchManage 长按菜单「批量管理」回调（进入批量管理模式）。
  */
 @Composable
 private fun TransactionList(
@@ -707,6 +711,7 @@ private fun TransactionList(
     onItemClick: (Transaction) -> Unit,
     onEditClick: (Transaction) -> Unit,
     onDeleteClick: (Transaction) -> Unit,
+    onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val grouped = remember(transactions) {
@@ -748,6 +753,7 @@ private fun TransactionList(
                         onClick = { onItemClick(tx) },
                         onEdit = { onEditClick(tx) },
                         onDelete = { onDeleteClick(tx) },
+                        onBatchManage = onBatchManage,
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -757,11 +763,12 @@ private fun TransactionList(
 }
 
 /**
- * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/删除」菜单。
+ * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/删除/批量管理」菜单。
  *
  * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹 [DropdownMenu]。左滑删除按钮点击后
- * 只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。批量模式下
- * [TransactionList] 走 Checkbox 分支，不经此行，避免与批量勾选手势冲突。
+ * 只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。「批量管理」进入
+ * 批量模式（对齐原顶部「管理」按钮行为）。批量模式下 [TransactionList] 走 Checkbox 分支，
+ * 不经此行，避免与批量勾选手势冲突。
  */
 @Composable
 private fun TransactionRow(
@@ -770,6 +777,7 @@ private fun TransactionRow(
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -799,6 +807,13 @@ private fun TransactionRow(
                     onClick = {
                         menuExpanded = false
                         onDelete()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("批量管理") },
+                    onClick = {
+                        menuExpanded = false
+                        onBatchManage()
                     },
                 )
             }
