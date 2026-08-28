@@ -462,9 +462,10 @@ private fun QueryFilterArea(
                 onValueChange = onRemarkChange,
                 placeholder = { Text("搜索备注/标题关键词") },
                 singleLine = true,
+                textStyle = MaterialTheme.typography.labelMedium,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp), // 与第二行日期/分类控件统一 48dp 高度
+                    .height(40.dp), // 与第二行日期/分类控件统一 40dp 高度
             )
             TextButton(onClick = onReset) { Text("重置") }
         }
@@ -525,13 +526,13 @@ private fun DateFilterChip(
     ) {
         Row(
             modifier = Modifier
-                .height(48.dp)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .height(40.dp)
+                .padding(horizontal = 10.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = value ?: placeholder,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelSmall,
                 color = if (value != null) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
@@ -604,14 +605,14 @@ private fun CategoryFilterEntry(
         ) {
             Row(
                 modifier = Modifier
-                    .height(48.dp)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .height(40.dp)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("分类：", style = MaterialTheme.typography.labelMedium, color = contentColor)
+                Text("分类：", style = MaterialTheme.typography.labelSmall, color = contentColor)
                 Text(
                     selectedName ?: "全部分类",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = contentColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
