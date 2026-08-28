@@ -48,6 +48,7 @@ private const val DEFAULT_PARSE_ERROR_EXPAND_THRESHOLD: Int = 3
  * @param title 平台名（如「微信账单」）。
  * @param path 分步导出路径文案。
  * @param format 文件格式提示（如「导出格式：.xlsx（账单明细）」）。
+ * @param onClick 卡片点击回调（默认无操作；导入页接线为触发 SAF 文件选择）。
  */
 @Composable
 fun PlatformGuideCard(
@@ -56,11 +57,14 @@ fun PlatformGuideCard(
     path: String,
     format: String,
     modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

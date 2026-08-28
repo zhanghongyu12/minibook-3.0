@@ -161,6 +161,7 @@ private fun ImportIdleContent(onSelectFile: () -> Unit) {
             title = "微信账单",
             path = "我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单 → 用于个人对账",
             format = "导出格式：.xlsx（账单明细）",
+            onClick = onSelectFile,
         )
         Spacer(Modifier.height(12.dp))
         PlatformGuideCard(
@@ -168,6 +169,7 @@ private fun ImportIdleContent(onSelectFile: () -> Unit) {
             title = "支付宝账单",
             path = "我的 → 账单 → 右上「⋯」→ 开具交易流水证明 → 用于个人对账",
             format = "导出格式：.csv（交易流水证明）",
+            onClick = onSelectFile,
         )
         Spacer(Modifier.weight(1f))
         Button(
