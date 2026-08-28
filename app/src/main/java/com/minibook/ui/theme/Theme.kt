@@ -3,6 +3,7 @@ package com.minibook.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -13,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -95,23 +97,10 @@ fun MiniBookTheme(
     }
     val customPrimary = themeColorHex?.let(::parseThemeColor)
     val colorScheme = when {
-        // 自定义主题色优先于 dynamicColor / 静态基线，仅覆盖 primary（其余 M3 色不强制）。
+        // 自定义主题色优先于 dynamicColor / 静态基线：以 seed 生成完整
+        // primary/secondary/tertiary 及各自 container/on，容器色/徽标/FAB/菜单栏等自动跟随。
         customPrimary != null ->
-            if (resolvedDark) {
-                darkColorScheme(
-                    primary = customPrimary,
-                    onPrimary = Color(0xFF1D1B20),
-                    primaryContainer = DarkColors.primaryContainer,
-                    onPrimaryContainer = DarkColors.onPrimaryContainer,
-                )
-            } else {
-                lightColorScheme(
-                    primary = customPrimary,
-                    onPrimary = Color.White,
-                    primaryContainer = LightColors.primaryContainer,
-                    onPrimaryContainer = LightColors.onPrimaryContainer,
-                )
-            }
+            if (resolvedDark) themedDarkScheme(customPrimary) else themedLightScheme(customPrimary)
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (resolvedDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         resolvedDark -> DarkColors
@@ -133,3 +122,44 @@ fun MiniBookTheme(
 private fun parseThemeColor(hex: String): Color? = runCatching {
     Color(android.graphics.Color.parseColor(hex))
 }.getOrNull()
+
+/**
+ * 以 [seed] 生成完整亮色 [ColorScheme]（primary/secondary/tertiary 及各自 container/on）。
+ *
+ * 用 [lerp] 做色相调和：container 由 surface 向 seed 轻混、on-container 由 seed 向黑轻混。
+ * surface/background/error 系列保持默认（中性色、错误红不跟随主题色）。
+ */
+private fun themedLightScheme(seed: Color): ColorScheme = lightColorScheme(
+    primary = seed,
+    onPrimary = Color.White,
+    primaryContainer = lerp(LightColors.surface, seed, 0.16f),
+    onPrimaryContainer = lerp(seed, Color.Black, 0.25f),
+    secondary = lerp(seed, Color.Black, 0.08f),
+    onSecondary = Color.White,
+    secondaryContainer = lerp(LightColors.surface, seed, 0.12f),
+    onSecondaryContainer = lerp(seed, Color.Black, 0.25f),
+    tertiary = lerp(seed, Color.Black, 0.18f),
+    onTertiary = Color.White,
+    tertiaryContainer = lerp(LightColors.surface, seed, 0.10f),
+    onTertiaryContainer = lerp(seed, Color.Black, 0.25f),
+)
+
+/**
+ * 以 [seed] 生成完整暗色 [ColorScheme]（primary/secondary/tertiary 及各自 container/on）。
+ *
+ * 暗色下 primary/secondary/tertiary 向白提亮、container 向黑压深，on-container 向白提亮。
+ */
+private fun themedDarkScheme(seed: Color): ColorScheme = darkColorScheme(
+    primary = lerp(seed, Color.White, 0.60f),
+    onPrimary = lerp(seed, Color.Black, 0.20f),
+    primaryContainer = lerp(seed, Color.Black, 0.55f),
+    onPrimaryContainer = lerp(seed, Color.White, 0.80f),
+    secondary = lerp(seed, Color.White, 0.35f),
+    onSecondary = lerp(seed, Color.Black, 0.20f),
+    secondaryContainer = lerp(seed, Color.Black, 0.60f),
+    onSecondaryContainer = lerp(seed, Color.White, 0.75f),
+    tertiary = lerp(seed, Color.White, 0.20f),
+    onTertiary = lerp(seed, Color.Black, 0.20f),
+    tertiaryContainer = lerp(seed, Color.Black, 0.65f),
+    onTertiaryContainer = lerp(seed, Color.White, 0.75f),
+)
