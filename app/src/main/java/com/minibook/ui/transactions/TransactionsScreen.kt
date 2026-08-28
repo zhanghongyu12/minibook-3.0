@@ -17,10 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -648,33 +646,31 @@ private fun CategoryFilterEntry(
                 .width(200.dp)
                 .heightIn(max = 320.dp),
         ) {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                DropdownMenuItem(
-                    text = { Text("全部分类") },
-                    onClick = {
-                        expanded = false
-                        onSelect(null)
-                    },
-                )
-                CategoryDropdownSection(
-                    title = "支出",
-                    items = categories.filter { it.type == CategoryType.EXPENSE },
-                    selectedCategoryId = selectedCategoryId,
-                    onPick = { id ->
-                        expanded = false
-                        onSelect(id)
-                    },
-                )
-                CategoryDropdownSection(
-                    title = "收入",
-                    items = categories.filter { it.type == CategoryType.INCOME },
-                    selectedCategoryId = selectedCategoryId,
-                    onPick = { id ->
-                        expanded = false
-                        onSelect(id)
-                    },
-                )
-            }
+            DropdownMenuItem(
+                text = { Text("全部分类") },
+                onClick = {
+                    expanded = false
+                    onSelect(null)
+                },
+            )
+            CategoryDropdownSection(
+                title = "支出",
+                items = categories.filter { it.type == CategoryType.EXPENSE },
+                selectedCategoryId = selectedCategoryId,
+                onPick = { id ->
+                    expanded = false
+                    onSelect(id)
+                },
+            )
+            CategoryDropdownSection(
+                title = "收入",
+                items = categories.filter { it.type == CategoryType.INCOME },
+                selectedCategoryId = selectedCategoryId,
+                onPick = { id ->
+                    expanded = false
+                    onSelect(id)
+                },
+            )
         }
     }
 }
