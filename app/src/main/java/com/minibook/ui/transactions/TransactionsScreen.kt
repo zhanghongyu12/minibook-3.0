@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -40,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -70,6 +73,7 @@ import com.minibook.ui.components.SwipeToRevealContainer
 import com.minibook.ui.components.TransactionListItem
 import com.minibook.ui.components.TransactionTypeTab
 import com.minibook.ui.navigation.BillsFilterBus
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
@@ -452,17 +456,29 @@ private fun QueryFilterArea(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val remarkState = rememberTextFieldState(remark)
+    // 外部 remark（筛选状态）变化时同步到输入框（例如点「重置」清空）。
+    LaunchedEffect(remark) {
+        if (remarkState.text.toString() != remark) {
+            remarkState.edit { replace(0, length, remark) }
+        }
+    }
+    // 输入变化即时回写 VM（模糊过滤）。
+    LaunchedEffect(remarkState) {
+        snapshotFlow { remarkState.text.toString() }
+            .collect { onRemarkChange(it) }
+    }
     Column(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
-                value = remark,
-                onValueChange = onRemarkChange,
-                placeholder = { Text("搜索备注/标题关键词") },
-                singleLine = true,
+                state = remarkState,
                 textStyle = MaterialTheme.typography.labelMedium,
+                placeholder = { Text("搜索备注/标题关键词", style = MaterialTheme.typography.labelMedium) },
+                lineLimits = TextFieldLineLimits.SingleLine,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
                 modifier = Modifier
                     .weight(1f)
                     .height(40.dp), // 与第二行日期/分类控件统一 40dp 高度
