@@ -463,7 +463,9 @@ private fun QueryFilterArea(
                 onValueChange = onRemarkChange,
                 placeholder = { Text("搜索备注/标题关键词") },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp), // 与第二行日期/分类控件统一 40dp 高度
             )
             TextButton(onClick = onReset) { Text("重置") }
         }
