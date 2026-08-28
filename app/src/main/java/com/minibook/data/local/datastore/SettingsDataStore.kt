@@ -29,6 +29,7 @@ class SettingsDataStore(
         val DARK_MODE = stringPreferencesKey("dark_mode")
         val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
         val LOCK_TIMEOUT = stringPreferencesKey("lock_timeout")
+        val THEME_COLOR = stringPreferencesKey("theme_color")
     }
 
     /** 暗色模式三态，无值默认 [DarkModeSetting.SYSTEM]（跟随系统）。 */
@@ -44,6 +45,11 @@ class SettingsDataStore(
     /** 锁闲置超时五档，无值默认 [LockTimeout.ONE_MINUTE]（1 分钟）。 */
     val lockTimeout: Flow<LockTimeout> = dataStore.data.map { prefs ->
         prefs[Keys.LOCK_TIMEOUT]?.let(LockTimeout::fromStorage) ?: LockTimeout.ONE_MINUTE
+    }
+
+    /** 主题色（ARGB hex 如 `"#6750A4"`），无值 null = 跟随默认/动态取色。 */
+    val themeColor: Flow<String?> = dataStore.data.map { prefs ->
+        prefs[Keys.THEME_COLOR]
     }
 
     /**
@@ -65,5 +71,12 @@ class SettingsDataStore(
     /** 写锁闲置超时档位。 */
     suspend fun setLockTimeout(timeout: LockTimeout) {
         dataStore.edit { it[Keys.LOCK_TIMEOUT] = timeout.name }
+    }
+
+    /** 写主题色；传入 null 删除该键、恢复默认/动态取色。 */
+    suspend fun setThemeColor(hex: String?) {
+        dataStore.edit { prefs ->
+            if (hex == null) prefs.remove(Keys.THEME_COLOR) else prefs[Keys.THEME_COLOR] = hex
+        }
     }
 }

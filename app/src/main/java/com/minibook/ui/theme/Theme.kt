@@ -5,11 +5,14 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -38,6 +41,10 @@ class ThemeViewModel @Inject constructor(
     /** 暗色模式三态（无值默认 [DarkModeSetting.SYSTEM] 跟随系统）。 */
     val darkMode: StateFlow<DarkModeSetting> = settingsDataStore.darkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DarkModeSetting.SYSTEM)
+
+    /** 自定义主题色（ARGB hex），无值 null = 跟随默认/动态取色。 */
+    val themeColor: StateFlow<String?> = settingsDataStore.themeColor
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
 /** 形状 token（UI §1.5）：组件圆角基准。 */
@@ -79,13 +86,32 @@ fun MiniBookTheme(
     val context = LocalContext.current
     val viewModel: ThemeViewModel = hiltViewModel()
     val setting by viewModel.darkMode.collectAsStateWithLifecycle()
+    val themeColorHex by viewModel.themeColor.collectAsStateWithLifecycle()
 
     val resolvedDark = darkTheme ?: when (setting) {
         DarkModeSetting.SYSTEM -> isSystemInDarkTheme()
         DarkModeSetting.LIGHT -> false
         DarkModeSetting.DARK -> true
     }
+    val customPrimary = themeColorHex?.let(::parseThemeColor)
     val colorScheme = when {
+        // 自定义主题色优先于 dynamicColor / 静态基线，仅覆盖 primary（其余 M3 色不强制）。
+        customPrimary != null ->
+            if (resolvedDark) {
+                darkColorScheme(
+                    primary = customPrimary,
+                    onPrimary = Color(0xFF1D1B20),
+                    primaryContainer = DarkColors.primaryContainer,
+                    onPrimaryContainer = DarkColors.onPrimaryContainer,
+                )
+            } else {
+                lightColorScheme(
+                    primary = customPrimary,
+                    onPrimary = Color.White,
+                    primaryContainer = LightColors.primaryContainer,
+                    onPrimaryContainer = LightColors.onPrimaryContainer,
+                )
+            }
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (resolvedDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         resolvedDark -> DarkColors
@@ -102,3 +128,8 @@ fun MiniBookTheme(
         )
     }
 }
+
+/** 解析 ARGB hex（如 `"#6750A4"`）为 Compose [Color]；非法输入回退 null（保持默认取色）。 */
+private fun parseThemeColor(hex: String): Color? = runCatching {
+    Color(android.graphics.Color.parseColor(hex))
+}.getOrNull()

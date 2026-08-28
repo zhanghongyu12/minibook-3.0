@@ -76,6 +76,10 @@ class SettingsViewModel @Inject constructor(
     val encryptionEnabled: StateFlow<Boolean> = settingsDataStore.encryptionEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /** 自定义主题色（ARGB hex），无值 null = 跟随默认/动态取色。 */
+    val themeColor: StateFlow<String?> = settingsDataStore.themeColor
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val _isBusy = MutableStateFlow(false)
 
     /** 导出/导入忙碌态；true 时 UI 层展示 [FullScreenBusyOverlay] 锁数据入口。 */
@@ -124,6 +128,11 @@ class SettingsViewModel @Inject constructor(
     /** 写锁闲置超时五档（TASK-017 消费并驱动闲置重锁计时）。 */
     fun setLockTimeout(timeout: LockTimeout) {
         viewModelScope.launch { settingsDataStore.setLockTimeout(timeout) }
+    }
+
+    /** 写自定义主题色；null 清除恢复默认（软切换，Theme 即时生效）。 */
+    fun setThemeColor(hex: String?) {
+        viewModelScope.launch { settingsDataStore.setThemeColor(hex) }
     }
 
     /**
