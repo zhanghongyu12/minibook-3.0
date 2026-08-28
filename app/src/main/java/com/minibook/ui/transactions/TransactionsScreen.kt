@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -641,32 +644,37 @@ private fun CategoryFilterEntry(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            modifier = Modifier
+                .width(200.dp)
+                .heightIn(max = 320.dp),
         ) {
-            DropdownMenuItem(
-                text = { Text("全部分类") },
-                onClick = {
-                    expanded = false
-                    onSelect(null)
-                },
-            )
-            CategoryDropdownSection(
-                title = "支出",
-                items = categories.filter { it.type == CategoryType.EXPENSE },
-                selectedCategoryId = selectedCategoryId,
-                onPick = { id ->
-                    expanded = false
-                    onSelect(id)
-                },
-            )
-            CategoryDropdownSection(
-                title = "收入",
-                items = categories.filter { it.type == CategoryType.INCOME },
-                selectedCategoryId = selectedCategoryId,
-                onPick = { id ->
-                    expanded = false
-                    onSelect(id)
-                },
-            )
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                DropdownMenuItem(
+                    text = { Text("全部分类") },
+                    onClick = {
+                        expanded = false
+                        onSelect(null)
+                    },
+                )
+                CategoryDropdownSection(
+                    title = "支出",
+                    items = categories.filter { it.type == CategoryType.EXPENSE },
+                    selectedCategoryId = selectedCategoryId,
+                    onPick = { id ->
+                        expanded = false
+                        onSelect(id)
+                    },
+                )
+                CategoryDropdownSection(
+                    title = "收入",
+                    items = categories.filter { it.type == CategoryType.INCOME },
+                    selectedCategoryId = selectedCategoryId,
+                    onPick = { id ->
+                        expanded = false
+                        onSelect(id)
+                    },
+                )
+            }
         }
     }
 }
@@ -691,7 +699,13 @@ private fun CategoryDropdownSection(
     )
     items.forEach { category ->
         DropdownMenuItem(
-            text = { Text("${category.icon} ${category.name}") },
+            text = {
+                Text(
+                    "${category.icon} ${category.name}",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
             trailingIcon = if (category.id == selectedCategoryId) {
                 { Text("✓", color = MaterialTheme.colorScheme.primary) }
             } else {
