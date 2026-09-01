@@ -3,7 +3,7 @@
 > 项目：MiniBook Android 重构版（本地优先记账应用）
 > 维护者：全员可更新（项目状态区块由当前阶段负责角色更新）
 > 最后更新：2026-08-24
-> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；待真机验证与 push
+> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；P2 技术债清账 + 文档收口完成；待人工批准 push（收尾阶段明确不做真机 / release / Phase 3）
 >
 > 文档编号映射（已对齐 AI-work-model 编号规范，document_rules §文档编号体系）：
 > - `docs/00_idea.md`（已归档，被 01_prd 取代）
@@ -23,9 +23,9 @@
 ## 项目状态区块
 
 - 运行模式：**编排模式**
-- 当前阶段：**Phase 2 全部闭环（F-06/07/08 + F-12 均实现+测试+评审收口）；F-12 待真机验证 + push**
-- 当前任务：F-12 微信/支付宝账单导入全流程落地——PRD 15cfc7a → 架构 59ad1f9 → UI be1ccdd → 实现 e13eee0 / 913e7f0 → 测试 d9a091a → 修复 49c0868 → 评审 9515907 → 评审收尾 cb679a7；JVM 单测 132 例全绿 + instrumented 迁移测试编译绿（真机因设备未连接未执行）
-- 下一步行动：F-12 真机验证（迁移保数据 / UI 结构 / 端到端导入，清单见 09_test_report §F-12）；Phase 2 全量待 push；遗留待办挂账（① release 签名 keystore ② instrumented 真机执行 ③ P2 技术债：导航风格并存 / 三文件超 300 行 / GRANULARITY 命名 / BudgetProgress 与 04§12.3 契约漂移 / F-12 P2-4 BillParserFactory 分层 ④ Phase 3 云端同步）
+- 当前阶段：**Phase 2 全部闭环（F-06/07/08 + F-12 均实现+测试+评审收口）；P2 技术债已闭环；收尾阶段（本地 debug 交付）**
+- 当前任务：P2 技术债清账 + 文档收口——GRANULARITY 改名（b9c0e6f）/ BillParserFactory 分层归位（7c42f4c）/ 三文件超 300 行拆分（f4fd92d）/ 账本管理导航统一 CompositionLocal（63eaa26）/ §12.3 契约回写 + CHANGELOG「v1.0.0 收尾」；JVM 单测 186 例全绿（`gradlew :app:testDebugUnitTest`，33 类 0 失败）+ instrumented 迁移测试编译绿（真机因设备未连接未执行）
+- 下一步行动：Phase 2 全量待 push。**收尾阶段明确不做（本地 debug 交付，无真机发布）**——① release 签名 keystore ② instrumented 真机执行 ③ Phase 3 云端同步 均挂账不处理
 - 阻塞项：无
 
 ---
@@ -41,6 +41,7 @@
 - 2026-08-21（Phase 2 全线落地，编排者调度）：PM DEC-010 + PRD F-06/07/08 细化（fc28d98）→ 协调者需求确认（2818aa0）→ Architect DEC-011~013 + 架构/DB/API 设计 + TASK-031~039 拆分（e9aa4ee）→ Designer 三页 UI + C-27~C-32（306ed7b）→ 编码九任务（数据层 3fbe724、搜索 UseCase d7e8d0b、收支页联表 911f6ed、预算 UseCase+BudgetProgress 守卫 5ba92e4、图表组件 fb63970、搜索页 ccff71a、报表页 efbe338、预算页 07154fe、接线收口 8b0588e）→ Tester 补测 56→95 例全绿 + 09_test_report（a3764b4）→ Reviewer 评审 08_review（20cea82，P1-1 孤儿预算 + P2 六项）→ Developer 修 P1-1 删除分类级联清理预算（ac5579d）。三大技术口径落地：DEC-011 Canvas 自绘零第三方图表、DEC-012 App 内告警无通知栏、DEC-013 扩展 observeFiltered 零 Repository 改。全量 95 例单测 + compileDebugAndroidTestKotlin 全绿，未 push（待人工批准）。
 - 2026-08-24（F-12 架构设计，Architect 调度，无人值守自决）：PM DEC-015 + PRD F-12 落盘（15cfc7a）→ Architect 补 DEC-016~019（XLSX 零依赖手动解析 / 文件读取与临时文件 / DB version 2 迁移 / 自动分类与幂等计数）+ 02/03/04 设计（transactions 加 4 列 + UNIQUE(ledgerId,externalId)、MIGRATION_1_2、BillParser 抽象、ImportBillUseCase、import 路由）+ TASK-040~044 拆分。口径：DB 1→2 首个迁移、UNIQUE 对 NULL 互异（手动记录不参与去重）、过滤行级+单事务整批写入（延续 DEC-015）、解析纯 Kotlin 可单测（SafBillFilePreparer 为唯一 Android 边界）。
 - 2026-08-24（F-12 全流程落地，编排者无人值守调度）：Designer UI 设计 P-15 + C-33~C-37（be1ccdd）→ Developer 实现 TASK-040~043 数据层 4 列迁移 / 支付宝 GBK-CSV / 微信 XLSX 解析 / ImportBillUseCase（e13eee0）+ TASK-044 UI 四态 / 字段展示 / 首页入口（913e7f0）→ Tester 单测 111→132 例 + 迁移测试基建 + 真机遗留清单（d9a091a，设备未连接未执行真机）→ Developer 修三缺陷 androidTest 方法名 dex / 对方账号精确匹配 / 临时文件 uuid（49c0868）→ Reviewer 评审 FAIL-with-issues（9515907，1×P1+6×P2）→ Developer 修 P1-1 备份四字段 + 5×P2（cb679a7）。终态：JVM 132 例 + assembleDebug / assembleDebugAndroidTest 全绿；P2-4 BillParserFactory 分层挂账；真机 3 项（迁移保数据 / UI 结构 / 端到端）待设备连接后按 09_test_report §F-12 清单执行。
+- 2026-08-24（P2 技术债清账 + 文档收口，Developer 调度）：Reviewer 挂账的 P2 代码债与文档收尾全部清掉——① GRANULARITY 枚举改名 Granularity（b9c0e6f，此前已落）② BillParserFactory 接口归位 data/datasource（7c42f4c）③ Search/Budgets 超限文件拆分 ≤300 行（f4fd92d：SearchScreen 604→173、BudgetsScreen 605→258、SearchViewModel 429→278）④ 账本管理导航统一 CompositionLocal（63eaa26）⑤ docs/04_api §12.3 BudgetProgress 契约回写 + CHANGELOG「v1.0.0 收尾」+ 06_tasks 项目状态更新 + 过时注释清理（随本次 docs commit）。真机 / release / Phase 3 收尾阶段明确不做（本地 debug 交付，无真机发布）。JVM 单测 186 例（33 类 0 失败）+ assembleDebug 全绿。
 
 ---
 

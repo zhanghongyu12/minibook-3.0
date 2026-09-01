@@ -102,7 +102,7 @@ private val debtDetailArguments = listOf(
  *
  * 顶层 `isLocked` 门控（§9）：锁定态 NavHost 只注册 [Destination.Lock]（唯一可达，真解密门，
  * 可达性即安全性）；解锁态注册主入口 [Destination.Home]（[MainScreen]，内嵌 5 Tab 嵌套图）
- * + sheets 家族 / Phase 2 占位页 / 账本管理。`key(isLocked)` 使锁态切换时重建整个导航图
+ * + sheets 家族 / Phase 2 真实页 / 账本管理。`key(isLocked)` 使锁态切换时重建整个导航图
  * （清空返回栈，杜绝越权可达）。
  *
  * @param viewModel 根级导航门控 VM；默认经 [hiltViewModel] 解析（Activity 级 owner）。

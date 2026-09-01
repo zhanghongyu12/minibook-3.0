@@ -8,7 +8,7 @@ import com.minibook.domain.model.DebtDirection
  *
  * 未解锁态：NavGraph 顶层 `isLocked` 门控，只可达 [Lock] 目标（真解密门，可达性即安全性，
  * §9）；解锁后 5 个主页面（底部 NavigationBar）经 [MainScreen] 内嵌嵌套图承载，根图另注册
- * sheets 家族 / Phase 2 占位页 / 账本管理。页面间参数只传 `id` 类（UUID，§12），大数据走
+ * sheets 家族 / Phase 2 真实页 / 账本管理。页面间参数只传 `id` 类（UUID，§12），大数据走
  * 共享 `LedgerProvider`。
  *
  * 说明：TASK-021 已填充真实 `NavHost`（[MiniBookNavHost]）；`AppLocked` 不作为独立路由
@@ -16,7 +16,7 @@ import com.minibook.domain.model.DebtDirection
  */
 sealed class Destination(val route: String) {
 
-    /** 锁屏（冷启动/重锁，§9；未解锁时唯一可达目标）。TASK-022 落地真实解锁 UI，本期占位。 */
+    /** 锁屏（冷启动/重锁，§9；未解锁时唯一可达目标）。TASK-022 已落地真实解锁 UI。 */
     data object Lock : Destination("lock")
 
     /** 首页仪表板（F-01：本月结余/收支合计/最近交易/FAB「记一笔」）。 */
@@ -34,15 +34,15 @@ sealed class Destination(val route: String) {
     /** 设置（F-04/05/09/11：安全/外观/数据/账本）。 */
     data object Settings : Destination("settings")
 
-    // —— Phase 2 占位路由（P-12~14，TASK-021 注册占位，落地 task 替换为真实页面） ——
+    // —— Phase 2 真实页（P-12~14，TASK-033/036/038 已落地真实页面） ——
 
-    /** 搜索（P-12 占位）。 */
+    /** 搜索（P-12，F-06：交易/债务组合筛选）。 */
     data object Search : Destination("search")
 
-    /** 报表（P-13 占位）。 */
+    /** 报表（P-13，F-07：月/年收支趋势 + 分类占比 + 结余走势）。 */
     data object Reports : Destination("reports")
 
-    /** 预算（P-14 占位）。 */
+    /** 预算（P-14，F-08：月度总预算 + 分类预算进度）。 */
     data object Budgets : Destination("budgets")
 
     /** 账单导入（P-15，F-12）：根图全屏页（不进底部 NavigationBar），顶栏返回 popBackStack。 */

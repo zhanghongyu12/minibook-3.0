@@ -4,6 +4,24 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## v1.0.0 收尾
+
+P2 技术债清账 + 文档收口（本地 debug 交付，不涉及真机 / release / 云端）。
+
+### Added
+
+- 导入账单平台提示卡可点击直接选文件（4ccaca1）。
+- 设置页主题颜色调色盘（d0759b3）。
+- 主题色覆盖容器色与底部菜单栏（0f748f7）。
+
+### Changed
+
+- **P2-5 枚举命名**：`GRANULARITY` 改名 `Granularity`（类名大驼峰），同步报表 ViewModel/Screen/UseCase 与测试引用（b9c0e6f）。
+- **F-12 P2-4 接口分层**：`BillParserFactory` 接口由 `data/local/bill` 归位 `data/datasource`（与 `TransactionRunner` 对称），实现 `DefaultBillParserFactory` 留 `data/local/bill`（7c42f4c）。
+- **P2-2 超限文件拆分**：`SearchScreen.kt` / `BudgetsScreen.kt` / `SearchViewModel.kt` 拆至 ≤300 行——`OptionalDateField` 下沉 `ui/components`、搜索条件区归 `ui/search/components`、预算进度卡收敛为单一可复用组件、搜索过滤纯函数抽独立文件（f4fd92d）。
+- **待审项 a 导航统一**：账本管理入口 `openLedgerManage()` 加入 `HomeNavigation`（CompositionLocal），Home / Settings 经 `LocalHomeNavigation` 读取，删除 `MainScreen.onNavigateToLedgerManage` 参数穿透（63eaa26）。
+- **文档回写**：`docs/04_api.md §12.3` BudgetProgress 契约对齐实现（`month` 为 `String`(yyyy-MM)、总预算扁平 `totalBudgetFen`/`totalUsedFen` 0 哨兵、`category` 非空 + 孤儿预算跳过）。
+
 ## [Unreleased]
 
 ### Added
