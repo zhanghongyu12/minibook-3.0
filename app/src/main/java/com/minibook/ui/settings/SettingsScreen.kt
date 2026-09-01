@@ -56,6 +56,7 @@ import com.minibook.ui.components.MiniBookSnackbarHost
 import com.minibook.ui.components.SettingRow
 import com.minibook.ui.components.SettingSection
 import com.minibook.ui.components.SwitchRow
+import com.minibook.ui.home.LocalHomeNavigation
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +67,7 @@ import kotlinx.coroutines.withContext
  * 设置页（TASK-027，UI §2 P-06、ARCHITECTURE §9/§10/§11、DEC-002/DEC-003/DEC-005）。
  *
  * 分区结构（[SettingSection]/[SettingRow]/[SwitchRow]，C-23）：
- * - 账本：账本管理入口（经 [onNavigateToLedgerManage] 跳 `ledger-manage`，P-11，MainScreen 中转根图）。
+ * - 账本：账本管理入口（经 [LocalHomeNavigation] 跳 `ledger-manage`，P-11，根图导航统一走 CompositionLocal）。
  * - 外观：暗色模式三态 [ChoiceDialog]（跟随系统/亮色/暗色，软切换即时生效，F-09）。
  * - 安全：应用锁 [SwitchRow]（开启前 `isDeviceSecure` 检测，无锁屏经 [GuidanceCard] 引导
  *   DEC-003；关闭走 [ConfirmDialog] 提示「数据仍保持加密」DEC-002）+ 锁定时长五档
@@ -81,16 +82,16 @@ import kotlinx.coroutines.withContext
  * （C-21）播报统一轻提示。
  *
  * @param viewModel 设置页 VM；默认经 [hiltViewModel] 解析。
- * @param onNavigateToLedgerManage 账本管理入口回调（MainScreen 中转根图导航到 ledger-manage）。
  * @param onNavigateToImport 账单导入入口回调（MainScreen 中转根图导航到 `import`，§9.1 可选入口）。
  */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    onNavigateToLedgerManage: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    // 账本管理入口统一经 LocalHomeNavigation 读取根图导航（不再参数穿透）。
+    val homeNavigation = LocalHomeNavigation.current
     // 改父类为 FragmentActivity 后成立；取不到则记为不可操作态（防御，正常不出现）。
     val activity = context as? FragmentActivity
     val snackbarHostState = remember { SnackbarHostState() }
@@ -194,7 +195,7 @@ fun SettingsScreen(
                             title = "账本管理",
                             subtitle = "切换、新增、重命名与删除账本",
                             trailing = { TrailingChevron() },
-                            onClick = onNavigateToLedgerManage,
+                            onClick = homeNavigation::openLedgerManage,
                         )
                     })
                 }

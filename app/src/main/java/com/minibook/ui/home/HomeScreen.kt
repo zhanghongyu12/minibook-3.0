@@ -86,6 +86,9 @@ interface HomeNavigation {
 
     /** 打开账单导入页（根图 `import`，F-12）。 */
     fun openImport()
+
+    /** 打开账本管理页（根图 `ledger-manage`，P-11）。 */
+    fun openLedgerManage()
 }
 
 /**
@@ -99,6 +102,7 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
             override fun openReports() = Unit
             override fun openBudgets() = Unit
             override fun openImport() = Unit
+            override fun openLedgerManage() = Unit
         }
     }
 
@@ -122,14 +126,12 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
  *
  * @param viewModel 首页 VM；默认经 [hiltViewModel] 解析。
  * @param onNavigateToTransactions 「查看全部」回调（MainScreen 内嵌导航到 [Destination.Transactions]）。
- * @param onNavigateToLedgerManage 账本入口回调（MainScreen 中转根图导航到 ledger-manage）。
  * @param onOpenTransaction 打开交易详情页回调（null=新增 / 非空=查看该 id）；由 MainScreen 注入根图导航。
  */
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onNavigateToTransactions: () -> Unit = {},
-    onNavigateToLedgerManage: () -> Unit = {},
     onOpenTransaction: (String?) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -143,7 +145,7 @@ fun HomeScreen(
         topBar = {
             HomeTopBar(
                 uiState = uiState,
-                onNavigateToLedgerManage = onNavigateToLedgerManage,
+                onNavigateToLedgerManage = homeNavigation::openLedgerManage,
                 onOpenSearch = homeNavigation::openSearch,
             )
         },

@@ -123,9 +123,8 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 composable(Destination.Lock.route) { LockScreen() }
             } else {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
-                // 中转 ledger-manage 根图跳转（MainScreen 内嵌图无法直达根图目的地）。
-                // 首页跨层根导航桥（search/reports/budgets）：Home 位于嵌套图，直达根图
-                // 目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入给 HomeScreen。
+                // 首页跨层根导航桥（search/reports/budgets/ledger-manage）：Home 位于嵌套图，
+                // 直达根图目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入。
                 composable(Destination.Home.route) {
                     val homeNavigation = remember(rootController) {
                         object : HomeNavigation {
@@ -141,13 +140,13 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             override fun openImport() {
                                 rootController.navigate(Destination.Import.route)
                             }
+                            override fun openLedgerManage() {
+                                rootController.navigate(Destination.LedgerManage.route)
+                            }
                         }
                     }
                     CompositionLocalProvider(LocalHomeNavigation provides homeNavigation) {
                         MainScreen(
-                            onNavigateToLedgerManage = {
-                                rootController.navigate(Destination.LedgerManage.route)
-                            },
                             onNavigateToImport = {
                                 rootController.navigate(Destination.Import.route)
                             },

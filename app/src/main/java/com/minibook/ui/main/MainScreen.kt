@@ -54,12 +54,11 @@ private val mainTabs = listOf(
  * 各 Tab 状态，§12）。各 Tab 内容已接线为真实页面 composable（TASK-023~026）：
  * Home / Transactions / Debts / Categories / Settings。
  *
- * **跨层导航中转**（ledger-manage 注册于根图，嵌套图无法直达）：本页接收外层
- * [onNavigateToLedgerManage] 回调（由 [MiniBookNavHost] 传入根图 navigate），并分发给
- * Home / Settings 两个入口；Home 的「查看全部」用本页自持的嵌套 [navController] 跳
- * [Destination.Transactions]（同 Tab 语义）。内部 Tab 切换复用 [navigateToTab]。
+ * **跨层导航中转**（ledger-manage 注册于根图，嵌套图无法直达）：账本管理入口经
+ * [com.minibook.ui.home.LocalHomeNavigation] 由 [com.minibook.ui.navigation.MiniBookNavHost]
+ * 注入，Home / Settings 读取使用，不再经本页参数穿透；Home 的「查看全部」用本页自持的嵌套
+ * [navController] 跳 [Destination.Transactions]（同 Tab 语义）。内部 Tab 切换复用 [navigateToTab]。
  *
- * @param onNavigateToLedgerManage 账本管理导航回调（根图跳转，MiniBookNavHost 接线传入）。
  * @param onNavigateToImport 账单导入导航回调（根图跳转到 `import`，MiniBookNavHost 接线传入）。
  * @param onOpenTransaction 交易详情页导航回调（根图跳转到 `transaction-detail`，null=新增；
  *   MiniBookNavHost 接线传入，分发到 Home / Transactions 两个 Tab 的入口）。
@@ -72,7 +71,6 @@ private val mainTabs = listOf(
  */
 @Composable
 fun MainScreen(
-    onNavigateToLedgerManage: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
     onOpenTransaction: (String?) -> Unit = {},
     onOpenTransactionEdit: (String) -> Unit = {},
@@ -127,7 +125,6 @@ fun MainScreen(
             composable(Destination.Home.route) {
                 HomeScreen(
                     onNavigateToTransactions = { navigateToTab(Destination.Transactions.route) },
-                    onNavigateToLedgerManage = onNavigateToLedgerManage,
                     onOpenTransaction = onOpenTransaction,
                 )
             }
@@ -146,7 +143,6 @@ fun MainScreen(
             composable(Destination.Categories.route) { CategoriesScreen() }
             composable(Destination.Settings.route) {
                 SettingsScreen(
-                    onNavigateToLedgerManage = onNavigateToLedgerManage,
                     onNavigateToImport = onNavigateToImport,
                 )
             }
