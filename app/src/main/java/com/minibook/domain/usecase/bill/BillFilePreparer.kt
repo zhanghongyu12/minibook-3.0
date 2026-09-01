@@ -1,4 +1,4 @@
-﻿package com.minibook.domain.usecase.bill
+package com.minibook.domain.usecase.bill
 
 /**
  * 账单文件读取（域接口，F-12，API §13.4 / ARCHITECTURE §16.6，DEC-017）。
@@ -14,7 +14,8 @@ interface BillFilePreparer {
 /**
  * 已准备可解析输入句柄，[AutoCloseable] 保证 finally 清理（DEC-017：关闭流 + 删临时文件）。
  *
- * [magicBytes] 为文件头嗅探字节（≥4 或 null），供 [BillParserFactory] 兜底判型。
+ * [magicBytes] 为文件头嗅探字节（≥4 或 null），供
+ * [com.minibook.data.datasource.BillParserFactory] 兜底判型。
  */
 interface PreparedBillFile : AutoCloseable {
     val input: BillSourceInput

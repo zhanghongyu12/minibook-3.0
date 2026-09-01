@@ -2,8 +2,8 @@ package com.minibook.domain.usecase.bill
 
 import com.minibook.data.datasource.CategoryDataSource
 import com.minibook.data.datasource.TransactionDataSource
+import com.minibook.data.datasource.BillParserFactory
 import com.minibook.data.datasource.TransactionRunner
-import com.minibook.data.local.bill.BillParserFactory
 import com.minibook.domain.model.BillParseResult
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryAgg

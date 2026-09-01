@@ -1,7 +1,7 @@
-﻿package com.minibook.di
+package com.minibook.di
 
 import android.content.Context
-import com.minibook.data.local.bill.BillParserFactory
+import com.minibook.data.datasource.BillParserFactory
 import com.minibook.data.local.bill.DefaultBillParserFactory
 import com.minibook.data.local.bill.SafBillFilePreparer
 import com.minibook.domain.usecase.bill.BillFilePreparer
