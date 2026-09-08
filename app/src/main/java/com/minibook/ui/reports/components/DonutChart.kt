@@ -87,12 +87,19 @@ data class DonutSlice(
     val valueFen: Long,
 )
 
-/** 生成环形图例项（名称 + 色块 + 占比 %），用于 [ChartLegend]。 */
+/** 生成环形图例项（名称 + 色块 + 金额 + 占比 %），用于 [ChartLegend]。 */
 fun buildDonutLegendItems(slices: List<DonutSlice>): List<LegendItem> {
     val total = slices.sumOf { it.valueFen }
     return slices
         .filter { it.valueFen > 0L }
-        .map { LegendItem(it.label, it.color, percentText(it.valueFen, total)) }
+        .map {
+            LegendItem(
+                label = it.label,
+                color = it.color,
+                percentText = percentText(it.valueFen, total),
+                amountText = MoneyFormatter.formatFen(it.valueFen),
+            )
+        }
 }
 
 /** 整数占比文本（xx.x%），不经浮点，金额语义安全。 */

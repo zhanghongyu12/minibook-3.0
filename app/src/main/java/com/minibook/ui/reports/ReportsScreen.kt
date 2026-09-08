@@ -52,6 +52,7 @@ import com.minibook.ui.reports.components.DonutSlice
 import com.minibook.ui.reports.components.LegendItem
 import com.minibook.ui.reports.components.LineChart
 import com.minibook.ui.reports.components.LineChartSeries
+import com.minibook.ui.reports.components.ReportSummaryCard
 import com.minibook.ui.reports.components.buildDonutLegendItems
 import com.minibook.ui.theme.LocalSemanticColors
 import com.minibook.util.TimeFormatter
@@ -114,6 +115,17 @@ fun ReportsScreen(
                     onShift = viewModel::shiftPeriod,
                     onReset = viewModel::resetPeriod,
                 )
+            }
+            item {
+                when (val state = trendState) {
+                    is ChartState.Success -> ReportSummaryCard(
+                        incomeFen = state.value.incomeValues.sum(),
+                        expenseFen = state.value.expenseValues.sum(),
+                        balanceFen = state.value.balanceValues.sum(),
+                    )
+                    ChartState.Empty -> ReportSummaryCard(incomeFen = 0L, expenseFen = 0L, balanceFen = 0L)
+                    ChartState.Loading, is ChartState.Error -> SummaryCardSkeleton()
+                }
             }
             item {
                 TrendCard(
@@ -443,6 +455,22 @@ private fun ChartLoadingBlock() {
             .fillMaxWidth()
             .height(CHART_HEIGHT),
     )
+}
+
+/** 总计卡加载/错误占位：与 [ReportSummaryCard] 等高的卡片骨架，避免数据就绪时布局跳动。 */
+@Composable
+private fun SummaryCardSkeleton() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        SkeletonBlock(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(76.dp),
+        )
+    }
 }
 
 /** 解析 DB 分类色（`#RRGGBB`）→ Compose Color；非法格式回退 fallback（同工程 CategoryComponents）。 */

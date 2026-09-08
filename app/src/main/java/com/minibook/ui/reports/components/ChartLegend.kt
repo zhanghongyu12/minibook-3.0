@@ -48,11 +48,12 @@ fun ChartLegend(
     }
 }
 
-/** 图例项：色块 + 名称 + 可选占比。 */
+/** 图例项：色块 + 名称 + 可选金额 + 可选占比。 */
 data class LegendItem(
     val label: String,
     val color: Color,
     val percentText: String? = null,
+    val amountText: String? = null,
 )
 
 @Composable
@@ -76,6 +77,14 @@ private fun LegendItemRow(item: LegendItem, onClick: (() -> Unit)? = null) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        item.amountText?.let { amt ->
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = amt,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         item.percentText?.let { pct ->
             Spacer(Modifier.width(4.dp))
             Text(
