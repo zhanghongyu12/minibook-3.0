@@ -20,6 +20,7 @@ import com.minibook.domain.model.UserCategoryRule
 import com.minibook.domain.repository.UserCategoryRuleRepository
 import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
 import com.minibook.util.TimeFormatter
+import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
@@ -42,6 +43,9 @@ import kotlinx.coroutines.withContext
  *
  * 纯 Kotlin（不 import `android.net.Uri`，§1/§13.6 可测试性）；文件 I/O/解析在
  * [@IoDispatcher] 上执行（ARCHITECTURE §5.2 切线程经限定符注入，便于测试替换）。
+ *
+ * 两个入口：`invoke(uriString, …)`（SAF content URI，F-12）与 [importLocalFile]
+ * （已落地本地文件，F-13 邮件账单导入）——prepare 之后共用同一 [importPrepared] 核心。
  */
 class ImportBillUseCase @Inject constructor(
     private val transactionRunner: TransactionRunner,
@@ -68,15 +72,43 @@ class ImportBillUseCase @Inject constructor(
                 return@withContext BillImportResult(unrecognized = true)
             }
 
-            prepared.use { handle ->
-                val parser = parserFactory.resolve(handle.displayName, handle.magicBytes)
-                if (parser == null) {
-                    BillImportResult(unrecognized = true)
-                } else {
-                    when (val result = parser.parse(handle.input)) {
-                        is BillParseResult.Unrecognized -> BillImportResult(unrecognized = true)
-                        is BillParseResult.Success -> assemble(result, parser.format, ledgerId)
-                    }
+            importPrepared(prepared, ledgerId)
+        }
+
+    /**
+     * 本地文件导入入口（F-13 邮件账单导入）：与 [invoke] 共用同一套解析+落库核心，
+     * 唯一差别是输入来源为已落地的 [file]（不删除该文件，调用方负责）。
+     *
+     * @param displayName 原始文件名（可为 null）
+     */
+    suspend fun importLocalFile(file: File, displayName: String?, ledgerId: String): BillImportResult =
+        withContext(ioDispatcher) {
+            // 与 invoke 同口径：导入前补齐内置分类，保证「导入前分类齐全」。
+            ensureBuiltInCategories(ledgerId)
+
+            val prepared = try {
+                filePreparer.prepareLocalFile(file, displayName)
+            } catch (e: Exception) {
+                // 文件损坏/无法读取 → 未识别（零落库），与 invoke 的 prepare 异常同口径。
+                return@withContext BillImportResult(unrecognized = true)
+            }
+
+            importPrepared(prepared, ledgerId)
+        }
+
+    /** 两入口共用的解析+落库核心：resolve → parse → assemble（[PreparedBillFile] 由 `use` 保证清理）。 */
+    private suspend fun importPrepared(
+        prepared: PreparedBillFile,
+        ledgerId: String,
+    ): BillImportResult =
+        prepared.use { handle ->
+            val parser = parserFactory.resolve(handle.displayName, handle.magicBytes)
+            if (parser == null) {
+                BillImportResult(unrecognized = true)
+            } else {
+                when (val result = parser.parse(handle.input)) {
+                    is BillParseResult.Unrecognized -> BillImportResult(unrecognized = true)
+                    is BillParseResult.Success -> assemble(result, parser.format, ledgerId)
                 }
             }
         }

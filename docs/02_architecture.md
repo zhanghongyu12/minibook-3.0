@@ -823,4 +823,115 @@ data class ParseSkippedRow(val rowNumber: Int, val reason: ImportSkipReason, val
 
 ---
 
+## 17. Phase 3 设计：邮件账单自动导入（F-13）
+
+> 依据：`docs/01_prd.md §F-13` + **DEC-022**（技术路线）、**DEC-023**（网络/凭据隐私边界修订）。
+> 完整设计与实测证据：`docs/12_mail_bill_import.md`（本节为架构落地摘要，细节以该文为准）。
+> 定位：**F-12 的「取件自动化前置段」，不新起范式、不改 F-12 任何解析/去重口径**——只做「取到账单文件并交给既有 `ImportBillUseCase`」。这是本项目**首个引入网络与外部凭据**的功能，故 DEC-023 显式修订了 PRD §7「无网络依赖」条款。
+
+### 17.1 落地总览
+
+| 层 | 产出 |
+|----|------|
+| 依赖/权限 | `com.sun.mail:android-mail:1.6.7` + `android-activation:1.6.7` + R8 keep 规则；`INTERNET` 权限（**首次申请权限**）。**不引入 zip4j**（DEC-022 第 5 条） |
+| 数据层 | `MailAccountStore`（授权码 Keystore AES-GCM 加密）、`ImapMailClient`、`MailBillMatcher`（本地过滤）、`MailFilenameDecoder`（RFC2047/2231）、`WechatBillLinkExtractor`、`MailBillDownloader` |
+| 业务层（纯 Kotlin） | `ZipCrypto`（密钥派生+流解密）、`ZipPasswordCracker`（6 位数字穷举）、`EncryptedZipExtractor`；`FetchBillFromMailUseCase`、`MailBillImportUseCase` |
+| 复用（零改动） | `BillParserFactory` / `AlipayCsvParser` / `WechatXlsxParser` / `BillCategoryMapping` / `TransactionRunner` 事务口径 / F-12 结果页态 |
+| 唯一衔接改动 | `ImportBillUseCase` 增**文件路径入口重载**（邮件产物是私有目录 `File`，非 SAF uri） |
+| UI 层 | 设置页「邮箱账单」配置（`mail_account` 路由）+ 导入页「从邮箱一键收取」入口/进度/结果 |
+
+### 17.2 目录归属
+
+```
+domain/
+  usecase/bill/zip/   ZipCrypto.kt / ZipPasswordCracker.kt / EncryptedZipExtractor.kt
+  usecase/mail/       FetchBillFromMailUseCase.kt / MailBillImportUseCase.kt
+  model/              MailBillCandidate.kt / MailImportResult.kt
+data/
+  local/mail/         MailAccountStore.kt / ImapMailClient.kt / MailBillMatcher.kt
+                      / MailFilenameDecoder.kt / WechatBillLinkExtractor.kt / MailBillDownloader.kt
+ui/
+  mail/               MailSettingsScreen.kt / MailSettingsViewModel.kt
+  import/             ImportScreen.kt / ImportViewModel.kt（扩展收取流程）
+di/
+  MailModule.kt
+```
+
+> 分层约束：`ZipCrypto`/`ZipPasswordCracker`/`EncryptedZipExtractor`/`MailBillMatcher`/`MailFilenameDecoder`/`WechatBillLinkExtractor` **纯 Kotlin（不 import android.\*）**，JVM 可单测；`ImapMailClient`/`MailAccountStore`/`MailBillDownloader` 是 Android/网络边界。
+
+### 17.3 端到端数据流
+
+```
+MailAccountStore(凭据) → ImapMailClient(IMAP 只读拉取, 含 ID 命令)
+   → MailBillMatcher(本地过滤, 禁服务端 SEARCH)
+   → 取件：支付宝=附件字节 | 微信=正文链接 → MailBillDownloader(HTTPS GET)
+   → ZipPasswordCracker(穷举 6 位数字口令) → EncryptedZipExtractor(ZipCrypto 解密 + Inflater)
+   → 解出 .csv/.xlsx 文件
+   → ImportBillUseCase(filePath, ledgerId)【F-12 既有链路，零改动】
+   → MailImportResult(按邮件聚合) → UI 结果页态
+```
+
+### 17.4 邮箱凭据与 IMAP 客户端（DEC-022 第 1 条）
+
+- `MailAccountStore`：邮箱地址可明文落 DataStore；**授权码必须经 Android Keystore（AES-256/GCM）加密**后落私有目录，独立 alias，**不与 SQLCipher master key 混用**；`getAuthCode()` 解密读出，**不进日志**。
+- `ImapMailClient`：`imap.qq.com:993` SSL；连接后**显式发送 IMAP `ID` 命令**（`mail.imap.id` 属性 + `IMAPStore.id(map)` 双保险，否则 QQ 拒登）；`Folder.READ_ONLY` **只读**打开 INBOX；`FetchProfile` 只取过滤所需头，命中后才取正文/附件；连接/读超时各 20~30 s。
+- 异常分类：`AuthenticationFailedException` →「登录失败」（附「需开启 IMAP/SMTP 而非仅 POP3」指引）；`SocketTimeoutException`/`IOException` →「网络异常」。
+
+### 17.5 本地过滤（DEC-022 第 2 条，**架构红线**）
+
+**禁止使用 IMAP 服务端 `SEARCH`。** 实测 QQ 对 `OR(FROM "alipay")(FROM "tencent")(SUBJECT "账单")` 返回 **0 封**，而同一批邮件本地过滤命中 3 封真实账单。落地方式：
+
+- 拉取窗口内邮件（默认 30 天，含最大封数上限）→ 用 `FetchProfile` 取 `FROM`/`SUBJECT`/`Date` → 在**本地**按白名单匹配：
+  - 支付宝：`FROM service@mail.alipay.com` 且主题含「支付宝交易流水明细」
+  - 微信：`FROM wechatpay@tencent.com` 且主题含「微信支付-账单流水文件」
+- **每种账单只取最新一封**：同一平台多封邮件（重复申请 / 覆盖区间重叠）→ 由 `MailBillSelector`（`domain/usecase/mail/MailBillSelector.kt`，纯 Kotlin、JVM 可单测）按 `sentDateMillis` 保留最新一封（同毫秒按主题字典序兜底），其余同平台旧邮件**不处理**并在进度中显式披露（FILTER 摘要「…每种账单只取最近一封 → 待处理 K 封」+ `⏭ {平台} · {主题} — 已有更新的同类账单，跳过`）。**粒度就是平台**——`MailBillMatcher` 只判到「支付宝交易流水明细 / 微信支付账单流水文件」两类，不存在更细的「账期」子类。入库层 `externalId` 仍作最后防线。
+
+### 17.6 取件（DEC-022 第 3/4 条）
+
+- **支付宝（附件）**：取 `APPLICATION/OCTET-STREAM` 附件字节；文件名经 `MailFilenameDecoder` 解码——覆盖 RFC2047 `=?GB18030?Q?…?=` / `=?GB18030?B?…?=` 与 RFC2231 `name*0=`/`name*1=` 续行拼接。**JavaMail `getFileName()` 返回未解码原始串，不可直接使用。**
+- **微信（链接）**：账单**没有附件**，正文（`text/plain` + `text/html`）内提取 `tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?<签名 token>`（`&amp;` 反转义、`href` 与裸链双路）→ `MailBillDownloader` HTTPS GET（跟随重定向 ≤5 跳、浏览器 UA、超时）。实测 `HTTP 200` / `application/zip`，**token 即凭证、无需登录**。
+- **链接有效期 7 天**：超期邮件跳过并在结果中提示「链接已过期，请在微信重新申请」。
+- 产物落 `cacheDir/mail_bill_<uuid>/`，由编排方 `finally` 清理。
+
+### 17.7 口令穷举与解密解压（DEC-022 第 5/6/7/8 条 —— 本功能唯一"非标准"处）
+
+背景：两平台解压口令**都不随邮件发送**（支付宝在 App 服务消息、微信在【微信支付】公众号）；但实测口令**恒为 6 位纯数字且每期不同**（三封真实账单均命中；口令属凭据不落文档，两个支付宝包口令不同）→ 因此「自动穷举」是**唯一**能实现真·一键的路径，「输一次并记住」被证伪。实测两平台 zip 均为 **ZipCrypto + Deflate（非 AES）**，故用原生 `Inflater` + 自实现 ZipCrypto，**零第三方解压依赖**。
+
+- **先探测加密类型**：非 ZipCrypto（`method=99` 或含 `0x9901` 扩展字段 = WinZip AES）→ **直接报「不支持自动解密」，禁止盲目穷举**。
+- **两段式判定**：
+  1. **快筛**（每候选）：派生密钥 → 解 12 字节加密头 → 取第 12 字节，**宽松接受「CRC32 高字节 或 DOS 时间高字节」**（实测 zip 带 data descriptor，`flags=0x0809/0x080B`，单一约定会误杀正确口令）。
+  2. **权威判定**（仅命中者）：整包解密 → `Inflater(true)` 解压 → 对**解压后内容**算 `CRC32` 与中央目录记录值比对。
+  > **红线**：zip 记录的是**原始内容**的 CRC，**绝不能拿解密后的压缩数据算 CRC**（本次 spike 实际踩过，导致正确口令被全部误杀并一度得出错误结论，见 DEC-022 附则）。
+- **性能**：预计算前 3 位密钥状态（1000 状态）+ 后 3 位循环；多核并行（`Dispatchers.Default`）；可取消 + 硬超时。目标中端机 ≤ 10 s。
+- **降级**：穷举失败 → 返回 null → 上层降级为「手动输入口令」，复用同一 `EncryptedZipExtractor`。
+
+### 17.8 与 F-12 的衔接（DEC-022 第 10 条）
+
+- **不改动** F-12 的解析规则、字段映射、过滤规则、幂等与事务口径。
+- `ImportBillUseCase` 增文件路径入口重载：把 `File` 适配为既有 `BillSourceInput`（`.xlsx` → `BillSourceInput.Xlsx(file)`；`.csv` → `BillSourceInput.Csv(GBK Reader)`），随后完全复用 `factory.resolve` → `parser.parse` → 事务写入 → `BillImportResult`。
+  - 替代方案（**不采用**）：把文件包成 `FileProvider` 的 `content://` Uri 走原入口——成本更高且无必要地扩大 provider 暴露面。
+
+### 17.9 隐私/权限边界（DEC-023）
+
+- IMAP **只读**：不删除、不标已读、不移动、不改 flag；非账单邮件不下载正文、不落盘。
+- 出网点**仅** `imap.qq.com:993` 与 `tenpay.wechatpay.cn:443`（均 TLS）；**不上传任何用户数据**；不接统计/上报/广告 SDK；**不做后台联网**（仅用户点击时执行）。
+- 凭据、口令、账单内容**一律不进日志**（含异常堆栈）；设置页提供「清除邮箱凭据」。
+- 断网/认证失败/链接过期等网络侧异常**不得影响 F-12 手动导入路径**（两者完全独立）。
+
+### 17.10 测试策略（供 Tester）
+
+| 类别 | 用例 | 环境 |
+|------|------|------|
+| 口令穷举（**强制自校验**） | 自造「已知口令 zip」→ 穷举必须命中；该 zip 须能被**独立实现**（如 Python `zipfile`）用同口令解开 | JVM（**未通过此验证不得采信否定结论**，DEC-022 附则） |
+| 口令穷举 | 快筛宽松择优（data descriptor 场景不误杀）、权威判定用**未压缩内容** CRC、AES 拒绝、命中/未命中、取消与超时 | JVM |
+| 解密解压 | 真实账单 zip 解出文件与手动解压一致；中文文件名正确 | JVM + 真实样本 |
+| 文件名/链接 | RFC2047 Q/B、GB18030、`name*N` 续行；HTML/纯文本链接、`&amp;`、多链接取舍 | JVM |
+| 本地过滤 | 发件人大小写、主题变体、超期邮件、同账期多封去重 | JVM |
+| 编排聚合 | 多邮件结果聚合、重复收取幂等、失败隔离、临时文件清理（Fake） | JVM |
+| IMAP/只读性 | 真实 QQ 邮箱连接、收取前后邮件数与 `\Seen` 状态不变 | 真机（Tester） |
+| 端到端 | 支付宝 + 微信真实账单各一封入库，计数与手动导入同账单一致 | 真机（Tester，写入 `09_test_report.md`） |
+| 安全 | 落盘检索无明文授权码；日志检索不到授权码/口令 | 静态检索 + 真机 |
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

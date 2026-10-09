@@ -83,11 +83,13 @@ import kotlinx.coroutines.withContext
  *
  * @param viewModel 设置页 VM；默认经 [hiltViewModel] 解析。
  * @param onNavigateToImport 账单导入入口回调（MainScreen 中转根图导航到 `import`，§9.1 可选入口）。
+ * @param onNavigateToMailAccount 邮箱账单入口回调（F-13：MainScreen 中转根图导航到 `mail_account`）。
  */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateToImport: () -> Unit = {},
+    onNavigateToMailAccount: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // 账本管理入口统一经 LocalHomeNavigation 读取根图导航（不再参数穿透）。
@@ -104,6 +106,7 @@ fun SettingsScreen(
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbar.collectAsStateWithLifecycle()
     val themeColor by viewModel.themeColor.collectAsStateWithLifecycle()
+    val mailAccountCount by viewModel.mailAccountCount.collectAsStateWithLifecycle()
 
     var showDarkModeDialog by remember { mutableStateOf(false) }
     var showThemeColorDialog by remember { mutableStateOf(false) }
@@ -273,6 +276,16 @@ fun SettingsScreen(
                             subtitle = null,
                             trailing = { TrailingChevron() },
                             onClick = onNavigateToImport,
+                        )
+                        SettingRow(
+                            title = "邮箱凭据",
+                            subtitle = "管理用于自动收取账单的邮箱",
+                            trailing = {
+                                TrailingValue(
+                                    if (mailAccountCount > 0) "已配置 $mailAccountCount 个" else "未配置",
+                                )
+                            },
+                            onClick = onNavigateToMailAccount,
                         )
                     })
                 }

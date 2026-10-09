@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.datastore.DarkModeSetting
 import com.minibook.data.local.datastore.LockTimeout
 import com.minibook.data.local.datastore.SettingsDataStore
+import com.minibook.data.local.mail.MailAccountStore
 import com.minibook.data.local.security.AppLockController
 import com.minibook.data.local.security.BiometricHelper
 import com.minibook.data.local.security.LockSwitchResult
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,6 +60,7 @@ class SettingsViewModel @Inject constructor(
     private val biometricHelper: BiometricHelper,
     private val exportAll: ExportAllUseCase,
     private val importAll: ImportAllUseCase,
+    private val mailAccountStore: MailAccountStore,
 ) : ViewModel() {
 
     /** 暗色模式三态（默认跟随系统）。 */
@@ -79,6 +82,18 @@ class SettingsViewModel @Inject constructor(
     /** 自定义主题色（ARGB hex），无值 null = 跟随默认/动态取色。 */
     val themeColor: StateFlow<String?> = settingsDataStore.themeColor
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * 已配置邮箱凭据账号数（F-13 多账号：设置页「邮箱凭据」行尾部「已配置 N 个」）。
+     * 初值取 Store 当前值（构造时已同步读盘），后续随 upsert/delete 增删联动。
+     */
+    val mailAccountCount: StateFlow<Int> = mailAccountStore.accounts
+        .map { it.size }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            mailAccountStore.accounts.value.size,
+        )
 
     private val _isBusy = MutableStateFlow(false)
 

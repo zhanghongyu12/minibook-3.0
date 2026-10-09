@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- F-13 邮件账单导入：首次引入网络权限（QQ 邮箱 IMAP 只读拉取，ImapMailClient）。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- TASK-018 收口：注册 @HiltAndroidApp 壳（.MiniBookApp）与唯一 launcher Activity（.MainActivity）。
          安全模块懒加载，Application 初始化不触碰 DB（ARCHITECTURE §13）。
          androidx.biometric 1.1.0 自带 USE_BIOMETRIC/USE_FINGERPRINT 权限合并，无需本清单显式声明。 -->

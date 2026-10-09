@@ -2,8 +2,8 @@
 
 > 项目：MiniBook Android 重构版（本地优先记账应用）
 > 维护者：全员可更新（项目状态区块由当前阶段负责角色更新）
-> 最后更新：2026-08-24
-> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；P2 技术债清账 + 文档收口完成；待人工批准 push（收尾阶段明确不做真机 / release / Phase 3）
+> 最后更新：2026-09-23（F-13 邮件账单自动导入实现完成，TASK-045~050 回写实况）
+> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；P2 技术债清账 + 文档收口完成；**F-13 邮件账单自动导入（Phase 3）已实现并通过本地构建 + 全量单测（TASK-045~050 已回写）；真机验收待设备**；待人工批准 push（收尾阶段明确不做真机 / release / Phase 3）
 >
 > 文档编号映射（已对齐 AI-work-model 编号规范，document_rules §文档编号体系）：
 > - `docs/00_idea.md`（已归档，被 01_prd 取代）
@@ -1381,6 +1381,216 @@
   - [ ] 错误态（未识别/损坏/回滚）提示且不落库
   - [ ] 切账本导入落入当前账本（`ledgerId` 贯穿）
 - 需测试覆盖点：ImportViewModel 状态机（JVM，Fake UseCase）；SAF/真账单走真机（Tester）。
+
+---
+
+> **F-13 邮件账单自动导入任务拆分**（Architect 产出，2026-09-23）。覆盖 QQ 邮箱取件 + 加密码 zip 自动解密 + 复用 F-12 导入链路；对齐 DEC-022/023（设计详见 `12_mail_bill_import.md`）。分层概览：
+> - **凭据与配置**（1）：TASK-045 凭据存储 + 设置页邮箱配置
+> - **取件**（2）：TASK-046 IMAP 客户端与本地过滤、TASK-047 附件/链接取件与文件名解码
+> - **解密**（1）：TASK-048 ZipCrypto 口令穷举 + 解密解压
+> - **编排**（1）：TASK-049 MailBillImportUseCase + 导入入口重载
+> - **UI 与验收**（1）：TASK-050 一键收取 UI + 真机端到端
+> 公共约定同前（版本锁定 / ledgerId 首参 / Long 分 / 测例归属）。**新增依赖仅 JavaMail（约 1 MB）+ INTERNET 权限；不引入 zip4j**（DEC-022 第 5/11 条）。**禁止依赖 IMAP 服务端 SEARCH**（DEC-022 第 2 条）。
+
+---
+
+### TASK-045: F-13 邮箱凭据存储 + 设置页「邮箱账单」配置
+
+- 状态：已完成（本地构建 + 全量单测绿；真机验收待设备）
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层 + UI 层
+- 关联需求：F-13；DEC-022、DEC-023
+- 估算：1 天
+- 依赖关系：TASK-004（KeyManager）、TASK-005（DataStore）、TASK-021
+- 涉及文件（按实际落地修正）：
+  - `data/local/security/MailCredentialCipher.kt`（新增：授权码 Keystore 加解密，独立别名 `minibook_mail_credential_key`，与 master key 体系严格隔离）
+  - `data/local/mail/MailAccountStore.kt`（`@Singleton @Inject constructor`，**无需 Hilt Module**——原计划的 `di/MailModule.kt` 未创建）
+  - `ui/mail/MailSettingsScreen.kt`、`ui/mail/MailSettingsViewModel.kt`
+  - `ui/navigation/Destinations.kt`（`data object MailAccount : Destination("mail_account")`）+ `ui/navigation/MiniBookNavHost.kt`（路由注册 + 两处接线）
+  - `ui/settings/SettingsScreen.kt`（「数据」区增设「邮箱账单」`SettingRow`）
+- 描述：
+  - `MailAccountStore`：`email: Flow<String?>`、`isConfigured: Flow<Boolean>`、`suspend save(email, authCode)`、`suspend getAuthCode(): String?`、`suspend clear()`。邮箱地址可明文落 DataStore；**授权码必须经 Android Keystore（AES-256/GCM）加密**后落私有目录（复用 `KeyManager` 的基座模式，独立 alias，不与 DB master key 混用）。
+  - 设置页：邮箱地址输入 + 授权码掩码输入（可切显示）+ 保存 + 「清除邮箱凭据」+ 文案指引（QQ 邮箱网页版「设置→账号→IMAP/SMTP服务」生成 16 位授权码，**强调需开启 IMAP/SMTP 而非仅 POP3**）。
+  - 空/格式非法（非邮箱格式、授权码非 16 位）拒绝保存并给提示。
+- 实施记录：`MailCredentialCipher`（AES-256/GCM、12B IV + 128bit tag、`setUserAuthenticationRequired(false)`、懒创建、`Base64(IV||ct)`、异常 message 不含明文）+ `MailAccountStore`（落盘 `noBackupFilesDir/minibook_mail_account.txt` + `minibook_mail_auth.bin`，构造时同步读盘初始化 StateFlow，16 位授权码校验，`getAuthCode()` 解密失败防御性返回 null）+ `MailSettingsViewModel`/`MailSettingsScreen`（表单态/已配置态/清除 ConfirmDialog danger）+ `mail_account` 路由与设置入口接线。本任务**无 JVM 单测**（Store 依赖 `android.content.Context`、Cipher 依赖真 Keystore，项目无 Robolectric/Mockito 且未新增依赖）；落盘加密语义待真机复核。
+- 验收标准：
+  - [x] 授权码不以明文出现在任何落盘文件中（代码审查：`save()` 先 `encrypt()` 后落盘，全库无明文授权码写入路径；落盘文件检索复核待真机）
+  - [x] 授权码/邮箱不出现在日志（代码审查：`MailAccountStore`/`MailSettingsViewModel`/`MailCredentialCipher` 不持有 Log 工具，异常文案为固定中文）
+  - [ ] `mail_account` 路由可达、返回正常；配置后设置项显示「已配置」（待真机）
+  - [ ] 「清除凭据」后 `isConfigured=false` 且密文被抹除（待真机）
+  - [ ] 未配置时「一键收取」入口反馈正确（待真机；实现为引导态而非按钮禁用，见 TASK-050 实施记录）
+- 需测试覆盖点：`MailAccountStore` 存取往返与 `clear()`（JVM，Keystore 以替身隔离）；ViewModel 表单校验（JVM）。（实际：因 Context/Keystore 依赖无 JVM 替身，未落 JVM 单测，属已知限制，见 04_api §14.9）
+
+---
+
+### TASK-046: F-13 IMAP 客户端与账单邮件本地过滤
+
+- 状态：已完成（本地构建 + 全量单测绿；真机验收待设备）
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层
+- 关联需求：F-13；DEC-022（第 1/2 条）
+- 估算：1.5 天
+- 依赖关系：TASK-045
+- 涉及文件（按实际落地修正）：
+  - `gradle/libs.versions.toml` + `app/build.gradle.kts`（JavaMail 1.6.7 两个 library + `packaging` 元数据排除块 + R8 keep 规则在 `app/proguard-rules.pro`）
+  - `app/src/main/AndroidManifest.xml`（`android.permission.INTERNET`，项目首个权限）
+  - `data/local/mail/ImapMailClient.kt`、`data/local/mail/MailBillMatcher.kt`（含 `MailAuthException` / `MailNetworkException`）
+  - `domain/model/MailModels.kt`（`BillPlatform`/`MailBillHeader`/`MailBillMail`——原计划的 `MailBillCandidate.kt` 未采用该命名）
+- 描述：
+  - `ImapMailClient`：`imap.qq.com:993` + SSL；连接后**显式发送 `ID` 命令**（`mail.imap.id` 属性 + `IMAPStore.id(map)` 双保险）；`Folder.READ_ONLY` 打开 INBOX；用 `FetchProfile` 只取过滤所需头（`FROM`/`SUBJECT`/`Date`）与结构，命中后才取正文/附件；超时可控（连接/读各 ~20~30 s）。
+  - `MailBillMatcher`：**本地过滤**——支付宝 `FROM service@mail.alipay.com` 且主题含「支付宝交易流水明细」；微信 `FROM wechatpay@tencent.com` 且主题含「微信支付-账单流水文件」。按时间窗口（默认 30 天）与最大封数上限裁剪。
+  - 时间字段用服务端 `Date`（`sentDate`）做窗口判断，**不依赖服务端 SEARCH**。
+  - 异常分类明确：认证失败（`AuthenticationFailedException`）→「登录失败（请确认已开启 IMAP/SMTP 服务、授权码为最新）」；网络/超时 →「网络异常」。
+- 实施记录：`ImapMailClient.fetchBillMails(email, authCode, sinceDays=30)`（ENVELOPE+FLAGS 头部拉取 → 本地过滤 → 命中取件；正文 plain+html 两路拼接、`stripHtml` 先保留 href/src URL 再去标签——微信链接不丢的修正）；时间窗口 sentDate 回退 receivedDate、皆空视为在窗口内；30s 双超时；`MailBillMatcher` 发件人+主题同时命中（大小写不敏感、容忍显示名形态）。测试：`MailBillMatcherTest` **9 例**（JVM 全绿）；`ImapMailClient` 本身无 JVM 单测（JavaMail 无官方假服务器，需 greenmail 等新依赖，未引入）。
+- 验收标准：
+  - [ ] 配置正确凭据后可连接并列出收件箱邮件数与命中账单邮件数（待真机）
+  - [x] **不发送任何 IMAP `SEARCH` 命令**（代码审查：全库无 `folder.search(...)` 调用，过滤在 `MailBillMatcher` 本地完成）
+  - [ ] 邮箱**只读**：收取前后邮件数、`\Seen` 状态、所在文件夹均不变（待真机核对；代码侧已 `READ_ONLY` + `close(false)`、无 flag 写操作）
+  - [ ] 凭据错误/网络不可达分别给出**不同**的明确提示，且提示中不含凭据（文案已实现：`MailAuthException`/`MailNetworkException` 固定中文；真机触发路径待设备）
+  - [ ] 连接具备超时，不出现永久挂起（连接/读超时各 30s 已配置；待真机）
+- 需测试覆盖点：`MailBillMatcher` 过滤规则（JVM，含正例/反例/边界：发件人大小写、主题变体、超期邮件）——已落 9 例；IMAP 连通性与只读性走真机（Tester）。
+
+---
+
+### TASK-047: F-13 取件（支付宝附件 / 微信链接下载 + RFC2047 文件名解码）
+
+- 状态：已完成（本地构建 + 全量单测绿；真实下载待真机/受限网络）
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：数据层
+- 关联需求：F-13；DEC-022（第 3/4 条）
+- 估算：2 天
+- 依赖关系：TASK-046
+- 涉及文件：
+  - `data/local/mail/MailFilenameDecoder.kt`
+  - `data/local/mail/WechatBillLinkExtractor.kt`
+  - `data/local/mail/MailBillDownloader.kt`（含 `ContentDispositionParser` object、`BillDownloadException`、`DownloadedFile`）
+  - `data/local/mail/ImapMailClient.kt`（补「取附件字节」与「取正文文本」——已并入 TASK-046 的 walkPart/ExtractedContent）
+- 描述：
+  - **支付宝**：从邮件取 `APPLICATION/OCTET-STREAM` 附件字节；文件名走 `MailFilenameDecoder`——处理 `=?GB18030?Q?…?=` / `=?GB18030?B?…?=`（RFC2047）与 `name*0=`/`name*1=` 续行拼接（RFC2231），解出可读中文名（如 `支付宝交易明细(20260619-20260919).zip`）。
+  - **微信**：从 `text/plain` + `text/html` 正文提取 `https://tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?…` 链接（HTML 实体 `&amp;` 反转义、`href` 与裸链双路）；`MailBillDownloader` 走 HTTPS GET（跟随重定向 ≤5 跳、带浏览器 UA、超时），从 `Content-Disposition` 或兜底名确定 zip 文件名。
+  - 取件产物落 `cacheDir/mail_bill_<uuid>/`，返回 `File` 给上层；**上层负责清理**（`finally`）。
+  - 链接过期/失效（非 200 或返回 HTML 错误页）→ 明确区分「链接已过期（>7 天），请在微信重新申请」。
+- 实施记录：`MailFilenameDecoder.decode/joinRfc2231Parts`（RFC2231 续行直接相接 + RFC2047 Q/B + 相邻 encoded-word 空白丢弃 + 失败原样返回）；`WechatBillLinkExtractor.extract`（host 精确 `tenpay.wechatpay.cn`（可带端口）+ 固定路径前缀匹配、`&amp;` 反转义、不被图片链接干扰）；`MailBillDownloader.download`（每跳强制 https、手动重定向 ≤5、30s 双超时、浏览器 UA、非 200 折叠为「链接失效」文案；异常不含 URL/token）；`ContentDispositionParser.parse`（RFC5987 `filename*` 优先、回退 `filename` 含 `%XX` 解码）。
+  - **实现差异**：取件产物**不落盘、以 `ByteArray` 返回**（`DownloadedFile(fileName, bytes)`）；落盘（`cacheDir` 临时文件）与清理由 TASK-049 编排层统一负责，与「上层负责清理」语义一致。
+  - 测试：`MailFilenameDecoderTest` **16 例** + `WechatBillLinkExtractorTest` **9 例** + `ContentDispositionParserTest` **6 例**（共 31 例 JVM 全绿）；`MailBillDownloader` 网络路径无 JVM 单测。
+- 验收标准：
+  - [x] RFC2047 中文附件名解码正确（GB18030 的 Q/B 两种编码均覆盖；`name*N` 续行正确拼接）（JVM 单测 16 例）
+  - [ ] 支付宝邮件附件能落成可用的 zip 文件，字节与邮件附件一致（待真机；本地过滤/附件 mime 命中已实现并经真机 spike 验证过协议路径）
+  - [x] 微信邮件能提取到下载链接；无链接/多链接时取账单下载域名那条（JVM 单测 9 例，含图片链接干扰用例）
+  - [ ] 微信链接下载成功得到 `application/zip`，非 200/超时/过期分别给明确提示（待真机/受限网络；文案与分支已实现）
+  - [x] 下载产物只落 `cacheDir`，失败路径也清理（代码审查：下载器只回内存字节；落盘/清理统一在编排层 `try/finally`，见 TASK-049）
+- 需测试覆盖点：`MailFilenameDecoder` / `WechatBillLinkExtractor` / `ContentDispositionParser`（JVM）——已落 31 例；真实下载走真机/受限网络（Tester）。
+
+---
+
+### TASK-048: F-13 ZipCrypto 口令穷举 + 解密解压（纯 Kotlin，含已知答案自校验）
+
+- 状态：已完成（本地构建 + 全量单测绿；真实账单验收已由临时测试实跑确认）
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层（纯 Kotlin，可 JVM 单测）
+- 关联需求：F-13；DEC-022（第 5/6/7/8 条）
+- 估算：2 天
+- 依赖关系：TASK-010
+- 涉及文件（按实际落地补充）：
+  - `domain/usecase/bill/zip/ZipCrypto.kt`（密钥派生 + 流解密核心算法）
+  - `domain/usecase/bill/zip/ZipArchiveInspector.kt`（加密类型判定 + 手写 zip 结构解析 `ZipStructureReader`）
+  - `domain/usecase/bill/zip/ZipPasswordCracker.kt`
+  - `domain/usecase/bill/zip/EncryptedZipExtractor.kt`
+  - `app/src/test/.../zip/ZipCryptoTest.kt`（含**已知口令自造 zip fixture**）、`ZipPasswordCrackerTest.kt`
+- 描述：
+  - **先探测加密类型**：解析 zip 中央目录/本地头，读 `method` 与 general purpose flag；命中 WinZip AES（`method=99` 或存在 `0x9901` 扩展字段）→ **直接返回「不支持自动解密」**，禁止盲目穷举。
+  - **口令穷举（两段式，DEC-022 第 7 条为准）**：
+    ① 快筛：候选口令派生密钥 → 解 12 字节加密头 → 取第 12 字节，**宽松接受 `CRC32 高字节` 或 `DOS 时间高字节`**；
+    ② 权威判定：整包解密 → `Inflater(true)` 解压 → 对**解压后内容**算 `CRC32` 与中央目录记录值比对。**严禁拿压缩数据算 CRC**。
+  - 性能：预计算前 3 位密钥状态（1000 状态）+ 后 3 位循环；多核并行（`Dispatchers.Default`）；支持协程取消与硬超时。
+  - 命中后用 `EncryptedZipExtractor.extract(zip, password, destDir)` 解出账单文件（处理中文名；文件名优先取 `Content-Disposition`/中央目录名并解码）。
+  - 穷举失败 → 返回 null，上层降级为「手动输入口令」（复用同一 extract 路径）。
+- 实施记录：`ZipEncryptionInfo`（`ZipCrypto` / `Unsupported(reason)`，AES 以 method 99 **或** 中央目录/本地头 extra `0x9901` 判定）；`ZipPasswordCracker.crack(zipFile, digits=6..6, charset="0123456789", onProgress)` 两段式 + 前 `len/2` 位密钥状态预计算 + `availableProcessors()` 分片并发 + 4096 批次取消检查；`EncryptedZipExtractor.extract`（校验字节宽松校验 + raw deflate/stored + UTF-8/GBK/CP437 条目名解码 + 基名防穿越）。
+  - **真实账单验收**（协调者以临时测试实跑后删除该测试）：三份真实账单 `inspect` 均判 `ZipCrypto`、穷举**全部命中 6 位数字口令**（单份 90~760 ms，多核亚秒级）、解出字节与独立 Python oracle 完全一致。
+  - **降级实现差异（如实）**：穷举失败当前降级为**记录 `MailItemFailure.PasswordNotFound` 并在结果页提示**，**手动输入口令 UI 未实现**（复用同一 extract 路径的组件已具备，UI 属后续增强，DEC-022 第 8 条已同步修订）。
+  - 测试：`ZipCryptoTest` **12 例**（已知答案向量、deflate/stored 正误口令、DOS 时间校验字节、GBK 中文名、inspect 五分支）+ `ZipPasswordCrackerTest` **6 例**（命中/时间字节/stored/未命中/未加密/进度回调）= **18 例 JVM 全绿**。
+- 验收标准：
+  - [x] **已知答案自校验（强制）**：用自造「已知口令 zip」验证穷举能命中该口令（`ZipCryptoTest`/`ZipPasswordCrackerTest` 以 Python zip 口径自造已知口令 fixture 实现交叉验证，DEC-022 附则）
+  - [x] 6 位数字穷举在真实账单 zip 上命中口令并解出文件，内容与手动解压一致（临时验收测试实跑：三份真实账单全部命中，解出字节与独立 Python oracle 完全一致，穷举亚秒级；测试本体已按约定删除）
+  - [x] 快筛宽松择优：模拟 data descriptor 场景下正确口令不被误杀（单测「穷举命中 - 校验字节为 DOS 时间高字节」「校验字节为 DOS 时间高字节 - 仍能正确解出」）
+  - [x] AES 加密 zip → 明确「不支持自动解密」，不进入穷举（单测 inspect method 99 / extra 0x9901 两分支）
+  - [x] 穷举可取消（实现：每 4096 候选 `ensureActive`；单测覆盖进度回调与尝试数有界，**取消路径本身无直接单测**，属已知限制）；不 import `android.*`（JVM 可测）（代码审查）
+  - [x] 解压产物文件名中文正确（单测「GBK 文件名 - 无 UTF8 标志也能解出中文名」）
+- 需测试覆盖点：ZipCrypto 已知向量、快筛/权威两段判定、AES 拒绝、穷举命中与未命中、取消与超时（JVM，重点）——已落 18 例（取消直接单测缺，见上）。
+
+---
+
+### TASK-049: F-13 MailBillImportUseCase 编排 + 导入入口重载
+
+- 状态：已完成（本地构建 + 全量单测绿；真机端到端待设备）
+- 优先级：P2
+- 负责角色：Developer
+- 所属层：业务层
+- 关联需求：F-13；DEC-022（第 9/10 条）
+- 估算：1.5 天
+- 依赖关系：TASK-047、TASK-048、TASK-043
+- 涉及文件（按实际落地修正）：
+  - `domain/usecase/mail/MailBillImportUseCase.kt`（**原计划的 `FetchBillFromMailUseCase` 未单独创建**——取件编排并入本类，`fetchBillMails` 直连 IMAP 客户端）
+  - `domain/model/MailImportModels.kt`（原计划的 `MailImportResult.kt` 命名调整为 `MailImportModels.kt`）
+  - `domain/usecase/bill/BillFilePreparer.kt`（新增 `prepareLocalFile` / `createTempFile` 两个接口方法）
+  - `domain/usecase/bill/ImportBillUseCase.kt`（新增 `importLocalFile`，与 `invoke` 共用 `importPrepared` 核心）
+  - `data/local/bill/SafBillFilePreparer.kt`（`prepareLocalFile`/`createTempFile` 实现 + `XlsxPrepared(deleteOnClose)` 参数化）
+- 描述：
+  - `FetchBillFromMailUseCase`：编排「取凭据 → IMAP 连接 → 本地过滤 → 取件 → 落临时文件」，产出 `List<FetchedBill>`（平台/主题/日期/zip 文件/来源类型）。
+  - `MailBillImportUseCase`：对每个取件结果——探测加密类型 → 穷举口令 → 解密解压 → 生成 `File` → 调 `ImportBillUseCase(filePath, ledgerId)` → 聚合为 `MailImportResult`（每封邮件：成功 N / 跳过 M 分原因 / 失败原因；整体汇总）。
+  - `ImportBillUseCase` 增加文件入口重载（**不改动原 uri 入口与内部逻辑**）：把 `File` 适配为既有 `BillSourceInput`（XLSX 直接用该文件、CSV 用其 GBK Reader），复用 `BillParserFactory` + 事务写入口径。
+  - 每种账单只取最近一封（原描述「按平台 + 账期去重」）：**按平台**（`BillPlatform` = 账单种类）在 FILTER 后各保留 `sentDateMillis` 最新一封（同毫秒按主题字典序兜底），其余同平台旧邮件**不处理**，进度 `itemLines` 留 `⏭ {平台} · {主题} — 已有更新的同类账单，跳过`、FILTER 摘要披露「→ 待处理 K 封」；入库层 `externalId` 仍作最后防线。
+  - 临时文件统一在 `finally` 清理（zip + 解出文件 + 解压目录）。
+- 实施记录：`MailBillImportUseCase.invoke(ledgerId, accountIds, sinceDays=30, onProgress): MailImportOutcome` 全流程（读凭据 → 连接拉取 → 本地过滤 → **每种账单只取最近一封** → 逐封「取件→落盘→判型→穷举→解压→导入」→ 汇总）；凭据不可用返回 `NotConfigured` 不抛异常；`MailAuthException`/`MailNetworkException` 向上透传；单封未预期异常折叠 `Unexpected` 不中断整批；临时文件 `try/finally` 全路径清理；**`totalMailCount`（窗口内参与筛选邮件数，`fetchBillMails` 返回）与 `billMailCount`（命中数）已分离**（如实，不伪造）。
+  - **关键实现约束（重要）**：`importLocalFile` 的 `displayName` 参与判型——支付宝邮件侧文件名是 `.zip`，直接传会每封被判未识别；实现为「邮件名本身是 `.csv`/`.xlsx` 才用，否则回退 zip 条目名」。
+  - **实现差异（如实）**：①原计划两个 UseCase 合并为一；②原定「同一账期重复邮件按主题+账期去重」曾**未实现**，已于 **2026-10-09 补齐**（`domain/usecase/mail/MailBillSelector.kt`）——落地粒度为**按平台**：`MailBillMatcher` 的判定颗粒度只到平台（支付宝交易流水明细 / 微信支付账单流水文件），不存在可用的「账期」子类，故同平台只处理最新一封；跳过行为在 UI 显式披露（`⏭` 行 + FILTER 摘要），`externalId` 幂等仍是最后防线。
+  - 测试：`ImportBillUseCaseTest` 扩至 **12 例**（F-13 新增 4 例：本地文件导入成功同口径 / prepareLocalFile 异常零落库 / Unrecognized 透传 / close 不删除调用方文件）+ 新增 `MailBillSelectorTest` **6 例**（空输入 / 每平台各一封 / 同平台多封取最新 / 真机形态 2 微信 + 3 支付宝 → 只留 2 封 / 同毫秒主题兜底且与输入顺序无关 / 单平台多封仅留一封并校验 `hitCount = kept + skipped`；顺序保持由前两例断言）；`MailBillImportUseCase` 编排主体**无 JVM 单测**（依赖 IMAP/下载等 I/O 边界，fake 化需引入新依赖，属已知限制）。
+- 验收标准：
+  - [ ] 端到端：配置邮箱后「一键收取」→ 支付宝/微信账单均入库，且与**手动导入同一账单**的成功/跳过计数一致（待真机；本地已验证解密/解压/导入三环各自正确——真实账单 zip 验收 + 单测同口径）
+  - [ ] 重复收取同一批邮件：不产生重复交易（计「已存在」）（待真机；`externalId` 幂等由 F-12 单测与实现保证）
+  - [x] 每种账单（平台）多封邮件只处理最新一封（**已实现** `MailBillSelector`，2026-10-09；JVM 单测 6 例覆盖选取口径；**真机确认待设备空档**——两路会话共用真机，见 `.claude-runs/PHONE-COORD.md`）
+  - [x] 任一环节失败不影响其他邮件，且结果按邮件分条反馈（代码审查：逐封 `try` 折叠 `Unexpected`；失败映射表 9 分支见 04_api §14.7）
+  - [x] 全程 `finally` 清理临时文件；UseCase 不 import `android.*`（代码审查 + `ImportBillUseCaseTest`「close 不删除调用方文件」用例（fake 同语义）；**`SafBillFilePreparer` 真实 `deleteOnClose=false` 无直接单测**，建议 androidTest 补「`prepareLocalFile`+`close()` 后源文件仍在 / `prepare()`+`close()` 后临时副本已删」两条回归）
+- 需测试覆盖点：编排聚合（Fake 取件/破解/导入）、多邮件与去重、失败隔离与清理（JVM）。（实际：落 `ImportBillUseCaseTest` 4 例覆盖文件入口 + `MailBillSelectorTest` 6 例覆盖「每种账单只取最新一封」；编排主体无单测，见实施记录）
+
+---
+
+### TASK-050: F-13 UI 接线（一键收取入口 / 进度 / 结果）+ 真机验证
+
+- 状态：已完成（本地构建 + 全量单测绿；**真机端到端验证待设备**）
+- 优先级：P2
+- 负责角色：Developer（UI）+ Tester（真机）
+- 所属层：UI 层
+- 关联需求：F-13；DEC-022、DEC-023
+- 估算：2 天
+- 依赖关系：TASK-049、TASK-045、TASK-020、TASK-021
+- 涉及文件：
+  - `ui/billimport/ImportScreen.kt`、`ui/billimport/ImportViewModel.kt`（扩展：邮箱收取入口与状态）
+  - `ui/billimport/MailImportPresenter.kt`（新增：收取结果 → 展示模型纯函数）
+  - `ui/main/MainScreen.kt`（`onNavigateToMailAccount` 参数穿透）+ `ui/navigation/MiniBookNavHost.kt`（Import/MailAccount 两处接线）
+  - `ui/settings/SettingsScreen.kt`（邮箱账单入口，随 TASK-045 落地）
+  - 注：未创建 `ui/import/components/*` 收取专用组件——收取结果为 `ImportScreen` 私有 composable（`ImportMailResultContent` 等），复用 C-20/C-04，不新增编号组件
+- 描述：
+  - 导入页 Idle 态新增「**从邮箱一键收取**」按钮：未配置邮箱 → 禁用 + 引导去设置；已配置 → 可点。
+  - `ImportUiState` 扩展兼容收取流程：连接邮箱 → 找到 N 封账单 → 逐封下载/解密/导入 → 汇总结果（进度可见、**可取消**）。
+  - 结果展示：整体「成功 N / 跳过 M / 失败 K」+ 按邮件分条（主题、账期、平台、结果），失败给明确原因（链接过期 / 口令穷举失败 / 格式未识别 / 网络异常）。
+  - 无账单邮件 → 「未找到账单邮件」+ 两平台申请入口指引（复用 F-12 提示文案）。
+  - 复用 F-12「Busy 锁数据入口」交互口径。
+- 实施记录：`ImportUiState` 新增 `MailBusy(progress)` / `MailResult(summary)` / `MailNotConfigured` / `MailError(msg)` 四态 + `onFetchMailBills()`（进度回调直刷状态；`MailAuthException`/`MailNetworkException`/账本异常/兜底四路固定中文文案）；Idle 态次要按钮「一键收取邮箱账单」；`MailBusy` 经 C-20 全屏遮罩 + `mailStageMessage` 四阶段文案；`MailImportPresenter`（纯函数 `failureLabel` `when` 穷尽 9 分支 + `present` 汇总展示模型，JVM 可单测）；`MailNotConfigured` EmptyState「去配置」→ `onNavigateToMailAccount`。测试：`MailImportPresenterTest` **12 例** JVM 全绿。
+  - **实现差异（如实）**：①未配置时不**禁用**按钮，而是点击进入 `MailNotConfigured` 引导态（可直达设置页，比静默禁用更可自救）；②「无账单邮件」独立文案未加——`MailResult` 汇总 headline 计数为 0/0 即承载该信息；③「可取消」实现：收取期间全屏遮罩锁入口（返回被屏蔽），底层协程取消链路具备（`ensureActive`），无显式取消按钮。
+- 验收标准：
+  - [x] 未配置/已配置两种入口状态正确；未配置时引导可达设置页（JVM 层状态机 + 导航接线已实现并编译绿；**页面实际渲染与路由跳转待真机**）
+  - [ ] 收取过程有进度、可取消，取消后无半导入数据、临时文件已清理（进度已实现（四阶段文案随回调刷新）；取消路径与清理正确性待真机——清理在 `finally` 已覆盖取消分支（代码审查））
+  - [x] 结果按邮件分条展示，失败原因明确且与真实原因一致（`MailImportPresenterTest` 12 例：9 失败分支文案穷尽 + 汇总计数 + headline）
+  - [ ] 真机端到端：支付宝 + 微信各至少一封真实账单成功入库，计数正确（待真机）
+  - [ ] 收取后核对邮箱：邮件数/已读状态未变（只读验证）（待真机）
+  - [ ] 日志中检索不到授权码与解压口令（代码审查已保证无凭据日志路径；真机 logcat 检索复核待设备）
+  - [ ] 断网场景：明确「网络异常」，F-12 手动导入路径不受影响（文案已实现 `MAIL_NETWORK_MESSAGE`；F-12 路径与 F-13 完全独立（代码结构保证）；真机触发待设备）
+- 需测试覆盖点：`ImportViewModel` 收取状态机（Fake UseCase）（实际：`MailImportPresenterTest` 12 例覆盖展示映射；ViewModel 状态机本身无 JVM 单测，属已知限制）；真机端到端与只读性核对（Tester，写入 `09_test_report.md`，待设备）。
 
 ---
 

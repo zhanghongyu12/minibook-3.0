@@ -23,6 +23,8 @@ import com.minibook.domain.repository.CategoryRepository
 import com.minibook.domain.repository.UserCategoryRuleRepository
 import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
 import com.minibook.testutil.FakeTransactionRunner
+import java.io.File
+import java.io.IOException
 import java.io.StringReader
 import java.time.YearMonth
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +34,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,7 +43,8 @@ import org.junit.Test
  *
  * 覆盖：成功导入（自动分类命中 + 未命中归「其他」）；幂等去重（既有 externalId 相交 +
  * 文件内重复 → existing）；全跳过计数（neutral/closed）；工厂判不出 → unrecognized；
- * 「其他」兜底缺失 → 抛异常零落库（事务未提交）；insertBatch 写异常 → 异常上抛且零插入回滚。
+ * 「其他」兜底缺失 → 抛异常零落库（事务未提交）；insertBatch 写异常 → 异常上抛且零插入回滚；
+ * F-13 本地文件入口 [ImportBillUseCase.importLocalFile]（成功/prepare 异常/Unrecognized/close 不删调用方文件）。
  */
 class ImportBillUseCaseTest {
 
@@ -133,8 +137,28 @@ class ImportBillUseCaseTest {
 
     private class FakeBillFilePreparer(
         private val handle: PreparedBillFile = FakePreparedBillFile(),
+        /** importLocalFile 路径返回的句柄；null = 与 prepare 路径共用 [handle]。 */
+        private val localHandle: PreparedBillFile? = null,
+        /** 非 null = prepareLocalFile 抛异常（模拟文件损坏/无法读取）。 */
+        private val localFileError: Exception? = null,
     ) : BillFilePreparer {
+        var lastLocalFile: File? = null
+            private set
+        var lastLocalDisplayName: String? = null
+            private set
+
         override fun prepare(uriString: String): PreparedBillFile = handle
+
+        override fun prepareLocalFile(file: File, displayName: String?): PreparedBillFile {
+            lastLocalFile = file
+            lastLocalDisplayName = displayName
+            localFileError?.let { throw it }
+            return localHandle ?: handle
+        }
+
+        /** 编排层测试不触达 createTempFile（F-13 调用方直接使用），误用即暴露。 */
+        override fun createTempFile(prefix: String, suffix: String): File =
+            throw NotImplementedError("编排层测试不应申请临时文件")
     }
 
     // ---------- fixtures ----------
@@ -175,9 +199,10 @@ class ImportBillUseCaseTest {
         parser: BillParser?,
         runner: TransactionRunner = FakeTransactionRunner(),
         rules: List<UserCategoryRule> = emptyList(),
+        preparer: BillFilePreparer = FakeBillFilePreparer(),
     ): ImportBillUseCase = ImportBillUseCase(
         transactionRunner = runner,
-        filePreparer = FakeBillFilePreparer(),
+        filePreparer = preparer,
         parserFactory = FakeBillParserFactory(parser),
         categoryDataSource = catDs,
         transactionDataSource = txDs,
@@ -393,6 +418,116 @@ class ImportBillUseCaseTest {
         assertNotNull(thrown)
         assertTrue(thrown!!.message!!.contains("写入失败"))
         assertTrue("写异常不得残留插入", txDs.inserted.isEmpty()) // 事务回滚 → 零插入
+    }
+
+    // ---------- F-13 本地文件入口（importLocalFile） ----------
+
+    @Test
+    fun `本地文件导入 - 成功导入与 invoke 同口径`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource().apply {
+            categories = listOf(
+                category("cat-eat", "餐饮", CategoryType.EXPENSE),
+                category("cat-other-exp", "其他", CategoryType.EXPENSE),
+            )
+        }
+        val parser = FakeBillParser(
+            format = TransactionSource.ALIPAY_IMPORT,
+            result = BillParseResult.Success(
+                rows = listOf(
+                    row("mail:1", 100, platformCategory = "餐饮美食"),
+                    row("mail:2", 200),
+                ),
+                skipped = emptyList(),
+            ),
+        )
+        val preparer = FakeBillFilePreparer()
+        val localFile = File("mail_attachment_bill.csv")
+
+        val result = useCase(txDs, catDs, parser, preparer = preparer)
+            .importLocalFile(localFile, displayName = "账单.csv", ledgerId = LEDGER)
+
+        // 与 invoke 成功路径同口径（共用 importPrepared 核心）。
+        assertEquals(2, result.success)
+        assertEquals(0, result.existing)
+        assertFalse(result.unrecognized)
+        assertEquals(2, txDs.inserted.size)
+        assertEquals(TransactionSource.ALIPAY_IMPORT, txDs.inserted[0].source)
+        assertEquals("mail:1", txDs.inserted[0].externalId)
+        // 入口签名正确透传：file 与 displayName 原样到达 prepareLocalFile。
+        assertSame(localFile, preparer.lastLocalFile)
+        assertEquals("账单.csv", preparer.lastLocalDisplayName)
+    }
+
+    @Test
+    fun `本地文件导入 - prepareLocalFile 抛异常返回未识别零落库`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource()
+        val parser = FakeBillParser(
+            format = TransactionSource.ALIPAY_IMPORT,
+            result = BillParseResult.Success(rows = listOf(row("mail:1", 100)), skipped = emptyList()),
+        )
+        val preparer = FakeBillFilePreparer(localFileError = IOException("文件损坏"))
+
+        val result = useCase(txDs, catDs, parser, preparer = preparer)
+            .importLocalFile(File("broken.csv"), displayName = null, ledgerId = LEDGER)
+
+        assertTrue(result.unrecognized)
+        assertEquals(0, result.success)
+        assertTrue(txDs.inserted.isEmpty())
+    }
+
+    @Test
+    fun `本地文件导入 - 解析器 Unrecognized 透传未识别零落库`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource()
+        val parser = FakeBillParser(
+            format = TransactionSource.ALIPAY_IMPORT,
+            result = BillParseResult.Unrecognized("未找到表头"),
+        )
+
+        val result = useCase(txDs, catDs, parser)
+            .importLocalFile(File("mail_bill.csv"), displayName = "mail_bill.csv", ledgerId = LEDGER)
+
+        assertTrue(result.unrecognized)
+        assertTrue(txDs.inserted.isEmpty())
+    }
+
+    /**
+     * F-13 回归保护：importLocalFile 走完后（`use {}` 必然已调用 close），调用方文件**仍存在**。
+     *
+     * 说明：`deleteOnClose=false` 的真实实现在 [com.minibook.data.local.bill.SafBillFilePreparer]，
+     * 其构造依赖 Android Context，本 JVM 单测无 Robolectric/Mockito 无法实例化；故此处用与
+     * `deleteOnClose=false` 同语义的 fake（close 关流但不删文件）证明**编排层**在调用 close 的
+     * 前提下不引入任何删除路径。SafBillFilePreparer 自身的删除语义未被单测覆盖（见任务报告）。
+     */
+    @Test
+    fun `本地文件导入 - close 不删除调用方文件`() = runTest {
+        val localFile = File.createTempFile("minibook_mail_import", ".xlsx")
+        try {
+            localFile.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04)) // PK\x03\x04 魔数
+            var closed = false
+            val prepared = object : PreparedBillFile {
+                override val input: BillSourceInput = BillSourceInput.Xlsx(localFile)
+                override val displayName: String? = "mail_bill.xlsx"
+                override val magicBytes: ByteArray? = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
+                override fun close() {
+                    closed = true // 同 deleteOnClose=false 语义：只关句柄，不删文件
+                }
+            }
+            val preparer = FakeBillFilePreparer(localHandle = prepared)
+            val txDs = FakeTransactionDataSource()
+            val catDs = FakeCategoryDataSource()
+
+            val result = useCase(txDs, catDs, parser = null, preparer = preparer)
+                .importLocalFile(localFile, displayName = "mail_bill.xlsx", ledgerId = LEDGER)
+
+            assertTrue(result.unrecognized) // parser=null 工厂判不出，走完 use 后返回未识别
+            assertTrue("use 必须调用 close", closed)
+            assertTrue("close 不得删除调用方文件", localFile.exists())
+        } finally {
+            localFile.delete()
+        }
     }
 
     private companion object {

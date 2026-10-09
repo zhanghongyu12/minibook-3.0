@@ -2,8 +2,8 @@
 
 > 状态：已确认（本文件为决策档案，持续追加）
 > 维护者：全员可追加（Architect 汇总本阶段决策）
-> 最后更新：2026-08-21
-> 说明：DEC-001 为技术栈选型；DEC-002~DEC-009 对应阶段 3 拍板的 8 项最终决定（D-1~D-8，与 ARCHITECTURE §14 / DATABASE 落地口径一一对应）。编号递增不复用；已确认决策不可删除，只能标记为「已废弃」。
+> 最后更新：2026-09-23
+> 说明：DEC-001 为技术栈选型；DEC-002~DEC-009 对应阶段 3 拍板的 8 项最终决定（D-1~D-8，与 ARCHITECTURE §14 / DATABASE 落地口径一一对应）；DEC-010~DEC-021 为 Phase 2 决策；DEC-022/DEC-023 为 Phase 3（F-13 邮件账单自动导入）决策。编号递增不复用；已确认决策不可删除，只能标记为「已废弃」。
 
 ---
 
@@ -297,6 +297,74 @@
 - 原因：无人值守下明确「补测到何程度算完成」以免过度/漏测；Room 迁移只能在 instrumented 环境跑，无设备 + 存在 DEX 阻断时按「编译绿 + 设备执行留清单」闭环；真机项不可在无设备时伪造通过。
 - 影响：`09_test_report.md §F-12`、`CHANGELOG.md`、`app/build.gradle.kts`、`app/src/androidTest/java/com/minibook/data/local/db/MigrationV1To2Test.kt`。
 - 替代方案：JVM 用 Robolectric 跑迁移（弃：项目未引入、引入超补测边界）；真机未连仍标「已验证」（弃：造假）；Tester 直接重命名 androidTest 方法名（弃：属修复范畴，保留观察报 Developer）。
+
+---
+
+## DEC-022: F-13 邮件账单自动导入技术路线（IMAP 取件 / 链接下载 / 口令穷举）
+
+- 日期：2026-09-23
+- 决定：F-13「自动取邮箱账单并导入」采用下述路线，**全部结论以真机真邮箱 spike 实测为依据**（详见 `12_mail_bill_import.md` §2/§9）：
+  1. **邮箱与认证**：仅支持 QQ 邮箱；`imap.qq.com:993` + SSL；认证用邮箱地址 + **16 位 IMAP 授权码**（非登录密码）；JavaMail 必须显式发送 IMAP `ID` 命令声明客户端身份（`mail.imap.id` 属性 + `IMAPStore.id(map)` 双保险，否则 QQ 拒绝）。
+  2. **取件筛选**：**禁用 IMAP 服务端 SEARCH，改为「拉取近期邮件 + 本地过滤」**。依据：实测 `OR(FROM "alipay")(FROM "tencent")(SUBJECT "账单")` 在 QQ 上返回 **0 封**，而同一批邮件本地过滤命中 3 封真实账单——服务端 SEARCH 在本场景不可靠。
+  3. **支付宝取件**：账单为邮件**附件** zip；附件文件名经 **RFC2047/RFC2231 编码**（JavaMail `getFileName()` 返回未解码原始串），须自行解码。
+  4. **微信取件**：账单**不是附件**，正文只有下载链接（`tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?<签名 token>`）；实测 HTTPS GET 直连成功（`HTTP 200` / `application/zip` / 26318 B，token 即凭证、无需登录）；**链接有效期 7 天**，超期需回微信重新申请。
+  5. **解密**：实测两平台 zip 均为 **ZipCrypto + Deflate（非 AES）**，`method=8`、`flags=0x0809/0x080B`（含 data descriptor 位）→ **不引入 zip4j**，用 Java 原生 `Inflater` + 自实现 ZipCrypto 解密（延续 DEC-016「零第三方解析库」口径）。
+  6. **口令（本决策核心）**：解压口令**不随邮件发送**（支付宝在支付宝 App 服务消息、微信在【微信支付】公众号）；但实测口令恒为 **6 位纯数字且每期不同**（三封真实账单均测得命中；口令属凭据不落文档，两个支付宝包口令不同）→ 故采用「**本地自动穷举 6 位数字口令**」实现真·一键，**明确否决「用户输一次并记住」方案**（口令每期变化，记住无效）。
+  7. **口令穷举算法口径**：两段式——① 快筛：由候选口令派生密钥、解 12 字节加密头，取第 12 字节比对，且**必须宽松接受「CRC32 高字节 或 DOS 时间高字节」两种约定**（实测 zip 带 data descriptor，单一约定会误杀正确口令）；② 权威判定：整包解密 → `Inflater` 解压 → 对**解压后的内容**算 CRC32 与 zip 记录值比对。**红线：绝不能拿解密后的压缩数据算 CRC32**（zip 存的是原始内容的 CRC），否则正确答案被全部误杀。性能上预计算前 3 位密钥状态 + 多核并行，目标中端机 ≤ 10 s。
+  8. **降级**：穷举失败或加密类型非 ZipCrypto（AES）→ **明确报错，不得静默失败**；实现时须先探测加密类型，禁止对非 ZipCrypto 盲目穷举。**（实现回写 2026-09-23：非 ZipCrypto 已按 `ZipArchiveInspector` 探测（method 99 / extra `0x9901` → `Unsupported`，不进穷举）；穷举失败记录 `MailItemFailure.PasswordNotFound` 并在结果页按邮件提示；原设计设想的「降级为用户手动输入口令」的 UI 未实现，属后续增强——复用同一 `EncryptedZipExtractor` 路径的组件已具备，仅缺输入界面。）**
+  9. **隐私边界**：IMAP **只读**（`Folder.READ_ONLY`，不删除/不标已读/不移动/不改 flag）；授权码经 Android Keystore（AES-256/GCM）加密落盘；凭据、口令、账单内容**一律不进日志**；出网点仅 `imap.qq.com:993` 与 `tenpay.wechatpay.cn:443`；临时文件只落 `cacheDir` 且 `finally` 删除。
+  10. **与 F-12 的关系**：F-13 只是 F-12 的「取件自动化前置段」，**不修改** F-12 的解析规则/字段映射/过滤口径/幂等口径；解出的 `.csv`/`.xlsx` 交给既有 `ImportBillUseCase`。唯一衔接改动：为 `ImportBillUseCase` 增加**以文件路径为入口的重载**（邮件取件产物是私有目录 `File`，非 `content://` Uri）。
+  11. **依赖与权限**：新增 `com.sun.mail:android-mail:1.6.7` + `android-activation:1.6.7`（约 1 MB，用户已同意）与 `INTERNET` 权限；补 R8 keep 规则。**不引入 zip4j**。
+  12. **形态**：**手动「一键收取」**，不做 WorkManager 后台定时（用户 2026-09-23 选定）。
+- 原因：用户诉求是「自动取邮箱邮件→下载→导入」；spike 逐环实测证明链路可行，且暴露出两个必须绕开的现实约束（QQ 服务端 SEARCH 不可靠、微信不发附件只有链接）。口令环节经实测确认「6 位数字 + 每期不同」，使得「自动穷举」成为唯一能实现真·一键的路径，同时「记住口令」方案被证伪。
+- 影响：新增 `12_mail_bill_import.md`；`01_prd.md §F-13` 与 §7 离线条款；`02_architecture.md §17`；`04_api.md §14`；`05_ui.md §10`；`06_tasks.md` TASK-045~050；`CHANGELOG.md`；`libs.versions.toml` + `app/build.gradle.kts`（JavaMail + keep 规则）；`AndroidManifest.xml`（INTERNET）。
+- 替代方案：
+  - POP3 取件（弃：不支持服务端条件搜索，只能全量拉头本地过滤，且重复下载风险高）；
+  - 邮箱厂商 SDK / OAuth2（弃：QQ 个人邮箱不开放第三方 OAuth2 IMAP；厂商 SDK 不通用）；
+  - **已知明文攻击（bkcrack）绕开口令**（弃：实测两条目均为 Deflate 压缩，已知明文攻击要求提供**压缩后字节流**，而首块为动态 Huffman、压缩流不可预测；且本次无「同文件密文+明文」配对）→ **本条留档以免后续重复尝试**；
+  - 「用户输一次口令并记住」（弃：实测口令每期不同，记住无效）；
+  - 引入 zip4j 解压（弃：实测为 ZipCrypto 非 AES，原生 `Inflater` + 自实现即可，避免多余依赖）；
+  - 把取件文件包成 `FileProvider` 的 `content://` Uri 以复用原导入入口（弃：成本更高且无必要地扩大 provider 暴露面）；
+  - 依赖服务端 SEARCH 筛选（弃：实测返回 0，不可靠）。
+- 最终选择：**如决定所述——QQ IMAP 授权码 + 本地过滤 + 支付宝取附件/微信取链接 + ZipCrypto 6 位数字口令自动穷举 + 复用 F-12 导入链路 + 手动一键收取**。
+- 实施状态（2026-09-23 回写）：**已实现并通过本地构建 + 全量单测（真机验收待设备）**。契约固化见 `04_api.md §14`；已知限制与待真机清单见 `04_api.md §14.9`（含：编排 UseCase 无直接 JVM 单测、真机端到端与只读性待设备复核、release 构建未验证）。
+- 附：方法学留痕（本次两次真实误判，均因工具未先经已知答案验证）
+  1. **校验字节约定误设**：初期要求解密头末两字节同时匹配「CRC 高字节 + 时间高字节」，在 data descriptor 场景下会误杀正确口令；已改为「任一命中 + 整体 CRC 权威判定」。
+  2. **CRC 比对口径错误**：初期拿**解密后的压缩数据**算 CRC32 比对 zip 记录的 CRC（实为**原始内容**的 CRC），导致正确答案全部被误杀，并一度得出「口令不是 6 位数字」的**错误结论**。该 bug 由「自造已知口令 zip + Python `zipfile` 独立实现交叉验证」暴露。
+  - **固化要求：自研解析/爆破类工具在采信其否定结论前，必须先用已知答案做交叉验证。**
+
+---
+
+## DEC-023: F-13 引入网络与外部凭据的隐私/权限边界修订
+
+- 日期：2026-09-23
+- 决定：
+  1. **修订 `01_prd.md §7 离线可用`**：原文「所有功能离线可用，无网络依赖（本期无云端）」改为「**除 F-13 邮箱账单拉取外**，所有功能离线可用」——F-13 是本项目**首个引入网络与外部凭据**的功能，对原条款做**显式例外化**，而非默认放宽。
+  2. **网络面收敛为「单向拉取」**：仅 `imap.qq.com:993`（TLS）取邮件、`tenpay.wechatpay.cn:443`（TLS）下载账单 zip；**不上传任何用户数据**；不接入任何统计/崩溃上报/广告 SDK；不做后台联网（仅用户点击时执行）。
+  3. **凭据等级对齐**：邮箱授权码与 SQLCipher master key **同级对待**——Keystore（AES-256/GCM）加密落盘、不落明文、不进日志（含异常堆栈）；设置页提供「清除邮箱凭据」一键抹除。
+  4. **邮箱操作只读**：`Folder.READ_ONLY`，不删除、不标已读、不移动、不修改任何 flag；非账单邮件不下载正文、不落盘。
+  5. **权限**：`AndroidManifest.xml` 新增 `android.permission.INTERNET`（当前清单为零权限）。这是本项目**首次申请权限**，需同步更新隐私说明/合规文案（「网络访问 + 邮箱凭据」条目）。
+  6. **可恢复性**：断网、认证失败、链接过期等一切网络侧异常**不得影响 F-12 手动导入路径**，两者完全独立。
+- 原因：项目定位为「本地优先 / 隐私优先」，且 `RemoteDataSource` 至今仅为契约占位、「云端同步本期不做」。F-13 虽为必要功能，但确实打开了网络与外部凭据两个面，必须在文档层把边界写死，避免后续以「反正已经联网了」为由无约束扩张网络面。无人值守下由 Architect 自决并留痕。
+- 影响：`01_prd.md §7`；`AndroidManifest.xml`；`libs.versions.toml`/`app/build.gradle.kts`；隐私说明文案；`12_mail_bill_import.md §4`。
+- 替代方案：维持原「零网络」条款并把 F-13 排除在文档外（弃：文档与实现不符，属隐患）；把 F-13 归入「云端同步」范畴一并推迟（弃：用户明确要求本期做，且它并非数据上云，只是单向取件）；不做例外说明只加权限（弃：违反「文档即契约」口径）。
+- 最终选择：**显式例外化 + 单向拉取 + 凭据最高等级保护 + 只读邮箱 + 首次申请 INTERNET 权限**。
+- 实施状态（2026-09-23 回写）：**已实现并通过本地构建 + 全量单测 + 真机端到端验收**——INTERNET 权限已入清单（项目首个权限）、授权码 Keystore AES-256/GCM 独立别名加密落 `noBackupFilesDir`、IMAP `READ_ONLY` + `close(false)`、下载与 IMAP 全程 TLS、异常文案不含凭据/token；真机 A1B2C3D4 实收 5 封账单邮件（微信 2 / 支付宝 3）全部成功、失败 0，日志检索无凭据/链接 token 泄漏。**剩余**：隐私说明/合规文案的补充待后续（`\Seen` 状态未逐字段核对，见 `04_api.md §14.9`）。
+
+---
+
+## DEC-024: F-13 解析关键路径「零正则」与 Android ICU 正则语义教训
+
+- 日期：2026-09-23
+- 决定：
+  1. **F-13 邮件解析关键路径禁止使用 `java.util.regex`**，改为手写字符扫描：`MailHtmlText`（引号感知的标签/属性扫描，取 `href`/`src`）、`WechatBillLinkExtractor`（URL 扫描 + host 精确判定 `tenpay.wechatpay.cn`）、`MailAccountCodec`（凭据 JSON 编解码 + 邮箱格式校验）。
+  2. **以 `IcuSafeRegexTest` 绊线测试守护**：扫描 F-13 源码中的 `Regex(` 危险字面量（如 `\}` 等 ICU 不接受、JDK 接受的转义），防回归。
+  3. 该约束仅适用于 F-13 解析层（失败代价 = 闪退 / 凭据丢失 / 导入失败），不强制推广到全仓。
+- 原因（真机实测教训）：Android 的 `java.util.regex` 底层是 **ICU**，与 JVM 语义存在差异。实测 `MailAccountCodec` 条目正则含 `\}` 时 **JVM 单测全绿**（JDK 接受 `}` 转义），但真机在**类初始化**阶段抛 `PatternSyntaxException` → `ExceptionInInitializerError`（属 `Error`，`catch (Exception)` 兜不住）→ 点「保存」即闪退；且迁移已把旧授权码文件改名而 json 未写出（凭据险些丢失）。此类缺陷 **JVM 单测无法覆盖**（ICU4J 不暴露其正则引擎，本地无法复现 ICU 语义）——这正是「纯 JVM 绿 ≠ 真机安全」的实证。
+- 影响：`data/local/mail/MailHtmlText.kt`、`WechatBillLinkExtractor.kt`、`MailAccountCodec.kt`、`app/src/test/.../IcuSafeRegexTest.kt`；`04_api.md §14.1/§14.4`；`CHANGELOG.md`。
+- 替代方案：继续用正则但逐个真机验证（弃：每条正则一次真机往返，且失败点在类初始化、代价与风险都高）；引入 ICU4J 做等价测试（弃：ICU4J 不暴露其正则引擎，无法复现，且新增依赖）；仅加 `try/catch (Throwable)` 兜底（部分采纳：读路径已改 `catch (Throwable)` + 写后**回读校验** + 失败回滚，但兜底不消除根因）。
+- 最终选择：**关键路径零正则 + ICU 绊线测试 + 迁移读路径兜底与回读校验**三重防线。
+- 诚实记录：本轮另有一次「微信账单取不到下载链接」故障，最初推断为「旧正则在 ICU 上匹配失败」；真机诊断（旧正则匹配次数、HTML 是否含链接、去标签后链接是否存活）证明**旧正则在真机 ICU 上匹配正常**，该推断**不成立**；确切根因已不可回溯（旧 APK 与旧文件被覆盖、且未提交版本历史）。零正则重写保留为永久防线，但**不得声称它是该故障的确切根因修复**。
 
 ---
 

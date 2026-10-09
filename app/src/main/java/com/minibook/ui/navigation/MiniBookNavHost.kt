@@ -25,6 +25,7 @@ import com.minibook.ui.home.HomeNavigation
 import com.minibook.ui.home.LocalHomeNavigation
 import com.minibook.ui.billimport.ImportScreen
 import com.minibook.ui.lock.LockScreen
+import com.minibook.ui.mail.MailSettingsScreen
 import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
 import com.minibook.ui.search.SearchScreen
@@ -150,6 +151,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             onNavigateToImport = {
                                 rootController.navigate(Destination.Import.route)
                             },
+                            onNavigateToMailAccount = {
+                                rootController.navigate(Destination.MailAccount.route)
+                            },
                             onOpenTransaction = { txId ->
                                 rootController.navigate(Destination.TransactionDetail.createRoute(txId))
                             },
@@ -229,7 +233,18 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                     )
                 }
                 composable(Destination.Import.route) {
-                    ImportScreen(onBack = { rootController.popBackStack() })
+                    // 「一键收取」未配置态「去配置」→ 邮箱账单设置页（F-13，路由已注册勿重复）。
+                    ImportScreen(
+                        onBack = { rootController.popBackStack() },
+                        onNavigateToMailAccount = {
+                            rootController.navigate(Destination.MailAccount.route)
+                        },
+                    )
+                }
+
+                // 邮箱凭据（F-13 多账号）：QQ 邮箱 IMAP 凭据列表/编辑全屏页，顶栏返回 → 根图 popBackStack。
+                composable(Destination.MailAccount.route) {
+                    MailSettingsScreen(onBack = { rootController.popBackStack() })
                 }
 
                 // 账本管理（P-11，TASK-029 真实页面）：顶栏返回 → 根图 popBackStack。

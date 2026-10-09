@@ -49,6 +49,19 @@ android {
     sourceSets {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
+
+    // JavaMail 与其它 jar 携带同名 NOTICE/LICENSE 元数据文件，打包期冲突，需排除
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/NOTICE.md",
+                "META-INF/LICENSE.md",
+                "META-INF/NOTICE.txt",
+                "META-INF/LICENSE.txt",
+                "META-INF/DEPENDENCIES"
+            )
+        }
+    }
 }
 
 // Room schema 导出目录（TASK-003 起在 @Database 上 exportSchema=true 后首次编译生成 1.json 并入库）
@@ -89,6 +102,10 @@ dependencies {
     // Kotlinx
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+
+    // JavaMail（F-13 邮件账单导入：QQ 邮箱 IMAP 只读拉取）
+    implementation(libs.sun.mail.android)
+    implementation(libs.sun.activation.android)
 
     // 单元测试（Developer 白盒）
     testImplementation(libs.junit)

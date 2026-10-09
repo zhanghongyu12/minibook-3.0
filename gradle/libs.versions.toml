@@ -19,6 +19,8 @@ room = "2.8.4"
 sqlcipher = "4.6.1"
 # Hilt：2.60.1/2.59 均与 AGP 8.13.0 不兼容（前者显式要求 AGP≥9.0.0，后者运行时引用 AGP9 新增 ScopedArtifact.POST_COMPILATION_CLASSES）；2.58 起不再引用 AGP9 运行时 API（用户批准 DEC-001 收敛）
 hilt = "2.58"
+# JavaMail（F-13 邮件账单导入）：com.sun.mail Android 发行版，mail 与 activation 同版本
+javamail = "1.6.7"
 # Kotlinx
 coroutines = "1.10.2"
 serializationJson = "1.8.1"
@@ -48,6 +50,10 @@ sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version
 # Hilt
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-android-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
+
+# JavaMail（F-13 邮件账单导入，QQ 邮箱 IMAP 只读拉取；key 含连字符 → Kotlin 访问器为 libs.sun.mail.android / libs.sun.activation.android）
+sun-mail-android = { group = "com.sun.mail", name = "android-mail", version.ref = "javamail" }
+sun-activation-android = { group = "com.sun.mail", name = "android-activation", version.ref = "javamail" }
 
 # Kotlinx
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }

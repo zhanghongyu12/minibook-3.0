@@ -14,6 +14,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -53,12 +54,14 @@ import com.minibook.ui.components.FullScreenBusyOverlay
  * 判型由 [com.minibook.domain.usecase.bill.ImportBillUseCase] 按扩展名/魔数兜底；取消静默回 Idle。
  *
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
+ * @param onNavigateToMailAccount 「去配置」回调（未配置邮箱凭据态引导去「设置 → 邮箱账单」）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
     onBack: () -> Unit,
+    onNavigateToMailAccount: () -> Unit = {},
     viewModel: ImportViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -83,6 +86,7 @@ fun ImportScreen(
                 when (val state = uiState) {
                     ImportUiState.Idle -> ImportIdleContent(
                         onSelectFile = { filePicker.launch(arrayOf("*/*")) },
+                        onFetchMailBills = viewModel::onFetchMailBills,
                     )
                     ImportUiState.Busy -> Unit // 由下方顶层遮罩承接
                     is ImportUiState.Result -> ImportResultContent(
@@ -92,6 +96,43 @@ fun ImportScreen(
                     is ImportUiState.Error -> ImportErrorContent(
                         message = state.message,
                         onRetry = viewModel::retry,
+                    )
+                    // 一键收取：进度与结果/错误**同页合一**（MailImportContent 单一版式，
+                    // 收取中实时推进 stepper，结束后原地追加结果/错误区 + 底部按钮，
+                    // 不做任何页面跳转 / 版式整体替换）。
+                    is ImportUiState.MailBusy -> MailImportContent(
+                        progress = state.progress,
+                        running = true,
+                        onRetry = viewModel::retry,
+                        onBack = onBack,
+                    )
+                    is ImportUiState.MailResult -> MailImportContent(
+                        progress = state.progress,
+                        summary = state.summary,
+                        running = false,
+                        onRetry = viewModel::retry,
+                        onBack = onBack,
+                    )
+                    // 多邮箱选择弹窗：单选立即收取 / 全部收取 / 取消。
+                    is ImportUiState.MailChooseAccount -> MailChooseAccountDialog(
+                        accounts = state.accounts,
+                        onSelect = { viewModel.onFetchAccounts(listOf(it)) },
+                        onSelectAll = {
+                            viewModel.onFetchAccounts(state.accounts.map { account -> account.id })
+                        },
+                        onDismiss = viewModel::dismiss,
+                    )
+                    ImportUiState.MailNotConfigured -> ImportMailNotConfiguredContent(
+                        onNavigateToMailAccount = onNavigateToMailAccount,
+                    )
+                    // 一键收取失败：仍在 MailImportContent 同一版式内原地追加错误区
+                    //（progress 为 null 时退化为仅错误区，不回 EmptyState 整页）。
+                    is ImportUiState.MailError -> MailImportContent(
+                        progress = state.progress,
+                        errorMessage = state.message,
+                        running = false,
+                        onRetry = viewModel::retry,
+                        onBack = onBack,
                     )
                 }
             }
@@ -119,12 +160,17 @@ private fun ImportTopBar(onBack: () -> Unit) {
 }
 
 /**
- * Idle 提示页（§9.2）：引导说明 + 微信/支付宝两张 [PlatformGuideCard] + 主按钮「去选择文件」。
+ * Idle 提示页（§9.2 + F-13）：引导说明 + 微信/支付宝两张 [PlatformGuideCard] + 主按钮
+ * 「去选择文件」＋次要按钮「一键收取邮箱账单」（F-13，近 30 天窗口自动拉取）。
  *
  * @param onSelectFile 「去选择文件」回调（触发 SAF `OpenDocument`）；顶部引导文字中的「选择文件」同为可点击链接，点击即触发本回调。
+ * @param onFetchMailBills 「一键收取邮箱账单」回调（[ImportViewModel.onFetchMailBills]）。
  */
 @Composable
-private fun ImportIdleContent(onSelectFile: () -> Unit) {
+private fun ImportIdleContent(
+    onSelectFile: () -> Unit,
+    onFetchMailBills: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -178,7 +224,34 @@ private fun ImportIdleContent(onSelectFile: () -> Unit) {
         ) {
             Text("去选择文件")
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onFetchMailBills,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("一键收取邮箱账单")
+        }
     }
+}
+
+/**
+ * 「一键收取」未配置页（F-13）：[EmptyState] 提示去「设置 → 邮箱账单」填写凭据 +
+ * 「去配置」（NavHost 接线 [onNavigateToMailAccount] 跳转邮箱账单设置页）。
+ *
+ * @param onNavigateToMailAccount 「去配置」回调。
+ */
+@Composable
+private fun ImportMailNotConfiguredContent(
+    onNavigateToMailAccount: () -> Unit,
+) {
+    EmptyState(
+        icon = ImportErrorIcon,
+        title = "尚未配置邮箱凭据，请先到「设置 → 邮箱凭据」添加 QQ 邮箱与 IMAP 授权码。",
+        subtitle = null,
+        actionLabel = "去配置",
+        onAction = onNavigateToMailAccount,
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 /**

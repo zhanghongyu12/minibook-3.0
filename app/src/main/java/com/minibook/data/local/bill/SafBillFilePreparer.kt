@@ -26,6 +26,9 @@ import java.util.UUID
  * 判型：**内容嗅探主判**——先 `PK\x03\x04` 魔数嗅探，命中即按 Xlsx 输入，否则再按扩展名
  * 分发（与 [DefaultBillParserFactory] 同口径：魔数优先于扩展名）；嗅探前 4 字节经
  * `BufferedInputStream.mark/reset` 不丢字。
+ *
+ * F-13 增补本地文件入口：[prepareLocalFile] 复用同一判型口径，但**不接管文件生命周期**
+ * （close 不删除调用方文件）；[createTempFile] 供下载/解压中间产物申请 cache 目录临时文件。
  */
 class SafBillFilePreparer(
     private val context: Context,
@@ -39,15 +42,10 @@ class SafBillFilePreparer(
 
         val raw = resolver.openInputStream(uri) ?: throw IOException("无法打开所选文件: $uriString")
         val buffered = BufferedInputStream(raw)
+        val sniffed = sniffMagic(buffered)
 
-        // 嗅探前 4 字节后 reset：CSV 不丢字、XLSX 从 0 起完整拷贝（DEC-017 魔数嗅探）。
-        buffered.mark(4)
-        val magic = ByteArray(4)
-        val read = buffered.read(magic)
-        buffered.reset()
-
-        val magicBytes = if (read > 0) magic.copyOf(read) else null
-        val isXlsx = isZipMagic(raw = magic, read = read) || ext == XLSX_EXT
+        val magicBytes = sniffed.magicBytes
+        val isXlsx = sniffed.isZip || ext == XLSX_EXT
 
         return if (isXlsx) {
             val tempFile = File(context.cacheDir, "$TEMP_XLSX_PREFIX${UUID.randomUUID()}.xlsx")
@@ -61,6 +59,29 @@ class SafBillFilePreparer(
         }
     }
 
+    override fun prepareLocalFile(file: File, displayName: String?): PreparedBillFile {
+        // F-13 邮件账单导入：判型口径与 prepare(uriString) 完全一致（魔数优先、扩展名兜底）。
+        // 唯一差别：Xlsx 直接复用调用方的 file（`ZipFile` 本就需可 seek File，无需再拷临时副本），
+        // 且 close 不删除该文件——生命周期归调用方（下载/解压中间产物由调用方清理）。
+        val name = displayName ?: file.name
+        val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+
+        val buffered = BufferedInputStream(file.inputStream())
+        val sniffed = sniffMagic(buffered)
+
+        val magicBytes = sniffed.magicBytes
+        val isXlsx = sniffed.isZip || ext == XLSX_EXT
+
+        return if (isXlsx) {
+            XlsxPrepared(file, name, magicBytes, deleteOnClose = false)
+        } else {
+            CsvPrepared(InputStreamReader(buffered, Charset.forName(GBK_CHARSET)), name, magicBytes)
+        }
+    }
+
+    override fun createTempFile(prefix: String, suffix: String): File =
+        File(context.cacheDir, prefix + UUID.randomUUID() + suffix)
+
     /** 查 DISPLAY_NAME（如 content:// 的原始文件名）；provider 不支持则返回 null。 */
     private fun queryDisplayName(
         resolver: android.content.ContentResolver,
@@ -73,6 +94,25 @@ class SafBillFilePreparer(
         }
     } catch (e: Exception) {
         null
+    }
+
+    /** 嗅探结果：文件头字节（≥4 或 null）+ 是否 ZIP/XLSX 魔数。 */
+    private class MagicSniff(
+        val magicBytes: ByteArray?,
+        val isZip: Boolean,
+    )
+
+    /**
+     * 判型嗅探核心（prepare 与 prepareLocalFile 共用，DEC-017）：读前 4 字节后 `reset`
+     * 回退——CSV 不丢字、XLSX 从 0 起完整读取；魔数优先，扩展名兜底由调用方叠加。
+     */
+    private fun sniffMagic(buffered: BufferedInputStream): MagicSniff {
+        buffered.mark(4)
+        val magic = ByteArray(4)
+        val read = buffered.read(magic)
+        buffered.reset()
+        val magicBytes = if (read > 0) magic.copyOf(read) else null
+        return MagicSniff(magicBytes, isZipMagic(raw = magic, read = read))
     }
 
     /** `PK\x03\x04`（ZIP/XLSX）魔数嗅探；read < 4 的短文件不算 zip。 */
@@ -96,11 +136,14 @@ class SafBillFilePreparer(
         private val tempFile: File,
         override val displayName: String?,
         override val magicBytes: ByteArray?,
+        private val deleteOnClose: Boolean = true,
     ) : PreparedBillFile {
         override val input: BillSourceInput = BillSourceInput.Xlsx(tempFile)
 
         override fun close() {
-            tempFile.delete()
+            if (deleteOnClose) {
+                tempFile.delete()
+            }
         }
     }
 

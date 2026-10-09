@@ -48,6 +48,9 @@ sealed class Destination(val route: String) {
     /** 账单导入（P-15，F-12）：根图全屏页（不进底部 NavigationBar），顶栏返回 popBackStack。 */
     data object Import : Destination("import")
 
+    /** 邮箱凭据（F-13 多账号）：QQ 邮箱 IMAP 凭据列表/编辑全屏页（根图，同 Import 口径），顶栏返回 popBackStack。 */
+    data object MailAccount : Destination("mail_account")
+
     // —— 账本管理（P-11） ——
 
     /** 账本管理（P-11：账本列表/切换/新增/重命名/删除）。 */

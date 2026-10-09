@@ -2,10 +2,21 @@ package com.minibook.ui.billimport
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.minibook.data.local.mail.MailAccountStore
+import com.minibook.data.local.mail.MailAuthException
+import com.minibook.data.local.mail.MailNetworkException
 import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.BillImportResult
+import com.minibook.domain.model.MailAccount
+import com.minibook.domain.model.MailImportOutcome
+import com.minibook.domain.model.MailImportProgress
+import com.minibook.domain.model.MailImportStep
+import com.minibook.domain.model.MailImportStepState
+import com.minibook.domain.model.MailImportStepStatus
+import com.minibook.domain.model.MailImportSummary
 import com.minibook.domain.usecase.bill.ImportBillUseCase
+import com.minibook.domain.usecase.mail.MailBillImportUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -31,7 +42,9 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ImportViewModel @Inject constructor(
     private val importBill: ImportBillUseCase,
+    private val mailBillImport: MailBillImportUseCase,
     private val ledgerProvider: LedgerProvider,
+    private val mailAccountStore: MailAccountStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ImportUiState>(ImportUiState.Idle)
@@ -67,6 +80,79 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 「一键收取邮箱账单」（F-13 多账号，近 30 天窗口）入口分支：
+     * - 0 个账号 → [ImportUiState.MailNotConfigured]（引导去设置页）；
+     * - 1 个账号 → 直接开始收取（[onFetchAccounts] 传该账号 id）；
+     * - ≥2 个账号 → [ImportUiState.MailChooseAccount] 弹窗由用户单选或「全部收取」。
+     */
+    fun onFetchMailBills() {
+        val accounts = mailAccountStore.accounts.value
+        when {
+            accounts.isEmpty() -> _uiState.value = ImportUiState.MailNotConfigured
+            accounts.size == 1 -> onFetchAccounts(listOf(accounts.first().id))
+            else -> _uiState.value = ImportUiState.MailChooseAccount(accounts)
+        }
+    }
+
+    /**
+     * 对选定账号集合开始收取（弹窗单选或「全部收取」= 全部 id 一次传入，按顺序处理）。
+     *
+     * 点击立即 [ImportUiState.MailBusy]（全步骤 PENDING 初始快照）锁入口，取当前账本 →
+     * [MailBillImportUseCase] 逐步推进 [ImportUiState.MailBusy]（每步发完整快照直刷 UI）：
+     * - [MailImportOutcome.NotConfigured] → [ImportUiState.MailNotConfigured]（引导去设置页）；
+     * - [MailImportOutcome.Completed] → [ImportUiState.MailResult]（携带最后一份进度快照，
+     *   供**同一页面**原地追加结果区，摘要由 [MailImportPresenter] 渲染；个别邮件失败
+     *   不影响整体完成）。
+     *
+     * 进度 → 结果/错误为**同页衔接**：本地 `lastProgress` 记录最后一份快照，完成与失败
+     * 均随状态带出；失败（异常）时先把快照中 RUNNING 的步骤改标 FAILED（[MailImportStepState]
+     * 为 data class，直接 copy），再进入 [ImportUiState.MailError]。
+     *
+     * 异常映射：[LedgerNotFound] → 账本文案；[MailAuthException] /
+     * [MailNetworkException]（message 均为固定文案、不含凭据）→ 精确中文；
+     * 其余 → 兜底文案。**任何 message / 状态都不携带授权码。**
+     */
+    fun onFetchAccounts(accountIds: List<String>) {
+        if (accountIds.isEmpty()) {
+            _uiState.value = ImportUiState.MailNotConfigured
+            return
+        }
+        var lastProgress = initialProgress(accountIds.size)
+        _uiState.value = ImportUiState.MailBusy(lastProgress)
+        viewModelScope.launch {
+            _uiState.value = try {
+                val ledgerId = ledgerProvider.currentLedgerId()
+                when (val outcome = mailBillImport(ledgerId, accountIds, sinceDays = 30) { progress ->
+                    lastProgress = progress
+                    _uiState.value = ImportUiState.MailBusy(progress)
+                }) {
+                    MailImportOutcome.NotConfigured -> ImportUiState.MailNotConfigured
+                    is MailImportOutcome.Completed -> ImportUiState.MailResult(outcome.summary, lastProgress)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (mailException: Exception) {
+                val failedProgress = lastProgress.copy(
+                    steps = lastProgress.steps.map { state ->
+                        if (state.status == MailImportStepStatus.RUNNING) {
+                            state.copy(status = MailImportStepStatus.FAILED)
+                        } else {
+                            state
+                        }
+                    },
+                )
+                val message = when (mailException) {
+                    is LedgerNotFound -> LEDGER_ERROR_MESSAGE
+                    is MailAuthException -> MAIL_AUTH_MESSAGE
+                    is MailNetworkException -> MAIL_NETWORK_MESSAGE
+                    else -> MAIL_UNKNOWN_MESSAGE
+                }
+                ImportUiState.MailError(message, failedProgress)
+            }
+        }
+    }
+
     /** 「重新选择」：Error → 原地复位 [ImportUiState.Idle]（不 popBackStack，允许重选）。 */
     fun retry() {
         _uiState.value = ImportUiState.Idle
@@ -77,6 +163,12 @@ class ImportViewModel @Inject constructor(
         _uiState.value = ImportUiState.Idle
     }
 
+    /** 收取开始前的初始快照：5 步全 PENDING + 邮箱总数。 */
+    private fun initialProgress(accountCount: Int): MailImportProgress = MailImportProgress(
+        steps = MailImportStep.entries.map { MailImportStepState(it, MailImportStepStatus.PENDING) },
+        accountCount = accountCount,
+    )
+
     companion object {
         /** 未识别格式（含表头未命中，§9.6 精确文案）。 */
         const val UNRECOGNIZED_MESSAGE = "未识别账单格式，请选择微信 .xlsx 或支付宝 .csv 账单文件。"
@@ -86,6 +178,15 @@ class ImportViewModel @Inject constructor(
 
         /** 当前账本未初始化（防御；复用既有账本口径文案，非 §9.6 表内，故仅兜底）。 */
         const val LEDGER_ERROR_MESSAGE = "账本不存在或当前账本未初始化"
+
+        /** 邮箱登录失败（授权码失效 / 未开启 IMAP 等，F-13 精确文案，不含凭据）。 */
+        const val MAIL_AUTH_MESSAGE = "邮箱登录失败，请确认已在 QQ 邮箱开启 IMAP/SMTP 服务且授权码为最新。"
+
+        /** 邮件服务器网络异常（F-13 精确文案）。 */
+        const val MAIL_NETWORK_MESSAGE = "网络异常，无法连接邮件服务器，请检查网络后重试。"
+
+        /** 「一键收取」未预期失败兜底文案（不含任何凭据）。 */
+        const val MAIL_UNKNOWN_MESSAGE = "收取失败，请稍后重试。"
     }
 }
 
@@ -107,4 +208,32 @@ sealed interface ImportUiState {
 
     /** 错误：未识别格式 / 事务回滚 / 账本未初始化，配「重新选择」回 Idle。 */
     data class Error(val message: String) : ImportUiState
+
+    /** 一键收取中：分步骤 stepper + 逐封子步骤展开区（每步一份完整快照，见 [MailImportProgress]）。 */
+    data class MailBusy(val progress: MailImportProgress) : ImportUiState
+
+    /**
+     * 一键收取完成：逐封摘要（新导入/已存在/成功/失败），失败明细见 [MailImportPresenter]。
+     * 携带最后一份进度快照，供进度与结果**同页合并渲染**（结果区原地追加在 stepper 下方）。
+     */
+    data class MailResult(
+        val summary: MailImportSummary,
+        val progress: MailImportProgress,
+    ) : ImportUiState
+
+    /** 多账号选择弹窗：单选某个邮箱立即收取，或「全部收取」一次传入全部 id。 */
+    data class MailChooseAccount(val accounts: List<MailAccount>) : ImportUiState
+
+    /** 未配置邮箱凭据：引导去「设置 → 邮箱凭据」填写。 */
+    data object MailNotConfigured : ImportUiState
+
+    /**
+     * 一键收取失败：认证/网络/未预期异常已映射为固定中文文案（不含凭据）。
+     * 携带失败时刻的进度快照（RUNNING 步骤已改标 FAILED）供同页渲染；null = 无进度可展示
+     * （理论上不可达，防御兜底为仅错误区）。
+     */
+    data class MailError(
+        val message: String,
+        val progress: MailImportProgress?,
+    ) : ImportUiState
 }

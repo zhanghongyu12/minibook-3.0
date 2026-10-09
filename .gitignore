@@ -58,8 +58,17 @@ captures/
 *.apk
 *.aab
 *.keystore
+*.jks
+keystore.properties
 cxx/
 .externalNativeBuild/
 # 导入/导出临时数据（用户数据，不进版本库）
 export.txt
 debt_import.json
+
+# 邮箱验证凭据与本地临时文件（含授权码，严禁提交）
+cred.txt
+eg/
+
+# 委派给本机 Claude Code 的过程留痕（规则要求落盘，但不入版本库）
+.claude-runs/
