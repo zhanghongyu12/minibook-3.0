@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -6,6 +8,17 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
 }
+
+// release 签名：口令与密钥路径从 keystore.properties 读取（该文件与 *.jks 均已在 .gitignore 中忽略）。
+// 文件缺失时 release 仍可构建，但产物未签名、无法安装（故不阻断 CI/本地构建）。
+// ⚠️ 签名密钥一旦丢失，将无法对已安装版本做覆盖升级，请务必备份 keystore/ 与 keystore.properties。
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
+}
+val hasSigningProps = keystorePropsFile.exists() &&
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+        .all { !keystoreProps.getProperty(it).isNullOrBlank() }
 
 android {
     namespace = "com.minibook"
@@ -19,6 +32,17 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasSigningProps) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     compileOptions {
@@ -36,6 +60,10 @@ android {
 
     buildTypes {
         release {
+            // keystore.properties 存在时使用正式签名，否则退回未签名产物（assembleRelease 仍成功）
+            signingConfig = signingConfigs.findByName("release")
+            // 当前不做混淆/裁剪（proguard-rules.pro 的 keep 规则为备用配置，未实际生效）；
+            // 如需开启：isMinifyEnabled = true + isShrinkResources = true，并重跑真机验证。
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
