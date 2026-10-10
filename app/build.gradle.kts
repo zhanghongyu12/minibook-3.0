@@ -145,6 +145,11 @@ dependencies {
 
     // Instrumented 测试（Tester 阶段 7 基线）
     androidTestImplementation(libs.androidx.test.ext.junit)
+    // testInstrumentationRunner 指向 androidx.test.runner.AndroidJUnitRunner，但该 runner 类
+    // **不由 ext:junit 传递引入**：缺这一条时测试 APK 里没有 AndroidJUnitRunner，
+    // `connectedDebugAndroidTest` 会以 "ClassNotFoundException: androidx.test.runner.AndroidJUnitRunner"
+    // 直接崩掉（2026-10-10 首次真跑模拟器时暴露）。
+    androidTestImplementation(libs.androidx.test.runner)
     // Room MigrationTestHelper（F-12 迁移测试 1→2，Tester 补）
     androidTestImplementation(libs.androidx.room.testing)
 }
