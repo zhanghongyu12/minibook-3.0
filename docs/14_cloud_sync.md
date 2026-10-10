@@ -84,7 +84,7 @@ server/
     main.py                 # FastAPI 实例、路由挂载、异常→错误码映射、/healthz
     config.py               # Settings（pydantic-settings）
     db.py                   # engine / SessionLocal / get_db 依赖
-    models.py               # ORM：users / refresh_tokens / devices / sync_records / sync_counters
+    models.py               # ORM：users / refresh_tokens / devices / sync_counters + 6 张业务表 + sync_log
     schemas.py              # Pydantic DTO（含**逐实体 payload 校验表**）
     security.py             # 口令哈希、JWT 签发/校验、刷新令牌轮换
     deps.py                 # current_user（Bearer 解析 + 撤销校验）
@@ -107,19 +107,29 @@ server/
 | `refresh_tokens` | `id` VARCHAR(36) PK、`user_id` VARCHAR(36) FK、`token_hash` VARCHAR(128)（仅存哈希）、`issued_at`/`expires_at`/`revoked_at` DATETIME(6)、`device_id` VARCHAR(36)、`rotated_from` VARCHAR(36) |
 | `devices` | `id` VARCHAR(36) PK、`user_id` VARCHAR(36) FK、`name` VARCHAR(64)、`platform` VARCHAR(32)、`app_version` VARCHAR(32)、`last_seen_at`/`created_at` DATETIME(6) |
 
-**同步表（通用记录模型）**
+**同步表（6 张类型化业务表 + 1 张变更日志，DEC-037）**
 
 | 表 | 关键列 |
 |---|---|
-| `sync_records` | PK(`user_id` VARCHAR(36),`entity_type` VARCHAR(32),`entity_id` VARCHAR(64))；`ledger_id` VARCHAR(36)、`updated_at` DATETIME(6) UTC（客户端 ISO→UTC naive）、`deleted` BOOL（墓碑）、`payload` **JSON**、`server_seq` BIGINT、`server_updated_at` DATETIME(6)；索引 (`user_id`,`server_seq`) |
+| `ledgers` / `categories` / `transactions` / `debts` / `budgets` / `user_category_rules` | PK(`user_id` VARCHAR(36), `id` VARCHAR(64))；公共列：`ledger_id` VARCHAR(64)、`created_at_raw` VARCHAR(40)、`updated_at_raw` VARCHAR(64)、`updated_at` DATETIME(6)（归一化 UTC naive，LWW 依据）、`server_seq` BIGINT、`server_updated_at` DATETIME(6)；其余为**该实体的真实业务列**（如 `transactions.amount` BIGINT 存「分」、`date` VARCHAR(10)、`description` VARCHAR(512)）；索引按查询形状建（`(user_id,ledger_id,date)`、`(user_id,ledger_id,type)`、`(user_id,category_id)` 等） |
+| `sync_log` | PK(`user_id`, `server_seq`)；`entity_type` VARCHAR(16)、`entity_id` VARCHAR(64)、`ledger_id` VARCHAR(64)、`deleted` BOOL、`updated_at` DATETIME(6)、`updated_at_raw` VARCHAR(64)、`logged_at` DATETIME(6)；索引 (`user_id`,`entity_type`,`entity_id`) —— **变更日志是拉取游标的唯一来源** |
 | `sync_counters` | `name` VARCHAR(32) PK、`value` BIGINT —— 全局单调 `server_seq` 生成器（`SELECT … FOR UPDATE` 后自增，SQLite/MySQL 通用） |
 
-**为什么是「通用记录表 + 逐实体校验」而不是 6 张类型化表**（DEC-033）：
-- 客户端 schema 会持续演进（本项目已到 Room v3，F-15 又要加表），类型化表意味着**每加一列都要改服务端 + 迁移 + 契约**；
-- 同步服务端只是**副本**，不需要 join/外键/聚合查询；
-- 因此：存储通用（`payload` JSON + `entity_type`），**校验不放松**——`entity_spec.py` 为 6 类实体各自定义字段白名单与类型，
-  Pydantic 逐条校验，未知字段拒绝（防止客户端 bug 把脏数据写入云端）。
-- 代价：服务端不能做 SQL 级业务查询；本轮不需要（将来要做统计再补物化视图）。
+**为什么改成「6 张真实业务表 + 变更日志」（DEC-037，推翻 DEC-033 的通用记录表）**：
+- 通用记录表把业务字段塞进 `payload` JSON ⇒ 云端**无法用 SQL 查账**（连 `SUM(amount) GROUP BY date` 都做不到）。
+  用户明确否决：「不要这样，要在云端做明确的表，设计表结构」「你上云的数据都啥，用户的账单数据没有上？」
+- 现在每类实体一张表、每个字段一列：云端可直接聚合、可加索引、可接报表/BI。已验证：
+  `SELECT date, SUM(amount) FROM transactions GROUP BY date` 在真实 MySQL 上直接可用。
+- **写协议零改动**：上行/下行的 `payload` 形状与键名完全不变（DEC-036 仍然有效），Android 端**一行未改**。
+  服务端在 `entity_store.py` 里做 `payload ⇄ 列` 的双向搬运（`shred()` / `reassemble()`），
+  `entity_spec.py` 的逐实体白名单校验依旧是唯一入口（含**长度上限**，超长在写库前就 422）。
+- **墓碑**：业务表**物理删除**该行，`sync_log` 里留一条 `deleted=1` ⇒ 业务表只放活数据，
+  云端查账不会被墓碑行污染；拉取时墓碑照旧下发（客户端行为不变）。
+- `created_at_raw` / `updated_at_raw` 保留客户端**原始 ISO 串**（下发时逐字回传，`sync_state.base_updated_at`
+  的「同 `updated_at` = no-op」判定依赖它），`updated_at` 另存归一化 DATETIME(6) 专供 LWW 比较。
+- 业务表之间**不建外键**（同批次的父子实体可能乱序到达）；`ledger_id` 只是普通维度列。
+- `status.counts` 口径不变：按 `entity_type` 统计 `sync_log` 里的 **distinct `entity_id`**（含墓碑）⇒
+  与旧实现的「记录行数」语义一致，客户端无需改。
 
 **表清单（`entity_type` 枚举）**：`ledger` / `category` / `transaction` / `debt` / `budget` / `user_category_rule`。
 
@@ -131,6 +141,10 @@ server/
   - 开发/单测：`sqlite:///./dev.db`（零依赖，跑得快）
   - 生产/联调：`mysql+pymysql://minibook:<pw>@127.0.0.1:3306/minibook?charset=utf8mb4`
 - 建表：`alembic upgrade head`；单测用 `Base.metadata.create_all()`（临时文件库，跑完即删）。
+- 迁移链：`0001_init`（用户系统 + `sync_counters` + 旧通用记录表 `sync_records`）→ `0002_typed_entities`
+  （建 6 张业务表 + `sync_log`，**把旧 `sync_records` 逐行拆列回填**，最后删掉旧表）。
+  回填对脏行宽容：拆不出列的行只保留日志条目并打印告警，**绝不因为一行脏数据让整次迁移失败**；
+  `downgrade 0001_init` 会把业务表 + 日志**拼回**旧 payload 形状（往返已在真实 MySQL 上真跑验证）。
 - 所有时间列统一 **UTC**；客户端 ISO8601 带偏移 → 服务端归一化为 **UTC naive** 后比较（LWW 依据）。
 
 **MySQL 特有口径（不写清就会踩的坑）**
@@ -139,8 +153,8 @@ server/
 |---|---|
 | 字符集 | 库/表/连接一律 **utf8mb4**（DSN `charset=utf8mb4` + `mysql_charset='utf8mb4'`），否则中文备注与 emoji 会坏 |
 | 引擎 | **InnoDB**（`mysql_engine='InnoDB'`）——`sync_counters` 的行锁依赖它 |
-| 字符串长度 | MySQL 索引列必须显式长度：`id`/`user_id` VARCHAR(36)、`username` VARCHAR(32)、`entity_type` VARCHAR(32)、`entity_id` VARCHAR(64)、`name` VARCHAR(64)；复合主键 (36+32+64)×4B ≈ 528B，远低于 InnoDB 3072B 上限 |
-| JSON 列 | `payload` 用 **MySQL JSON**（SQLAlchemy `JSON` 在 MySQL→JSON、SQLite→TEXT，可移植） |
+| 字符串长度 | MySQL 索引列必须显式长度：`id`/`ledger_id` VARCHAR(64)、`user_id` VARCHAR(36)、`username` VARCHAR(32)、`entity_type` VARCHAR(16)、`entity_id` VARCHAR(64)；复合主键 (36+64)×4B = 400B，远低于 InnoDB 3072B 上限。**每个字段的列宽都与 `entity_spec.py` 的 `max_length` 逐一对齐**，由 `test_typed_storage.py` 断言——防「白名单放行、MySQL 悄悄截断」 |
+| 业务列类型 | 金额 `BIGINT`（存「分」，禁用浮点）、日期 `VARCHAR(10)`、月份 `VARCHAR(7)`、布尔 `BOOL`；**升级后的 DDL 里不再有 JSON 列**（由 `test_typed_tables_ddl_has_no_json_column` 断言） |
 | **时间精度** | `updated_at` 用 **DATETIME(6)**：`sa.DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")`——MySQL 默认 DATETIME **无小数秒**，不指定 `fsp` 会截掉毫秒，导致「同 `updated_at` = no-op」判定失真 |
 | **大小写** | MySQL 默认排序规则大小写**不敏感**、SQLite **敏感** ⇒ 用户名在注册/登录时**统一转小写**，两端行为一致（否则单测绿、MySQL 上「Admin 与 admin 撞车」） |
 | 游标自增 | `SELECT value … FOR UPDATE` 再 `UPDATE value+1`（InnoDB 行锁；SQLite 单写者天然串行） |
@@ -179,7 +193,7 @@ server/
 
 ### 3.7 幂等、分页与失败语义
 
-- **push 幂等**：`sync_records` 主键 (`user_id`,`entity_type`,`entity_id`)，重复提交同一 `updated_at` 视为 no-op（不涨 `server_seq`）。
+- **push 幂等**：业务表主键 (`user_id`,`id`)，重复提交同一 `updated_at` 视为 no-op（不涨 `server_seq`，也不写 `sync_log`）。
 - **pull 游标**：`server_seq` 单调递增（同事务内自增），`since_seq` 断点续传；`has_more` 指示继续拉。
 - **失败**：任何一条校验失败 → **整批回滚**并返回 `validation_error` + 定位（`index` + `entity_id`）；不做部分写入，
   避免「一半上传成功」造成的两端不一致。
@@ -240,7 +254,8 @@ server/
 - ⚠️ **已修订（DEC-035）**：本地删除**不**再写 `sync_changes`，而是由「`sync_state` 有、本地已无」的
   差分在下次上行补发墓碑（`deleted=true`），成功后清基线。理由与硬约束见 DEC-035。
 - 云端墓碑同样通过 pull 下发 → 对端本地删除该行（这是**唯一**会减少本地数据的情形，且是用户自己的删除意图）。
-- 墓碑保留策略：服务端 `sync_records` 行不物理删（`deleted=true` 常驻）；客户端 `sync_changes` 中已上行成功的墓碑在**成功后清理**。
+- 墓碑保留策略：服务端把该实体从业务表**物理删除**，并在 `sync_log` 留一条 `deleted=1`（业务表只放活数据，
+  云端查账不被墓碑行污染；DEC-037）；客户端 `sync_changes` 中已上行成功的墓碑在**成功后清理**。
 
 ### 4.7 「本地不丢」的五道保险
 
@@ -355,8 +370,8 @@ ui/settings/
 
 ## 11. 决策与任务索引
 
-- 决策：**DEC-031**（服务端选型与双 DSN）、**DEC-032**（用户系统与令牌）、**DEC-033**（同步协议/通用记录表/墓碑/LWW+留档）、
-  **DEC-034**（上云隐私边界与同步前快照）。
+- 决策：**DEC-031**（服务端选型与双 DSN）、**DEC-032**（用户系统与令牌）、**DEC-033**（同步协议/墓碑/LWW+留档）、
+  **DEC-034**（上云隐私边界与同步前快照）、**DEC-036**（payload = Room 行原样 JSON）、**DEC-037**（云端 = 6 张真实业务表 + `sync_log`）。
 - 任务：**TASK-061**~**TASK-068**（见 `06_tasks.md`）。
 - 架构：`02_architecture.md §19`（本节指针）。
 - 数据库：`03_database.md §8`（本地 v4 迁移与云端 schema 指针）。
@@ -377,12 +392,13 @@ ui/settings/
 | Android 云端网络栈（TASK-065：OkHttp + DTO + 令牌 Keystore 包裹 + 401→刷新一次→重试） | ✅ | `app/src/test/java/com/minibook/data/remote/`：**30 例 / 0 失败**（DTO 口径 7 + 错误码 5 + 地址校验 6 + AuthStore 6 + 令牌编排 6） |
 | Android 同步核心（TASK-066：Room v3→v4 两新表 + `SyncPlan` 三模式/三路比较/LWW + 快照 + 墓碑差分 + 冲突留档） | ✅ | `SyncPlanTest`（15 例）+ `SyncPayloadContractTest`（跨语言白名单守卫）+ `SyncEntityAdapter`/`SyncUseCase` |
 | Android 同步 UI（TASK-067：设置 → 数据 → 云同步；账号 / 三模式 / 预览确认 / 结果卡 / 冲突留档入口） | ✅ | `SyncPresenterTest` 21 例；纳入全量 JVM 481 例 / 0 失败 |
-| **日志不含 payload 的自动化断言** | ❌ 未做 | 见 §12.3 |
+| **日志不含 payload 的自动化断言** | ✅ 已完成 | `server/tests/test_log_privacy.py` 3 例（TASK-064 闭合） |
 
-测试结果（2026-10-10 收口）：
-- **双 DSN 双绿**：同一套 `pytest` **52 例 / 0 失败**（含 TASK-064 新增 3 例日志隐私断言）分别跑在 **MySQL 8**（`minibook_test`）与 **SQLite** 上，
-  两次 `exit=0`；junitxml 均为 `tests="49" errors="0" failures="0" skipped="0"`。
-- MySQL 侧不再只是「离线渲染 DDL」：`alembic upgrade head` 真连库建表，且 `downgrade base → upgrade head` 也真跑了一遍。
+测试结果（2026-10-10 收口；DEC-037 存储改版后复跑同样双绿）：
+- **双 DSN 双绿**：同一套 `pytest` **61 例 / 0 失败**（含 TASK-064 的 3 例日志隐私断言、DEC-037 的 `test_typed_storage.py`
+  与 `test_migration.py` 回填/降级往返）分别跑在 **MySQL 8**（`minibook_test`）与 **SQLite** 上，两次 `exit=0`。
+- MySQL 侧不再只是「离线渲染 DDL」：`alembic upgrade head` 真连库建表，`downgrade base ⇄ upgrade head` 真跑通；
+  **真实开发库**上还做了 `0001_init ⇄ 0002_typed_entities` 的降级→回填往返（5 行旧数据全部拆列，0 行跳过）。
 - Android 侧 `:app:testDebugUnitTest --tests "com.minibook.data.remote.*"` → **30 例 / 0 失败**（`BUILD SUCCESSFUL`，junit XML 逐类核验）。
 
 ### 12.2 实现差分（与 §3/§4 设计原文的出入，均已落进代码注释）
@@ -422,12 +438,64 @@ ui/settings/
    双 DSN 各 52 例 / 0 失败。
 2. ~~**MySQL 全量测试**~~ → **已完成（2026-10-10）**：`TEST_DATABASE_URL` 指向 `minibook_test`，`pytest` **49 例 / 0 失败**；
    `alembic upgrade head` 与 `downgrade base ⇄ upgrade head` 均在真 MySQL 8.0.46 上跑通（详见 §12.1）。
-3. **真机 / 局域网端到端（TASK-068 剩余部分）未做**：需要设备——真机 `A1B2C3D4` 装着用户真实数据的正式版且签名不同，
-   装 debug 包会要求卸载，故**需用户决定**（建议启模拟器，或批准「导出备份 → 装 debug → 验证 → 还原」）。
-   客户端↔服务端**真实 HTTP** 端到端（无设备部分）已由 `SyncApiE2ETest` 覆盖并通过（2026-10-10）。
-4. **真机端到端（TASK-068）未做**：真机 `A1B2C3D4` → 本机 API 的首次上传 / 仅下载对账 / 冲突两端一致 / 断网中断重试，待执行。
+3. ~~**真机 / 局域网端到端（TASK-068 剩余部分）未做**~~ → **模拟器部分已完成（2026-10-10）**：
+   模拟器 Pixel_7（`emulator-5554`）`SyncDeviceE2ETest` 走生产代码路径（真 Room v4 + 真 OkHttp + 真 UseCase）
+   A 注册 → 推 5 实体 → B「仅下载」→ 两端一致 → 冲突留档 → 断网游标不动 → 重试成功；
+   `connectedDebugAndroidTest` **18 例 / 0 跳过 / 0 失败**（含 `MigrationV3To4Test`），DEC-037 改版后复跑同样全绿。
+4. **真机端到端（TASK-068）仍未做**：真机 `A1B2C3D4` 装着用户真实数据的正式版且签名不同，装 debug 包会要求卸载，
+   故**需用户决定**（建议「导出备份 → 装 debug → 验证 → 还原」，或明确维持「真机不测」）。
+   客户端↔服务端**真实 HTTP** 端到端已由 `SyncApiE2ETest` 覆盖并通过（2026-10-10，1 例 / 0 跳过）。
 5. **并发写同一实体的竞态**：两端同时 push 同一条**尚不存在**的记录时，后到者可能命中主键冲突并收到
    `server_error`（个人单机手动同步场景概率极低，重试即幂等通过）；二期可改为 upsert（`ON DUPLICATE KEY UPDATE`）。
 6. **多进程/多实例部署**：登录限流是单进程内存实现，需换 Redis 后才可多实例（当前部署形态为单进程 uvicorn）。
 7. **Android Keystore 真机行为未测**：JVM 单测用 `FakeSecretCipher` 替代，「落盘非明文」已用真 DataStore 文件字节断言；
    但 Keystore key 的失效 / 换机恢复路径只能真机验证。
+
+## 13. 存储改版：JSON 通用表 → 6 张真实业务表（DEC-037，2026-10-10）
+
+### 13.1 为什么改
+
+用户验收云端库时明确否决通用记录表：「不要这样，要在云端做明确的表，设计表结构」。
+根因很直接：业务字段躺在 `payload` JSON 里，云端**只能用应用层代码查账**，SQL 连
+`SELECT date, SUM(amount) FROM transactions GROUP BY date` 都做不到 —— 「数据上云」就只剩搬运、没有可用性。
+
+### 13.2 改了什么（服务端独占，**客户端零改动**）
+
+| 项 | 改前（DEC-033） | 改后（DEC-037） |
+|---|---|---|
+| 存储 | `sync_records`：PK(`user_id`,`entity_type`,`entity_id`)，业务字段在 `payload` **JSON** | 6 张类型化业务表，PK(`user_id`,`id`)，一字段一列（金额 `BIGINT` 分、`date` VARCHAR(10)、`month` VARCHAR(7)） |
+| 变更流 | 同表的 `server_seq` 列 | 独立 `sync_log`（PK `user_id`+`server_seq`），每次 push 追加一条 |
+| 墓碑 | 行常驻 `deleted=1` | 业务表**物理删行** + 日志留 `deleted=1` |
+| 原始时间串 | `updated_at_raw` | `created_at_raw` + `updated_at_raw` 都留（逐字回传），另存归一化 `updated_at DATETIME(6)` 供 LWW |
+| 长度校验 | 白名单只管类型 | 白名单带 `max_length`，与列宽逐一对齐，超长**写库前** 422 |
+| 拉取 | 扫 `sync_records` | 扫 `sync_log` 按 `server_seq`，再按类型批量取活行 |
+| 协议 | — | **完全不变**：`payload` 形状/键名/DEC-036 语义/三模式/冲突留档/批量回滚 —— Android 一行未改 |
+
+**关键不变量**：push 返回的新 `server_seq` **不得**用来推进客户端游标（同窗口内其它设备的变更会被永久跳过）；
+只有 pull 成功才推进（故首次双向同步合法地停在游标 0，`SyncApiE2ETest` 与设备 E2E 都断言了这点）。
+
+### 13.3 迁移 `0002_typed_entities`
+
+建 6 张业务表 + `sync_log` → 逐行拆列回填 → 删旧表；`downgrade 0001_init` 反向把业务表 + 日志**拼回**旧 payload 形状。
+回填对缺字段/脏行宽容：拆不出列的行只保留日志条目并打印告警，**绝不因一行脏数据让整次迁移失败**。
+
+### 13.4 验证（全部真跑，非推演）
+
+| 项 | 结果 |
+|---|---|
+| 双 DSN pytest | SQLite **61 例 / 0 失败**；MySQL 8（`minibook_test`）**61 例 / 0 失败** |
+| 真库迁移 | 开发库 `minibook`：`0001_init → 0002_typed_entities`，5 行旧数据全部拆列、**0 行跳过**，旧表删除 |
+| 真库往返 | `downgrade 0001_init`（→ 旧 payload 逐字拼回）→ `upgrade head`（5 行重新拆列，0 跳过） |
+| 云端 SQL 聚合 | 真 MySQL：`SELECT date, SUM(amount) FROM transactions GROUP BY date` → `2026-10-08` 共 **88.88 元** |
+| 端到端 | JVM `SyncApiE2ETest`（真实 HTTP）+ 模拟器 `SyncDeviceE2ETest`（A 上传 → B 下载 → 冲突留档 → 断网重试）改版后复跑通过 |
+
+### 13.5 踩坑（已修，留档）
+
+1. **payload 会省略 null 键**：Kotlin 侧 `explicitNulls=false`，可空字段整个不出现。拆列**必须** `.get(key)`；
+   用 `payload[key]` 会把真实历史行判成脏数据跳过（实测：真库 10 行里 6 条交易被跳过）。
+   已修 `entity_store.shred()` 并补回归用例 `test_payload_may_omit_nullable_fields`（双 DSN 跑）。
+2. **业务表的实体列叫 `id`**，不是 `entity_id`（`entity_id` 只存在于 `sync_log`）；降级拼回时踩过一次。
+3. **离线模式（`alembic upgrade --sql`）没有连接**：迁移里的数据搬运必须用 `op.get_context().as_sql` 判掉，
+   否则渲染 DDL 直接 `AttributeError: 'NoneType' has no attribute 'mappings'`。
+4. **DDL 里查 JSON 列要分步**：`sync_records`（含 JSON 列）是 0001 建的、0002 才删 ⇒ 整链 DDL 里必然出现 `JSON`，
+   断言只能渲染 `0001_init:0002_typed_entities` 这一段。

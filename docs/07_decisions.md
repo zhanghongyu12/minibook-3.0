@@ -653,3 +653,31 @@
 - 代价：业务实体带上序列化注解（无运行时副作用；Room schema 不受影响——`4.json` 相对 `3.json` 的差异仅两张新表）。
 - 影响：`SyncEntityAdapter` / `SyncRegistry` / `SyncPayloadContractTest`；`14_cloud_sync.md §12.2` 记为差分。
 
+## DEC-037: 云端存储改为 6 张真实业务表 + `sync_log`（推翻 DEC-033 的通用记录表）
+
+- 日期：2026-10-10
+- 背景：DEC-033 用一张 `sync_records` 把业务字段全塞进 `payload` JSON。用户验收云端库时否决：
+  「不要这样，要在云端做明确的表，设计表结构」「你上云的数据都啥，用户的账单数据没有上？」——
+  JSON 存储让云端**无法用 SQL 查账**（`SUM(amount) GROUP BY date` 都做不到），「数据上云」只剩搬运。
+- 决策：
+  1. 按实体建 **6 张类型化业务表**：`ledgers` / `categories` / `transactions` / `debts` / `budgets` /
+     `user_category_rules`，PK (`user_id`,`id`)，每个业务字段一列（金额 `BIGINT` 存「分」、`date` VARCHAR(10)、
+     `month` VARCHAR(7)），按查询形状建索引；业务表之间**不建外键**（同批父子实体可能乱序到达）。
+  2. 变更流独立成 **`sync_log`**（PK `user_id`+`server_seq`）：每次 push 追加一条；它是**拉取游标的唯一来源**，
+     `status.counts` 也按它统计 distinct `entity_id`（含墓碑）⇒ 与旧「记录行数」语义一致，客户端无需改。
+  3. **墓碑 = 业务表物理删行 + 日志保留 `deleted=1`**：业务表只放活数据，云端查账不被墓碑污染。
+  4. `created_at_raw` / `updated_at_raw` 保留客户端**原始 ISO 串**（逐字回传，`base_updated_at` 的 no-op 判定依赖），
+     `updated_at` 另存归一化 `DATETIME(6)` 专供 LWW 比较。
+  5. 字段白名单加 **`max_length`**，与列宽逐一对齐（`test_typed_storage.py` 断言），超长在写库前就 422。
+  6. `entity_store.shred()` / `reassemble()` 负责 `payload ⇄ 列` 双向搬运：**上行/下行 payload 形状与键名完全不变**
+     （DEC-036 继续有效）⇒ **Android 端一行未改**。
+  7. 迁移 `0002_typed_entities`：建表 → 拆列回填 → 删旧表；`downgrade` 反向拼回 payload 形状。回填对脏行宽容
+     （拆不出列的行只留日志 + 告警），**不因一行脏数据让整次迁移失败**。
+- 代价：客户端 schema 每加一列要同步改服务端模型 + 迁移；换来云端可直接 SQL 聚合 / 建索引 / 接报表。
+- 关键不变量：push 返回的 `server_seq` **不得**用于推进客户端游标（会永久跳过同窗口的其它设备变更），
+  只有 pull 成功才推进游标 —— 首次双向同步因此合法地停在游标 0。
+- 踩坑（已修）：客户端 `explicitNulls=false` ⇒ 可空字段整个缺键，拆列必须 `.get()`（否则真实历史行被判脏跳过）；
+  业务表的实体列叫 `id` 而非 `entity_id`；离线 `--sql` 模式必须跳过数据搬运。
+- 影响：`models.py` / `entity_store.py`（新）/ `entity_spec.py` / `sync_service.py` / `alembic/versions/0002_typed_entities.py`（新）/
+  `tests/test_typed_storage.py`（新）/ `tests/test_migration.py`；`14_cloud_sync.md §3.3/§3.4/§4.6/§13`。
+

@@ -54,9 +54,12 @@ $env:TEST_DATABASE_URL = "mysql+pymysql://user:pw@127.0.0.1:3306/minibook_test?c
 | 生产 / 联调 | `mysql+pymysql://user:pw@127.0.0.1:3306/minibook?charset=utf8mb4` |
 
 MySQL 侧的硬要求由迁移与 `__table_args__` 同口径保证，并由 `tests/test_migration.py` 校验 DDL：
-**InnoDB + utf8mb4 + `COLLATE utf8mb4_unicode_ci` + `DATETIME(6)` + JSON 列**。
+**InnoDB + utf8mb4 + `COLLATE utf8mb4_unicode_ci` + `DATETIME(6)`**；**6 张业务表 + `sync_log` 升级后不再有 JSON 列**
+（业务字段一律落在真实列上，DEC-037）。
 （① `DATETIME(6)` 不是洁癖：MySQL 默认 DATETIME 无小数秒，会截掉毫秒，令「同 `updated_at` = no-op」判定失真。
-② `COLLATE` 必须显式写：MySQL 8 对 `CHARSET=utf8mb4` 默认给 `utf8mb4_0900_ai_ci`，与部署口径不一致。）
+② `COLLATE` 必须显式写：MySQL 8 对 `CHARSET=utf8mb4` 默认给 `utf8mb4_0900_ai_ci`，与部署口径不一致。
+③ 每个字段的列宽都要与 `entity_spec.py` 的 `max_length` 对齐——`tests/test_typed_storage.py` 会逐字段断言，
+防「白名单放行、MySQL 悄悄截断」。）
 
 ### MySQL 实测踩到的两个坑（已修，勿改回去）
 
@@ -73,16 +76,15 @@ app/
   main.py          FastAPI 装配 + 统一错误体（错误码见 docs §3.5）
   config.py        pydantic-settings（一切环境变量驱动）
   db.py            engine/session（SQLite 开外键；MySQL pool_pre_ping）
-  models.py        users / refresh_tokens / devices / sync_records / sync_counters
+  models.py        users / refresh_tokens / devices / sync_counters + 6 张业务表（ledgers/categories/transactions/debts/budgets/user_category_rules）+ sync_log
   schemas.py       Pydantic DTO（信封 snake_case + payload 原样 camelCase）
-  entity_spec.py   6 类实体的字段白名单与类型校验（云端「校验不放松」的唯一来源）
+  entity_spec.py   6 类实体的字段白名单、类型与长度上限（云端「校验不放松」的唯一来源）
   security.py      argon2id / JWT / 刷新令牌哈希
   deps.py          current_user（Bearer）+ 限流
-  entity_spec.py   ↑
   routers/         health / auth / sync
-  services/        sync_service（push / pull / status 的合并逻辑）
-alembic/versions/0001_init.py
-tests/             52 例：认证 / 隔离 / push 契约 / pull 分页 / 幂等 / 冲突 / 迁移 / 时间解析 / 日志隐私（3 例）
+  services/        sync_service（push / pull / status）、entity_store（payload ⇄ 列 双向搬运）
+alembic/versions/0001_init.py, 0002_typed_entities.py
+tests/             61 例：认证 / 隔离 / push 契约 / pull 分页 / 幂等 / 冲突 / 迁移（含回填与降级往返）/ 类型化存储 / 时间解析 / 日志隐私（3 例）
 ```
 
 ## 禁止入库

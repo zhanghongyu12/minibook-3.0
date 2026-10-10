@@ -1952,7 +1952,8 @@
 
 ### TASK-068: F-15 端到端联调（本机 API + 真机）+ 文档回写
 
-- 状态：**部分完成（2026-10-10）**：客户端↔服务端**真实 HTTP 端到端**已通过；真机 / 局域网段待用户决定
+- 状态：**基本完成（2026-10-10）**：客户端↔服务端**真实 HTTP 端到端**通过，**模拟器设备端端到端也通过**；
+  仅剩**真机**（`A1B2C3D4`，需用户决定是否卸载正式版）
 - 依赖关系：TASK-061~067 ✅（TASK-069 环境 ✅）
 - 验收标准：
   - [x] **SQLite 全量测试绿**（47 例 / 0 失败，2026-10-10，`server/tests/`）
@@ -1964,14 +1965,17 @@
         另做 **MySQL 侧独立核验**：`sync_records` 3 条 / 1 条墓碑 / `updated_at_raw` 与客户端原样逐字一致 /
         墓碑 `payload` 为 **JSON literal null**（`JSON_TYPE='NULL'`，非 SQL NULL，且旧描述已不残留）。
         **2026-10-10 通过：1 例 / 0 失败 / 3.05s**（默认由 `app/build/e2e-base-url.txt` 开关控制，未配置时如实 skipped）
-  - [ ] 真机 `A1B2C3D4` 登录 → 首次上传 → 另一侧「仅下载」→ 条数与金额合计一致
-        （**需用户决定**：真机上装着用户真实数据的正式版且签名不同，装 debug 包会要求卸载 ⇒
-        建议先启模拟器，或明确批准「导出备份 → 装 debug → 验证 → 还原」流程）
-  - [ ] 两端各改一条 → 双向同步 → 冲突留档可见、两端最终一致
-  - [ ] 断网 / 杀进程中断同步 → 本地数据不变、重试成功（A8）
+  - [x] **模拟器（Pixel_7，`emulator-5554`）设备端端到端（新增，2026-10-10）**：`SyncDeviceE2ETest` 走**生产代码路径**
+        （真 Room v4 + 真 OkHttp + 真 UseCase）：A 注册 → 推 5 个实体 → B 注册并「仅下载」→ 两端条数/金额一致 →
+        两端各改一条 → 双向同步 → **冲突留档可见** → 断网/中断后**游标不前进、本地数据不变** → 重试成功。
+        `:app:connectedDebugAndroidTest` → **18 例 / 0 跳过 / 0 失败**（含 `MigrationV3To4Test` 18/18），`BUILD SUCCESSFUL`；
+        **DEC-037 存储改版后复跑同样全绿**（证明客户端对「云端换成 6 张业务表」零感知）
+  - [ ] 真机 `A1B2C3D4` 走同一流程（**需用户决定**：真机装着用户真实数据的正式版且签名不同，装 debug 包会要求卸载 ⇒
+        可批准「导出备份 → 装 debug → 验证 → 还原」，或明确维持「真机不测」）
   - [x] SQLite 全量测试绿；**再用 MySQL 8（TASK-069 的环境）跑同一套测试**全绿 —— 引擎差异必须在这一步暴露（双 DSN）
-        → **2026-10-10 已完成**：MySQL（`minibook_test`）与 SQLite 各 **52 例 / 0 失败**（含 TASK-064 新增 3 例日志隐私），两次 `exit=0`；
-        正是这一步暴露了「排序规则落到 `utf8mb4_0900_ai_ci`」与「`downgrade` 先 `DROP INDEX` 撞外键」两个真缺陷
+        → **2026-10-10 已完成**：MySQL（`minibook_test`）与 SQLite 各 **61 例 / 0 失败**（含 TASK-064 的 3 例日志隐私、
+        TASK-070 的 6 例类型化存储与迁移往返），两次 `exit=0`；正是这一步暴露了「排序规则落到 `utf8mb4_0900_ai_ci`」
+        与「`downgrade` 先 `DROP INDEX` 撞外键」等真缺陷
   - [x] 文档回写：`14_cloud_sync.md`（§12 实现状态 / 差分 / 挂账）、`09_test_report.md`（MySQL 双 DSN 轮）、`CHANGELOG.md`、
         `server/README.md`（MySQL 段 + 两个坑）→ **已完成 2026-10-10**；`10_release_notes.md` 与发布说明**待 F-15 整体交付时写**（本轮不发版）
 - 备注：构建 / 测试 / 真机操作由**主代理单点串行**执行（规则 3）；**git 提交需逐次申请**（规则 2）。
@@ -1993,6 +1997,33 @@
   与本轮 `%` 编码回归用例（`test_migration` 5 例）
 - 未做（如实挂账）：在 `minibook` 上跑「生产形态」的真实用户数据迁移演练（当前业务库为空，仅建表 + 种子行；
   待 Android 客户端联调时用真数据走一遍）
+
+### TASK-070: F-15 云端存储改版 —— JSON 通用表 → 6 张真实业务表 + `sync_log`（**已完成，2026-10-10**）
+
+- 状态：**已完成**。触发：用户验收云端库时否决「业务字段塞进 `payload` JSON」的通用记录表
+  （原话「不要这样，要在云端做明确的表，设计表结构」「你上云的数据都啥，用户的账单数据没有上？」）——
+  JSON 存储让云端**无法用 SQL 查账**，违背「数据上云」的初衷。
+- 依赖关系：TASK-061~069 ✅
+- 验收标准：
+  - [x] 云端按实体建 **6 张类型化业务表**（`ledgers`/`categories`/`transactions`/`debts`/`budgets`/`user_category_rules`，
+        PK `(user_id,id)`，金额 `BIGINT` 存「分」、`date` VARCHAR(10)、`month` VARCHAR(7)，按查询形状建索引）
+        + **`sync_log`**（PK `user_id`+`server_seq`，**拉取游标的唯一来源**）
+  - [x] 墓碑 = 业务表**物理删行** + 日志 `deleted=1`（云端查账不被墓碑污染）；`status.counts` 改按日志 distinct `entity_id`
+        （含墓碑）⇒ 与旧「记录行数」口径一致，客户端无需改
+  - [x] **写协议零改动**：`payload` 形状/键名/DEC-036 语义/三模式/冲突留档全部不变 ⇒ **Android 零改动**；
+        证据：JVM `SyncApiE2ETest`（真实 HTTP）**1 例 / 0 跳过 / 0 失败**，模拟器设备 E2E **18 例 / 0 失败**，改版后复跑
+  - [x] 迁移 `0002_typed_entities`：建表 → 拆列回填 → 删旧表；`downgrade` 反向拼回；对脏行宽容（只留日志 + 告警，不中断迁移）
+  - [x] 双 DSN `pytest` 各 **61 例 / 0 失败**（新增 `test_typed_storage.py` 6 例：映射三方对齐 / 真列落库 / SQL 聚合 /
+        墓碑不落业务表 / 六类往返逐字相等 / 超长 422 / 省略 null 键；`test_migration.py` 补回填与降级往返）
+  - [x] 真实开发库 `minibook`：`0001_init ⇄ 0002_typed_entities` 往返真跑，5 行旧数据**全部拆列、0 行跳过**；
+        云端 SQL 聚合可用（`SELECT date, SUM(amount) FROM transactions GROUP BY date` → 88.88 元）；核验后测试数据已清理
+  - [x] 文档回写：`07_decisions.md`（DEC-037）、`14_cloud_sync.md`（§3.3/§3.4/§4.6/§13 + 计数修订）、
+        `03_database.md §12.2`、`CHANGELOG.md`、`server/README.md`、`06_tasks.md`
+- 踩坑（全部已修并在双 DSN/真库上验证）：① 客户端 `explicitNulls=false` ⇒ 可空字段**整个缺键**，拆列必须 `.get()`
+  （用下标会把真实历史行判成脏数据跳过 —— 实测真库 10 行里 6 条交易被跳过）；② 业务表的实体列叫 `id` 而不是 `entity_id`
+  （`entity_id` 只存在于 `sync_log`）；③ 离线 `--sql` 模式没有连接，迁移里的数据搬运必须用 `op.get_context().as_sql` 判掉；
+  ④ 整链 DDL 里必然出现 `JSON`（0001 建 `sync_records`、0002 才删），断言只能渲染 `0001_init:0002_typed_entities` 这一段。
+- 未做（如实挂账）：`sync_log` 目前**只增不删**（无归档/裁剪）；云端不做物化视图与报表 UI（本轮只要「表在、能聚合」）。
 
 ---
 

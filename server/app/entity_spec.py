@@ -1,7 +1,11 @@
-"""逐实体字段白名单与类型校验（DEC-033 的「校验不放松」）。
+"""逐实体字段白名单与类型/长度校验（DEC-033「校验不放松」+ DEC-037 列长同源）。
 
-云端用通用记录表存 `payload` JSON，但**绝不接受脏数据**：每个 `entity_type` 的字段名、
-类型、可空性都在此声明，照抄 Android Room 实体列（camelCase 原样），未知字段一律拒绝。
+线上协议里 `payload` 是本地 Room 行的 camelCase 原样 JSON；云端把它**拆进业务表的列**
+（`models.py`），所以这里除了类型还要卡**长度**：不卡的话超长字符串到 MySQL 上要么被静默
+截断（非严格 sql_mode，数据损坏）、要么 500（严格模式）——都该在入口变成带下标的 400。
+
+字段与列长保持同源：`tests/test_typed_storage.py` 会把本文件的 `max_length` 与 ORM 列宽
+逐项比对，改列不忘改这里。
 
 对应 Room 表：
 - ledger            → data/local/db/entity/LedgerEntity.kt
@@ -29,82 +33,84 @@ ENTITY_TYPES: tuple[str, ...] = (
 class FieldSpec:
     type: type
     nullable: bool = False
+    #: 字符串最大长度（= 对应列宽）；None 表示不限
+    max_length: int | None = None
 
 
-def _f(type_: type, nullable: bool = False) -> FieldSpec:
-    return FieldSpec(type=type_, nullable=nullable)
+def _f(type_: type, nullable: bool = False, max_length: int | None = None) -> FieldSpec:
+    return FieldSpec(type=type_, nullable=nullable, max_length=max_length)
 
 
 #: 每类实体的字段白名单（列名 ⇄ Room 实体属性名，原样 camelCase）
 ENTITY_SPECS: dict[str, dict[str, FieldSpec]] = {
     "ledger": {
-        "id": _f(str),
-        "name": _f(str),
-        "icon": _f(str),
-        "color": _f(str),
+        "id": _f(str, max_length=64),
+        "name": _f(str, max_length=128),
+        "icon": _f(str, max_length=64),
+        "color": _f(str, max_length=32),
         "isDefault": _f(bool),
         "position": _f(int),
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
     },
     "category": {
-        "id": _f(str),
-        "ledgerId": _f(str),
-        "name": _f(str),
-        "icon": _f(str),
-        "color": _f(str),
-        "type": _f(str),
+        "id": _f(str, max_length=64),
+        "ledgerId": _f(str, max_length=64),
+        "name": _f(str, max_length=128),
+        "icon": _f(str, max_length=64),
+        "color": _f(str, max_length=32),
+        "type": _f(str, max_length=16),
         "isBuiltIn": _f(bool),
         "order": _f(int),
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
     },
     "transaction": {
-        "id": _f(str),
-        "ledgerId": _f(str),
-        "type": _f(str),
+        "id": _f(str, max_length=64),
+        "ledgerId": _f(str, max_length=64),
+        "type": _f(str, max_length=16),
         "amount": _f(int),  # 分；整数，绝不接受浮点
-        "categoryId": _f(str),
-        "description": _f(str, nullable=True),
-        "date": _f(str),  # yyyy-MM-dd
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
-        "syncStatus": _f(str),
-        "externalId": _f(str, nullable=True),
-        "counterparty": _f(str, nullable=True),
-        "paymentMethod": _f(str, nullable=True),
-        "source": _f(str),
+        "categoryId": _f(str, max_length=64),
+        "description": _f(str, nullable=True, max_length=512),
+        "date": _f(str, max_length=10),  # yyyy-MM-dd
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
+        "syncStatus": _f(str, max_length=16),
+        "externalId": _f(str, nullable=True, max_length=191),
+        "counterparty": _f(str, nullable=True, max_length=128),
+        "paymentMethod": _f(str, nullable=True, max_length=64),
+        "source": _f(str, max_length=16),
     },
     "debt": {
-        "id": _f(str),
-        "ledgerId": _f(str),
-        "partyName": _f(str),
+        "id": _f(str, max_length=64),
+        "ledgerId": _f(str, max_length=64),
+        "partyName": _f(str, max_length=128),
         "amount": _f(int),
-        "kind": _f(str),
-        "direction": _f(str),
-        "date": _f(str),
-        "remark": _f(str, nullable=True),
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
-        "syncStatus": _f(str),
+        "kind": _f(str, max_length=16),
+        "direction": _f(str, max_length=16),
+        "date": _f(str, max_length=10),
+        "remark": _f(str, nullable=True, max_length=512),
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
+        "syncStatus": _f(str, max_length=16),
     },
     "budget": {
-        "id": _f(str),
-        "ledgerId": _f(str),
-        "month": _f(str),  # yyyy-MM
-        "categoryId": _f(str, nullable=True),
+        "id": _f(str, max_length=64),
+        "ledgerId": _f(str, max_length=64),
+        "month": _f(str, max_length=7),  # yyyy-MM
+        "categoryId": _f(str, nullable=True, max_length=64),
         "amount": _f(int),
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
     },
     "user_category_rule": {
-        "id": _f(str),
-        "ledgerId": _f(str),
-        "source": _f(str),
-        "keyword": _f(str),
-        "categoryId": _f(str),
-        "createdAt": _f(str),
-        "updatedAt": _f(str),
+        "id": _f(str, max_length=64),
+        "ledgerId": _f(str, max_length=64),
+        "source": _f(str, max_length=16),
+        "keyword": _f(str, max_length=128),
+        "categoryId": _f(str, max_length=64),
+        "createdAt": _f(str, max_length=40),
+        "updatedAt": _f(str, max_length=64),
     },
 }
 
@@ -148,6 +154,11 @@ def validate_payload(entity_type: str, payload: Any) -> None:
         elif field.type is str:
             if not isinstance(value, str):
                 raise PayloadError(f"字段 {name} 必须是字符串，实际为 {type(value).__name__}")
+            if field.max_length is not None and len(value) > field.max_length:
+                raise PayloadError(
+                    f"字段 {name} 超长：{len(value)} 字符 > 上限 {field.max_length}"
+                    f"（列宽，见 entity_spec.ENTITY_SPECS）"
+                )
 
 
 def assert_envelope_consistency(

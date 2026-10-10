@@ -34,6 +34,11 @@
 | 端到端 HTTP 冒烟（uvicorn 真进程 → 真 MySQL） | `healthz` 报 `db=mysql`；注册 201 → 登录（`expires_in=1800`，access 243 字符）→ `push` `applied=1 server_seq=1` → `pull` 取回 1 条 → `status` `counts={"ledger":1}`；**中文 23 字符 / 44 UTF-8 字节逐字一致**（`equal=True`） |
 | 本轮实测修复的 4 个真缺陷 | ① `alembic/env.py` 把 URL 回写 configparser → 口令 URL 编码含 `%` 时 `ValueError: invalid interpolation syntax`，`alembic upgrade` 直接失败；② MySQL 8 对 `CHARSET=utf8mb4` 默认给 `utf8mb4_0900_ai_ci`，与部署口径不一致；③ `downgrade` 先 `DROP INDEX` 撞外键支撑索引（errno 1553）→ 中途失败留下半删库；④ Android `hasTokens` 只看密文非空，Keystore key 失效时误报「已登录」；⑤ `://x` 类畸形地址漏过校验（另修 health 测试硬编码 `db == "sqlite"`） |
 
+> **DEC-037 修订（2026-10-10，晚于本表）**：上表是**改版前**的记录。云端存储已由「`sync_records` + JSON payload」
+> 改为 **6 张真实业务表 + `sync_log`**：`pytest` 双 DSN 各 **61 例 / 0 失败**；真实开发库 `0001_init ⇄ 0002_typed_entities`
+> 往返通过（5 行旧数据全部拆列、0 行跳过）；云端 SQL 聚合可用；模拟器设备端 `connectedDebugAndroidTest`
+> **18 例 / 0 跳过 / 0 失败**。权威口径见 `14_cloud_sync.md §3.3/§13`、`07_decisions.md`（DEC-037）、`CHANGELOG.md`。
+
 ### 未验证（不得声称已验证）
 
 1. ~~**服务端日志不含 payload 的自动化断言**（TASK-064）~~ → **已闭合（2026-10-10）**：`server/tests/test_log_privacy.py` 3 例，

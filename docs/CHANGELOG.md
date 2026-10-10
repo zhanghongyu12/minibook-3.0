@@ -8,6 +8,20 @@
 
 ### Added
 
+- **F-15 云端存储改版：JSON 通用表 → 6 张真实业务表 + `sync_log`（DEC-037，2026-10-10）**：
+  用户验收云端库时否决「业务字段塞进 `payload` JSON」的通用记录表（原话「不要这样，要在云端做明确的表，设计表结构」），
+  改为按实体建 6 张类型化业务表（`ledgers`/`categories`/`transactions`/`debts`/`budgets`/`user_category_rules`，
+  PK `(user_id,id)`，金额 `BIGINT` 存「分」、`date` VARCHAR(10)、`month` VARCHAR(7)，按查询形状建索引）
+  + `sync_log` 变更日志（**拉取游标的唯一来源**）；墓碑 = 业务表**物理删行** + 日志 `deleted=1`（云端查账不被墓碑污染）；
+  `created_at_raw`/`updated_at_raw` 保留客户端**原始 ISO 串**（逐字回传），`updated_at` 另存归一化 `DATETIME(6)` 供 LWW。
+  **写协议零改动 ⇒ Android 一行未改**（`payload` 形状/键名与 DEC-036 语义不变），服务端用
+  `entity_store.shred()/reassemble()` 做 `payload ⇄ 列` 双向搬运。
+  迁移 `0002_typed_entities`：建表 → 拆列回填 → 删旧表（脏行只留日志 + 告警，**不中断迁移**），`downgrade` 可反向拼回 payload。
+  **验证（全部真跑）**：双 DSN `pytest` 各 **61 例 / 0 失败**（新增 `test_typed_storage.py` 6 例 + `test_migration.py` 回填/降级往返）；
+  真实开发库 `minibook` 上 `0001_init ⇄ 0002_typed_entities` 往返，5 行旧数据全部拆列、**0 行跳过**；
+  云端 SQL 聚合直接可用（`SELECT date, SUM(amount) FROM transactions GROUP BY date` → 88.88 元）；
+  JVM `SyncApiE2ETest` 与模拟器 `SyncDeviceE2ETest` 改版后复跑通过。
+  修复踩坑：客户端 `explicitNulls=false` ⇒ 可空字段**整个缺键**，拆列必须 `.get()`（用下标会把真实历史行判成脏数据跳过）。
 - **F-15 真 MySQL 8 落地验证（2026-10-10，TASK-069 收口，用户提供内网 MySQL 连接信息）**：
   在内网 MySQL **8.0.46**（docker `mysql:8.0`，`192.168.190.130:49779`，库 `minibook` / 测试库 `minibook_test`）上真连库跑通：
   `alembic upgrade head` 建 5 张业务表 + `alembic_version`（全 `InnoDB` + **`utf8mb4_unicode_ci`** + `DATETIME(6)` + `JSON`）；

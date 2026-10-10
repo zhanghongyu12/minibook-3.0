@@ -903,16 +903,18 @@ F-14（短信账单导入）**不新增表、不新增列、不新增索引、�
 
 ### 12.2 云端：`server/` 的 schema（**不在本 App 的 Room 内**）
 
-云端表由 Alembic 管理，权威定义见 `14_cloud_sync.md §3.3`：`users` / `refresh_tokens` / `devices` /
-`sync_records`（通用记录：PK `user_id + entity_type + entity_id`，业务字段在 `payload` JSON，`server_seq` 为拉取游标）/ `sync_counters`。
+云端表由 Alembic 管理，权威定义见 `14_cloud_sync.md §3.3`：`users` / `refresh_tokens` / `devices` / `sync_counters`
++ **6 张类型化业务表**（`ledgers` / `categories` / `transactions` / `debts` / `budgets` / `user_category_rules`，
+PK `user_id + id`）+ **`sync_log`**（变更日志，PK `user_id + server_seq`，拉取游标的唯一来源）。
 
-**为什么云端不照抄 Room 的 6 张类型化表**：客户端 schema 会持续演进，类型化云端表会让「加一列」变成「改服务端 + 迁移 + 契约」三件事；
-云端只是副本、不做 join/聚合，故用通用记录表 + `entity_spec.py` 逐实体字段白名单校验（DEC-033）。
+**为什么云端现在照抄了 Room 的类型化表**：最初（DEC-033）用的是「通用记录表 + `payload` JSON」，理由是客户端 schema
+演进时不必改服务端。用户验收时否决了这个设计——JSON 里查不了账（连 `SUM(amount) GROUP BY date` 都做不到），
+故改回**明确表结构**（DEC-037）：一字段一列、按查询形状建索引，云端可直接 SQL 聚合/接报表。
+代价是客户端每加一列要同步改服务端模型 + 迁移，换来的是数据在云端**真的可用**。
+写协议与 payload 形状**完全不变**，Android 端零改动。
 
-**实现状态（2026-10-10）**：已落地，权威 DDL = `server/alembic/versions/0001_init.py`
-（SQLite 实跑通过；MySQL 侧离线渲染核验 `DATETIME(6)` / `JSON` / `BIGINT` / `InnoDB` / `utf8mb4`）。
-实现比设计**多一列** `sync_records.updated_at_raw`（回传客户端**原始 ISO 串**，否则客户端会把重复 push 的 no-op
-误判成冲突；详见 `14_cloud_sync.md §12.2`）。
+**实现状态（2026-10-10）**：已落地，权威 DDL = `server/alembic/versions/0001_init.py` + `0002_typed_entities.py`
+（SQLite 实跑通过；MySQL 真连库建表 + 回填 + `downgrade` 往返均通过，详见 `14_cloud_sync.md §13`）。
 
 ---
 
