@@ -61,15 +61,19 @@ enum class SyncStatus(val value: String) {
 }
 
 /**
- * 交易来源（F-12 账单导入，DEC-018 / DATABASE §4.1 / API §13.1）。
+ * 交易来源（F-12 账单导入，DEC-018 / DATABASE §4.1 / API §13.1；F-14 增补短信来源）。
  *
  * 落盘为 `transactions.source` 列（String，默认 `'manual'`，Entity 侧 `@ColumnInfo(defaultValue)`）。
  * 与 [TransactionType] 同径：value 直接暴露给 mapper 做 enum↔String 落盘转换，fromValue 供反向查询。
+ *
+ * F-14（DEC-025）：新增 [SMS_IMPORT]；`source` 本就是 String 列 → **无 schema 变更**，
+ * 备份 JSON（F-04）经 `fromValue` 往返，无需改字段（`BackupJsonMapper` 已按字符串处理）。
  */
 enum class TransactionSource(val value: String) {
     MANUAL("manual"),
     WECHAT_IMPORT("wechat_import"),
-    ALIPAY_IMPORT("alipay_import");
+    ALIPAY_IMPORT("alipay_import"),
+    SMS_IMPORT("sms_import");
 
     companion object {
         fun fromValue(value: String): TransactionSource? = entries.firstOrNull { it.value == value }

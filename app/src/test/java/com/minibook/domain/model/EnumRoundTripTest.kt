@@ -125,6 +125,7 @@ class EnumRoundTripTest {
         assertEquals("manual", TransactionSource.MANUAL.value)
         assertEquals("wechat_import", TransactionSource.WECHAT_IMPORT.value)
         assertEquals("alipay_import", TransactionSource.ALIPAY_IMPORT.value)
+        assertEquals("sms_import", TransactionSource.SMS_IMPORT.value)   // F-14
     }
 
     // ---- 枚举数量守卫（防增删导致漏测） ----
@@ -136,7 +137,7 @@ class EnumRoundTripTest {
         assertEquals(2, DebtKind.entries.size)
         assertEquals(2, DebtDirection.entries.size)
         assertEquals(4, SyncStatus.entries.size)
-        assertEquals(3, TransactionSource.entries.size)
+        assertEquals(4, TransactionSource.entries.size)   // F-14 增补 SMS_IMPORT
         assertEquals(5, ImportSkipReason.entries.size)
     }
 }

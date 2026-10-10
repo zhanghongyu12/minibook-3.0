@@ -1,5 +1,6 @@
 package com.minibook.ui.billimport
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.mail.MailAccountStore
@@ -15,8 +16,12 @@ import com.minibook.domain.model.MailImportStep
 import com.minibook.domain.model.MailImportStepState
 import com.minibook.domain.model.MailImportStepStatus
 import com.minibook.domain.model.MailImportSummary
+import com.minibook.domain.model.SmsImportSummary
+import com.minibook.domain.model.SmsScanMode
+import com.minibook.domain.model.SmsScanPreview
 import com.minibook.domain.usecase.bill.ImportBillUseCase
 import com.minibook.domain.usecase.mail.MailBillImportUseCase
+import com.minibook.domain.usecase.sms.SmsBillImportUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -43,12 +48,25 @@ import kotlinx.coroutines.launch
 class ImportViewModel @Inject constructor(
     private val importBill: ImportBillUseCase,
     private val mailBillImport: MailBillImportUseCase,
+    private val smsBillImport: SmsBillImportUseCase,
     private val ledgerProvider: LedgerProvider,
     private val mailAccountStore: MailAccountStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ImportUiState>(ImportUiState.Idle)
     val uiState: StateFlow<ImportUiState> = _uiState.asStateFlow()
+
+    init {
+        // F-14 L3：进入导入页即做一次**静默增量补扫**（补 `SMS_RECEIVED` 广播丢失的短信）。
+        // 口径：开关关闭 → 零动作；首次启用 → 只立水位基线，不回灌历史（避免涌进「待确认」）；
+        // 补扫不改 UI 状态（不打扰），自动写入与否仍由白名单四条件 + 应用锁门控决定。
+        viewModelScope.launch {
+            runCatching {
+                val ledgerId = ledgerProvider.currentLedgerId()
+                smsBillImport.catchUp(ledgerId)
+            }
+        }
+    }
 
     /**
      * SAF 选文件回调（§9.2 交互流 2/3）。
@@ -153,6 +171,61 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 「读取短信账单」入口（F-14，L0）：权限门在 UI 层判定后传入 [readSmsGranted]（未授予只引导、
+     * 不发起请求）；扫描**零写入账单**（只可能推进扫描水位），无权限的 [SecurityException] 兜底回引导态。
+     *
+     * @param mode 两种扫描方式（2026-10-10 用户要求）：[SmsScanMode.INCREMENTAL] = 只看上次扫描水位
+     *   之后的新短信（扫完推进水位，下次不再翻出看过的）；[SmsScanMode.FULL] = 全部历史（不动水位，
+     *   看过的未识别条目折叠进「此前已看过」）。默认 [SmsScanMode.FULL] 保持既有调用方语义。
+     */
+    fun onReadSmsBills(readSmsGranted: Boolean, mode: SmsScanMode = SmsScanMode.FULL) {
+        if (!readSmsGranted) {
+            _uiState.value = ImportUiState.SmsPermissionNeeded
+            return
+        }
+        _uiState.value = ImportUiState.SmsScanning
+        viewModelScope.launch {
+            _uiState.value = try {
+                val ledgerId = ledgerProvider.currentLedgerId()
+                val preview = smsBillImport.scan(ledgerId, mode)
+                // 「已看过」标记（2026-10-10 用户要求）：本次结果即将上屏 ⇒ 推进未识别已看水位，
+                // 下次重扫时这些条目折叠进「此前已看过 N 条」，不再与新增项混在一起（不动任何计数）。
+                smsBillImport.acknowledgeUnrecognized(preview.unrecognized)
+                ImportUiState.SmsPreview(preview)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: LedgerNotFound) {
+                ImportUiState.SmsError(LEDGER_ERROR_MESSAGE, SmsImportStep.READ)
+            } catch (_: SecurityException) {
+                ImportUiState.SmsPermissionNeeded
+            } catch (e: Exception) {
+                // 诊断口径（对齐 DatabaseGate/ImapMailClient）：只记异常类型与栈，绝不记短信内容/号码。
+                Log.e(TAG, "短信扫描失败：${e.javaClass.name}", e)
+                ImportUiState.SmsError(SMS_SCAN_ERROR_MESSAGE, SmsImportStep.READ)
+            }
+        }
+    }
+
+    /** 干跑预览确认写入（F-14）：只写「可导入」行，复用 `importParsedRows`（单事务 + IGNORE 幂等）。 */
+    fun onConfirmSmsImport() {
+        val preview = (_uiState.value as? ImportUiState.SmsPreview)?.preview ?: return
+        _uiState.value = ImportUiState.SmsImporting(preview)
+        viewModelScope.launch {
+            _uiState.value = try {
+                val ledgerId = ledgerProvider.currentLedgerId()
+                ImportUiState.SmsResult(smsBillImport.importConfirmed(preview, ledgerId), preview)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: LedgerNotFound) {
+                ImportUiState.SmsError(LEDGER_ERROR_MESSAGE, SmsImportStep.WRITE)
+            } catch (e: Exception) {
+                Log.e(TAG, "短信导入写入失败：${e.javaClass.name}", e)
+                ImportUiState.SmsError(SMS_IMPORT_ERROR_MESSAGE, SmsImportStep.WRITE)
+            }
+        }
+    }
+
     /** 「重新选择」：Error → 原地复位 [ImportUiState.Idle]（不 popBackStack，允许重选）。 */
     fun retry() {
         _uiState.value = ImportUiState.Idle
@@ -187,6 +260,13 @@ class ImportViewModel @Inject constructor(
 
         /** 「一键收取」未预期失败兜底文案（不含任何凭据）。 */
         const val MAIL_UNKNOWN_MESSAGE = "收取失败，请稍后重试。"
+
+        /** 诊断日志 TAG（只记异常类型/栈，不记短信内容）。 */
+        const val TAG = "MiniBookImport"
+
+        /** F-14 短信扫描失败兜底 / 写入失败（单事务回滚零落库）文案，均不含短信内容。 */
+        const val SMS_SCAN_ERROR_MESSAGE = "读取短信失败，请稍后重试。"
+        const val SMS_IMPORT_ERROR_MESSAGE = "导入失败，数据未写入，请重试。"
     }
 }
 
@@ -236,4 +316,17 @@ sealed interface ImportUiState {
         val message: String,
         val progress: MailImportProgress?,
     ) : ImportUiState
+
+    /** 扫描中（F-14 L0 全量干跑，一次调用覆盖「读取 → 识别 → 去重」）。 */
+    data object SmsScanning : ImportUiState
+    /** 干跑预览（零写入）：四类计数 + 逐条结果行 + 钉底「确认写入 N 笔」。 */
+    data class SmsPreview(val preview: SmsScanPreview) : ImportUiState
+    /** 确认写入中（只写「可导入」行，单事务 + IGNORE 幂等）。 */
+    data class SmsImporting(val preview: SmsScanPreview) : ImportUiState
+    /** 写入完成：摘要卡同页原地追加（不切换版式）。 */
+    data class SmsResult(val summary: SmsImportSummary, val preview: SmsScanPreview) : ImportUiState
+    /** 未授予 READ_SMS：只展示状态 + 引导，不发起权限请求（TODO(F-14 权限申请)）。 */
+    data object SmsPermissionNeeded : ImportUiState
+    /** 失败：异常已映射为固定中文文案；failedStep 用于 stepper 标 ✗。 */
+    data class SmsError(val message: String, val failedStep: SmsImportStep?) : ImportUiState
 }

@@ -4,6 +4,13 @@
     <!-- F-13 邮件账单导入：首次引入网络权限（QQ 邮箱 IMAP 只读拉取，ImapMailClient）。 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- F-14 短信账单导入（DEC-026）：三项权限**声明不等于申请**——默认零运行时请求，
+         仅当用户在「设置 → 短信账单」显式开启对应开关时才申请；逐项可拒、逐项降级；
+         全部被拒仍有「分享导入」兜底。不申请默认短信应用角色（ROLE_SMS）。 -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- TASK-018 收口：注册 @HiltAndroidApp 壳（.MiniBookApp）与唯一 launcher Activity（.MainActivity）。
          安全模块懒加载，Application 初始化不触碰 DB（ARCHITECTURE §13）。
          androidx.biometric 1.1.0 自带 USE_BIOMETRIC/USE_FINGERPRINT 权限合并，无需本清单显式声明。 -->
@@ -26,6 +33,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- F-14 实时识别（L1/L2）：SMS_RECEIVED 属隐式广播豁免项（Android 8+ 例外清单），
+             静态注册在**非默认短信应用**下同样可达，且进程不存在时也能被拉起。
+             android:permission 限定仅持有 BROADCAST_SMS 的系统可投递（防第三方伪造）。
+             接收器只读本条投递、goAsync ≤10s，绝不触发全量扫描（完整性由 L3 水位补扫兜底）。 -->
+        <receiver
+            android:name=".data.local.sms.SmsReceivedReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

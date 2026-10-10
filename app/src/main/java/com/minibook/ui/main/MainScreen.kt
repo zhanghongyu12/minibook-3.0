@@ -54,14 +54,14 @@ private val mainTabs = listOf(
  * 各 Tab 状态，§12）。各 Tab 内容已接线为真实页面 composable（TASK-023~026）：
  * Home / Transactions / Debts / Categories / Settings。
  *
- * **跨层导航中转**（ledger-manage 注册于根图，嵌套图无法直达）：账本管理入口经
- * [com.minibook.ui.home.LocalHomeNavigation] 由 [com.minibook.ui.navigation.MiniBookNavHost]
- * 注入，Home / Settings 读取使用，不再经本页参数穿透；Home 的「查看全部」用本页自持的嵌套
+ * **跨层导航中转**（ledger-manage 注册于根图，嵌套图无法直达）：账本管理入口与设置二级页
+ * （`settings-appearance/security/data/sms`）经
+ * [com.minibook.ui.home.LocalHomeNavigation] / [com.minibook.ui.settings.LocalSettingsNavigation]
+ * 由 [com.minibook.ui.navigation.MiniBookNavHost] 注入，Home / Settings 读取使用，不再经本页参数
+ * 穿透（2026-10-10 设置页改版后，账单导入/邮箱凭据入口也随之移入「数据」二级页，本页不再需要
+ * `onNavigateToImport` / `onNavigateToMailAccount`）；Home 的「查看全部」用本页自持的嵌套
  * [navController] 跳 [Destination.Transactions]（同 Tab 语义）。内部 Tab 切换复用 [navigateToTab]。
  *
- * @param onNavigateToImport 账单导入导航回调（根图跳转到 `import`，MiniBookNavHost 接线传入）。
- * @param onNavigateToMailAccount 邮箱账单导航回调（F-13：根图跳转到 `mail_account`，
- *   MiniBookNavHost 接线传入，分发到 Settings Tab 入口）。
  * @param onOpenTransaction 交易详情页导航回调（根图跳转到 `transaction-detail`，null=新增；
  *   MiniBookNavHost 接线传入，分发到 Home / Transactions 两个 Tab 的入口）。
  * @param onOpenTransactionEdit 交易详情页「编辑态」导航回调（根图跳转到 `transaction-detail?edit=1`，
@@ -73,8 +73,6 @@ private val mainTabs = listOf(
  */
 @Composable
 fun MainScreen(
-    onNavigateToImport: () -> Unit = {},
-    onNavigateToMailAccount: () -> Unit = {},
     onOpenTransaction: (String?) -> Unit = {},
     onOpenTransactionEdit: (String) -> Unit = {},
     onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
@@ -144,12 +142,9 @@ fun MainScreen(
                 )
             }
             composable(Destination.Categories.route) { CategoriesScreen() }
-            composable(Destination.Settings.route) {
-                SettingsScreen(
-                    onNavigateToImport = onNavigateToImport,
-                    onNavigateToMailAccount = onNavigateToMailAccount,
-                )
-            }
+            // 设置首页 = 分组汇总页（2026-10-10 改版）：账单导入/邮箱凭据入口已移入「数据」二级页，
+            // 二级页经 LocalSettingsNavigation 走根图导航，故此处不再需要参数穿透。
+            composable(Destination.Settings.route) { SettingsScreen() }
         }
     }
 }

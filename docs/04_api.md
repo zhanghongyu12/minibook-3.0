@@ -950,3 +950,87 @@ sealed interface ImportUiState {
 - 手动输入口令未实现（见 §14.7 `PasswordNotFound` 行）。
 
 ---
+
+## 15. F-14 契约：短信账单导入（Phase 3）
+
+> 设计依据：`13_sms_bill_import.md`；DEC-025/026；实现文件与本章契约一一对应（2026-10-09 回写）。
+> ⚠️ **验证状态**：JVM 单测已绿（解析/匹配/审计/白名单/计数闭合/编解码）；**无真实短信样本、真机未验收**（须先向用户申请）。
+
+### 15.1 领域模型（`domain/model/SmsModels.kt`）
+
+| 类型 | 说明 |
+|---|---|
+| `SmsMessageRow(id, address, receivedAtMs, type, subId, body, contentHash)` | 读取层输出；`contentHash = sha256(address\|receivedAtMs\|规范化正文)`（防 `_id` 复用） |
+| `SmsChannel { BANK_DIRECT, ALIPAY, WECHAT, OTHER }` | 渠道归类；`allowsAutoImport` 仅 `BANK_DIRECT` 为 true（渠道抑制） |
+| `SmsParseOutcome` | `Parsed(row, channel, cardTail, balanceFen, confidence, sender, receivedAtMs, contentHash)` / `Unrecognized(reason)` / `NotBill(reason)` |
+| `SmsPendingItem(id, sender, receivedAtMs, preview, reason)` | 待确认/未识别条目；`preview` 为脱敏摘要（非原文） |
+| `SmsDuplicateHit / SmsAmbiguousHit` | 跨源判重留痕 / 多候选（人工确认） |
+| `BalanceGap(cardTail, fromLabel, toLabel, detail)` | 余额链缺口提示 |
+| `SmsWhitelistEntry(sender, autoEnabled, confirmedCount, lastErrorAtMs)` | 白名单条目 |
+| `SmsScanPreview(scanTotal, importable, existing, duplicates, ambiguous, unrecognized, notBillReasons, balanceGaps)` | 干跑预览（零写入）；`assertClosed()` 强制 `scanTotal = parsed + unrecognized + notBill` |
+| `SmsImportSummary(scanTotal, parsed, imported, existing, duplicates, ambiguous, unrecognized, notBill, balanceGaps)` | 汇总；构造 `require` 两条闭合不变量 |
+
+### 15.2 解析层（`domain/usecase/sms/SmsTemplateRegistry.kt` / `SmsBillParser.kt`）
+
+| 签名 | 语义 |
+|---|---|
+| `SmsTemplateRegistry.match(address, body): SmsTemplate?` | 发送方前缀 + 抬头锚点 + 渠道提示词；未登记返回 null → `Unrecognized` |
+| `SmsBillParser.parse(message, template, zoneId): SmsParseOutcome` | 三态输出；**零正则**手写扫描；金额转分（`fenOf`）、方向词表互斥、日期 `yyyy-MM-dd`（跨年回退）、卡尾号、对方名、余额 |
+| `SmsBillParser.externalIdOf(address, date, body): String` | `sms:<sha256(发送方\|日期\|规范化正文)[:16]>`；规范化含零宽剔除/全角转半角/空白折叠 |
+| `SmsBillParser.previewOf(message): String` | 脱敏摘要（含金额、截断正文，非原文） |
+| `SmsBillParser.AUTO_IMPORT_MIN_CONFIDENCE = 2` | L2 自动记账置信度阈值 |
+
+### 15.3 匹配与审计（`SmsBillMatcher.kt` / `BalanceChainAuditor.kt`）
+
+| 签名 | 语义 |
+|---|---|
+| `SmsBillMatcher.findCandidates(ledgerId, row): List<Transaction>` | 走既有 `TransactionFilter(type, dateFrom=dateTo, amountMin=amountMax)` 精确查询（不新增数据源方法） |
+| `SmsBillMatcher.decide(ledgerId, row, incomingSource): SmsMatchDecision` | 跨源判定（同来源排除）；`Duplicate`/`Ambiguous`/`New` |
+| `SmsMatchRules.decide(row, incomingSource, candidates)` | 纯函数：唯一自动判重 / ≥2 人工 / 0 入库；**永不自动删** |
+| `BalanceChainAuditor.audit(parsed, zoneId): List<BalanceGap>` | 按卡尾号分组、时间升序，`上一笔余额 ± 金额 ≠ 本笔余额` → 缺口 |
+| `BalanceChainAuditor.headline(gaps)` | 汇总行文案（缺口处数与最早区间） |
+
+### 15.4 白名单（`SmsWhitelistPolicy.kt` / `data/local/sms/SmsWhitelistStore.kt`）
+
+| 签名 | 语义 |
+|---|---|
+| `SmsWhitelistPolicy.evaluate(entry, parsed, decision): AutoDecision` | 四条件：白名单开启 ∧ 置信度达标 ∧ 判无重复 ∧ 渠道允许自动 |
+| `SmsWhitelistPolicy.afterManualConfirm / afterUserCorrection / afterError` | 晋级（3 次）/ 纠错降级 / 错误留痕；`AUTO_PROMOTE_THRESHOLD = 3` |
+| `SmsWhitelistStore.entries/find/upsert/setAutoEnabled/clear` | DataStore（`sms_whitelist`）；编解码 `SmsWhitelistStoreCodec`（纯 Kotlin） |
+
+### 15.5 编排（`SmsBillImportUseCase.kt`）
+
+| 签名 | 语义 |
+|---|---|
+| `scan(ledgerId, watermarkMs?): SmsScanPreview` | L0/L3 扫描（**零写入**）：读 → 模板 → 解析 → 同源幂等 → 跨源判重 → 余额链 → `assertClosed()` |
+| `importConfirmed(preview, ledgerId): SmsImportSummary` | L0/L3 确认入库：`ImportBillUseCase.importParsedRows` + 白名单确认计数（每次动作每发送方至多 +1） |
+| `handleIncoming(message, ledgerId): SmsIncomingOutcome` | L1/L2 实时单条：`AutoImported` / `Pending` / `NotBill` |
+| `confirmManual(ledgerId, parsed): BillImportResult` | 待确认手工入账 + 晋级计数 |
+| `reportUserCorrection(sender)` | 纠错降级 |
+| `whitelist() / setAutoEnabled(sender, enabled)` | 设置页 |
+| `countInProvider() / suggestedWatermarkMs()` | 外部 oracle 对齐 / 水位 |
+
+### 15.6 复用入口（`ImportBillUseCase.importParsedRows`）
+
+```kotlin
+suspend fun importParsedRows(
+    rows: List<ParsedBillRow>,   // externalId 已带 sms: 前缀
+    source: TransactionSource,   // F-14 固定 SMS_IMPORT
+    ledgerId: String,
+): BillImportResult
+```
+
+与 `invoke`/`importLocalFile` 共用 `assemble` 核心（快照分类 + 单事务 + externalId 幂等 + IGNORE 兜底）；`resolveCategoryId` 第 3 步已扩展：`WECHAT_IMPORT || SMS_IMPORT` 走对手方关键词映射。
+
+### 15.7 权限与接收器（DEC-026）
+
+- `AndroidManifest.xml`：`READ_SMS` / `RECEIVE_SMS` / `POST_NOTIFICATIONS` + `<receiver android:name=".data.local.sms.SmsReceivedReceiver" android:permission="android.permission.BROADCAST_SMS">`（`SMS_RECEIVED` intent-filter，exported=true）。
+- 三项权限**默认零申请**（总开关关闭时零运行时请求）；逐项可拒、逐项降级；全部被拒仍有 L4 分享导入兜底。
+- `SmsReceivedReceiver`：`goAsync()` ≤10s，只处理本条（不触发全量扫描）；应用锁开启时 L2 自动写入置灰。
+
+### 15.8 已知盲区与二期
+
+- 跨天错位漏判（23:59/次日 00:01、银行记账日 ≠ 支付日）→ 二期 `occurredAt`（v4）+ ±10 分钟窗口。
+- `TransactionSource` 增列后：`SourceBadge.chineseLabel` 已补「短信」；备份 JSON 无字段变更（`source` 为 String 列）。
+
+---

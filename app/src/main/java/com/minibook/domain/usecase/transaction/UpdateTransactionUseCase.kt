@@ -83,7 +83,13 @@ class UpdateTransactionUseCase @Inject constructor(
     private suspend fun learnCategoryIfChanged(existing: Transaction, updated: Transaction, ledgerId: String) {
         if (existing.categoryId == updated.categoryId) return
         val source = existing.source
-        if (source != TransactionSource.WECHAT_IMPORT && source != TransactionSource.ALIPAY_IMPORT) return
+        // F-14：短信导入行同样参与自学习（短信分类本就是自动猜测，用户纠正更应被记住）。
+        if (source != TransactionSource.WECHAT_IMPORT &&
+            source != TransactionSource.ALIPAY_IMPORT &&
+            source != TransactionSource.SMS_IMPORT
+        ) {
+            return
+        }
         val keyword = existing.counterparty?.trim().orEmpty()
         if (keyword.isEmpty()) return
         try {

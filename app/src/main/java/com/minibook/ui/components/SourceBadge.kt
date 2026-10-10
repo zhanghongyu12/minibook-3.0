@@ -12,17 +12,18 @@ import androidx.compose.ui.unit.dp
 import com.minibook.domain.model.TransactionSource
 
 /**
- * 交易来源中文映射（UI §9.6 文案表 / §9.7 D-32）。
+ * 交易来源中文映射（UI §9.6 文案表 / §9.7 D-32；F-14 增补短信）。
  *
  * 全 UI 层共用的 `TransactionSource` 中文标签：`manual`→手动记录、`wechat_import`→微信、
- * `alipay_import`→支付宝。供 [SourceBadge]（列表行徽标，取「微信/支付宝」）与
- * 交易只读明细（「来源」行，取三态全量）复用，避免两处各写一套映射。
+ * `alipay_import`→支付宝、`sms_import`→短信。供 [SourceBadge]（列表行徽标）与
+ * 交易只读明细（「来源」行）复用，避免两处各写一套映射。
  */
 val TransactionSource.chineseLabel: String
     get() = when (this) {
         TransactionSource.MANUAL -> "手动记录"
         TransactionSource.WECHAT_IMPORT -> "微信"
         TransactionSource.ALIPAY_IMPORT -> "支付宝"
+        TransactionSource.SMS_IMPORT -> "短信"
     }
 
 /**

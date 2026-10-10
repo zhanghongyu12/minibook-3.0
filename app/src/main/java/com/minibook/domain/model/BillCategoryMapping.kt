@@ -104,18 +104,20 @@ object BillCategoryMapping {
     }
 
     /**
-     * 映射交易对方 → 目标内置分类名（仅微信、仅对手方子串命中）。
+     * 映射交易对方 → 目标内置分类名（微信 + **F-14 短信**、仅对手方子串命中）。
      *
-     * @return 命中的关键词所映射的内置分类名；非微信 / counterparty null/空 / 未命中 → null。
+     * 短信通道（F-14）只有「商户/户名」这一条分类线索（没有平台分类），因此复用同一张关键词表：
      * 关键词映射出的均为支出侧分类名（美团/交通/购物/缴费/娱乐/教育/餐饮），落到收入类型时
      * 由 ImportBillUseCase 的 `(type, name)` 精确匹配自然回退「其他」。
+     *
+     * @return 命中的关键词所映射的内置分类名；非微信/短信 / counterparty null/空 / 未命中 → null。
      */
     fun resolveByCounterparty(
         source: TransactionSource,
         counterparty: String?,
         type: TransactionType,
     ): String? {
-        if (source != TransactionSource.WECHAT_IMPORT) return null
+        if (source != TransactionSource.WECHAT_IMPORT && source != TransactionSource.SMS_IMPORT) return null
         val raw = counterparty?.trim().orEmpty()
         if (raw.isEmpty()) return null
         return COUNTERPARTY_KEYWORDS

@@ -1,8 +1,43 @@
 # MiniBook Android — 发布说明
 
 > 状态：已确认
-> 最后更新：2026-08-20
+> 最后更新：2026-10-10
 > 维护者：Coordinator
+
+## v1.1.0（F-14 短信账单导入 + 信息架构改版，2026-10-10）
+
+第二个正式版本，**首个签名 release**（签名 key：`keystore/minibook-release.jks`，
+口令在 `keystore.properties`；两者均已 gitignore，不入库）。
+
+### 新增功能
+
+| 编号 | 功能 | 说明 |
+|---|---|---|
+| F-14 | **短信账单导入** | 三层兜底：① 到达即记账（`SMS_RECEIVED` → L1 解析 / L2 白名单自动记账，四条件 + 应用锁门控）→ ② 打开 App 静默补扫（L3，兜广播丢失）→ ③ 手动导入（L0，全量干跑 + 确认写入，最终兜底）。手动页提供**两种扫描方式**：**增量**（只读上次扫描节点之后的新短信；**节点 = 本次扫描的墙钟时间**，读完推进 ⇒ 看过的不再出现）/ **全量**（全部历史，不动节点 ⇒ 历史永远可重见，含「▸ 此前已看过 N 条」折叠区）。未识别条目只折叠不删除；白名单按发送方逐条开关。**不申请默认短信应用角色、不加额外权限、不弹逐步提醒**（DEC-024 / 026 / 027 / 028 修订 / 029 / 030）。 |
+| F-13 | 邮件账单自动导入 | 每种账单只取最新一封；IMAP 凭据加密存储（`12_mail_bill_import.md`）。 |
+| 改版 | 导入页三入口 + 设置分组汇总 / 二级页 | 导入页 = 账单文件 / 邮箱账单 / 短信账单三个入口卡，逐层返回；设置页 = 一张 5 行汇总卡（账本 / 外观 / 安全 / 数据 / 短信账单）+ 4 个二级页（DEC-029 / TASK-059）。 |
+
+### 构建与产物
+
+- `./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`（debug 签名）
+- `./gradlew :app:assembleRelease` → `app/build/outputs/apk/release/app-release.apk`（**已签名**；`keystore.properties` 缺失时退回 `app-release-unsigned.apk`）
+- `./gradlew :app:testDebugUnitTest` → JVM 单元测试 **52 类 / 410 例 / 0 失败 / 0 跳过**
+- `versionName 1.1.0` / `versionCode 2` / `applicationId com.minibook`
+
+### 安装与签名边界（重要）
+
+- 正式签名 key（SHA-256 `E137B7…`）与 debug key（`D44930…`）**不是同一把**。真机 `A1B2C3D4` 上长期安装的是
+  **debug 签名**版本，release 包**不能直接覆盖安装**（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），必须卸载
+  ⇒ 会清掉本机账本数据。要迁移到正式签名版：先在「设置 → 数据 → 备份导出」导出备份，卸载后安装 release 包，
+  再「导入备份」。
+- 本版真机（`A1B2C3D4`）安装的是 **debug 包**（版本号同为 `1.1.0`），账本数据不受影响；GitHub Release 附件为
+  **签名 release 包**。
+
+### 已知限制
+
+- release **未开启 R8**（`isMinifyEnabled = false`，与上一版一致）：避免影响已验证行为；如需开启须重跑真机验收。
+- MIUI/HyperOS 对非默认短信应用暴露 `sms_restricted` 视图（App 可见条数少于 shell）——ROM 级边界，见 DEC-027。
+- instrumented 测试（`connectedAndroidTest`）仍未纳入常规执行（3 个既有用例）。
 
 ## v1.0.0（MVP 首版，2026-08-20）
 

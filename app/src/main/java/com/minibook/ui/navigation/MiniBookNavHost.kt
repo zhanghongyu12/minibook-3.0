@@ -30,6 +30,13 @@ import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
 import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
+import com.minibook.ui.settings.LocalSettingsNavigation
+import com.minibook.ui.settings.SettingsAppearanceScreen
+import com.minibook.ui.settings.SettingsDataScreen
+import com.minibook.ui.settings.SettingsNavigation
+import com.minibook.ui.settings.SettingsSecurityScreen
+import com.minibook.ui.settings.SettingsSmsScreen
+import com.minibook.ui.sms.SmsPendingScreen
 import com.minibook.ui.transactions.TransactionDetailScreen
 import com.minibook.ui.transactions.TransactionsScreen
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -125,7 +132,8 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
             } else {
                 // 主入口：内含 5 Tab 嵌套导航图（saveState/restoreState 保留各 Tab 状态）。
                 // 首页跨层根导航桥（search/reports/budgets/ledger-manage）：Home 位于嵌套图，
-                // 直达根图目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入。
+                // 直达根图目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入；
+                // 设置二级页（settings-appearance/security/data/sms）同理走 LocalSettingsNavigation。
                 composable(Destination.Home.route) {
                     val homeNavigation = remember(rootController) {
                         object : HomeNavigation {
@@ -146,14 +154,29 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             }
                         }
                     }
-                    CompositionLocalProvider(LocalHomeNavigation provides homeNavigation) {
+                    // 设置页二级页根导航桥（2026-10-10 设置页改版）：设置首页在嵌套图内，
+                    // 四个二级页在根图，故同样经 CompositionLocal 注入根导航能力。
+                    val settingsNavigation = remember(rootController) {
+                        object : SettingsNavigation {
+                            override fun openAppearance() {
+                                rootController.navigate(Destination.SettingsAppearance.route)
+                            }
+                            override fun openSecurity() {
+                                rootController.navigate(Destination.SettingsSecurity.route)
+                            }
+                            override fun openData() {
+                                rootController.navigate(Destination.SettingsData.route)
+                            }
+                            override fun openSms() {
+                                rootController.navigate(Destination.SettingsSms.route)
+                            }
+                        }
+                    }
+                    CompositionLocalProvider(
+                        LocalHomeNavigation provides homeNavigation,
+                        LocalSettingsNavigation provides settingsNavigation,
+                    ) {
                         MainScreen(
-                            onNavigateToImport = {
-                                rootController.navigate(Destination.Import.route)
-                            },
-                            onNavigateToMailAccount = {
-                                rootController.navigate(Destination.MailAccount.route)
-                            },
                             onOpenTransaction = { txId ->
                                 rootController.navigate(Destination.TransactionDetail.createRoute(txId))
                             },
@@ -234,10 +257,14 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 }
                 composable(Destination.Import.route) {
                     // 「一键收取」未配置态「去配置」→ 邮箱账单设置页（F-13，路由已注册勿重复）。
+                    // F-14：短信干跑预览/结果区「查看待确认 K 条」→ 待确认清单页。
                     ImportScreen(
                         onBack = { rootController.popBackStack() },
                         onNavigateToMailAccount = {
                             rootController.navigate(Destination.MailAccount.route)
+                        },
+                        onNavigateToSmsPending = {
+                            rootController.navigate(Destination.SmsPending.route)
                         },
                     )
                 }
@@ -247,9 +274,42 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                     MailSettingsScreen(onBack = { rootController.popBackStack() })
                 }
 
+                // 待确认/未识别短信清单（F-14）：「手工记一笔」跳既有新增交易表单（无预填 API）。
+                composable(Destination.SmsPending.route) {
+                    SmsPendingScreen(
+                        onBack = { rootController.popBackStack() },
+                        onAddTransaction = {
+                            rootController.navigate(Destination.TransactionDetail.createRoute())
+                        },
+                    )
+                }
+
                 // 账本管理（P-11，TASK-029 真实页面）：顶栏返回 → 根图 popBackStack。
                 composable(Destination.LedgerManage.route) {
                     LedgerManageScreen(onBack = { rootController.popBackStack() })
+                }
+
+                // —— 设置二级页（2026-10-10 改版：设置首页只留分组汇总，逐组进二级页） ——
+                // 顶栏返回 → 根图 popBackStack（回设置首页所在的主入口）。
+                composable(Destination.SettingsAppearance.route) {
+                    SettingsAppearanceScreen(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.SettingsSecurity.route) {
+                    SettingsSecurityScreen(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.SettingsData.route) {
+                    SettingsDataScreen(
+                        onBack = { rootController.popBackStack() },
+                        onNavigateToImport = {
+                            rootController.navigate(Destination.Import.route)
+                        },
+                        onNavigateToMailAccount = {
+                            rootController.navigate(Destination.MailAccount.route)
+                        },
+                    )
+                }
+                composable(Destination.SettingsSms.route) {
+                    SettingsSmsScreen(onBack = { rootController.popBackStack() })
                 }
 
                 // 底部弹层（sheets）家族：可选 `{id}` 查询参数（UUID，§12）。

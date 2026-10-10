@@ -934,4 +934,45 @@ MailAccountStore(凭据) → ImapMailClient(IMAP 只读拉取, 含 ID 命令)
 
 ---
 
+## 18. Phase 3 设计：短信账单导入（F-14）
+
+> 设计依据：`13_sms_bill_import.md`（完整方案）、`01_prd.md §F-14`、DEC-025（技术路线）、DEC-026（权限与隐私边界）。
+> 一句话定位：**F-12 的第三条取件通道**（文件 / 邮件 / 短信并列），复用同一 `ParsedBillRow` → `ImportBillUseCase` 入库链路，**不新建第二条写库路径、不改数据库 schema**。
+
+### 18.1 分层落点
+
+| 层 | 组件 | 职责 |
+|---|---|---|
+| data（Android 边界） | `data/local/sms/SmsBillReader.kt` | `ContentResolver` 只读 `content://sms`：分页游标 `date ASC,_id ASC`（批次 200）、水位 `max(date)` + 3 天重叠回扫、双卡 `sub_id`、内容哈希。**全 App 唯一短信 I/O 边界** |
+| data | `data/local/sms/SmsWhitelistStore.kt` + `SmsWhitelistStoreCodec.kt` | 白名单 DataStore（`sender|enabled|count|lastError`，纯编解码可 JVM 单测） |
+| domain | `domain/model/SmsModels.kt` | `SmsMessageRow` / `SmsChannel` / `SmsParseOutcome`（Parsed/Unrecognized/NotBill）/ `SmsPendingItem` / `SmsDuplicateHit` / `SmsAmbiguousHit` / `BalanceGap` / `SmsWhitelistEntry` / `SmsScanPreview` / `SmsImportSummary`（**计数闭合 require**） |
+| domain | `SmsTemplateRegistry` / `SmsBillParser` | 模板 = 发送方前缀 + 抬头锚点 + 渠道提示词；**零正则**（DEC-024 教训：Android ICU 与 JVM 正则语义差异）手写字符扫描；三态输出，抽不全即 `Unrecognized` 留痕、绝不猜 |
+| domain | `SmsBillMatcher` + `SmsMatchRules` | 跨源去重：同账本 ∧ 同 type ∧ 金额(分)相等 ∧ 日期(天)相等 → 唯一自动判重 / ≥2 人工 / 0 入库；**双向共用**（短信入口反查 `alipay:`/`wechat:`/`manual`，账单文件入口反查 `sms:`） |
+| domain | `BalanceChainAuditor` | 余额链缺口（`上一笔余额 ± 本笔金额 = 本笔余额`，按卡尾号分组；仅提示、不入库门禁） |
+| domain | `SmsWhitelistPolicy` | 四条件自动记账判定 + 3 次确认晋级 + 纠错降级（纯函数） |
+| domain | `SmsBillImportUseCase` | 编排：扫描（零写入预览）→ 确认入库（`importParsedRows`）→ 实时 L1/L2（`handleIncoming`）→ 白名单管理 |
+| ui | `ui/billimport/SmsImportContent.kt`、`ui/sms/SmsPendingScreen.kt`、`ui/settings/SmsSettingsSection.kt` | 导入页短信流程 / 待确认与未识别清单 / 设置区块（实现中） |
+
+### 18.2 关键架构口径
+
+1. **计数闭合是程序不变量**：`scanTotal = parsed + unrecognized + notBill` 且 `parsed = imported + existing + duplicates + ambiguous`，在 `SmsImportSummary` 构造与 `SmsScanPreview.assertClosed()` 处强制。
+2. **去重分层**：同源 = `UNIQUE(ledgerId, externalId)` + `@Insert(IGNORE)`（既有）；跨源 = `SmsBillMatcher`（共享）。`externalId = sms:<sha256(发送方|日期|规范化正文)[:16]>`——短信无交易单号，正文规范化（零宽剔除/全角转半角/空白折叠）保证重投递哈希稳定。
+3. **渠道抑制**：`SmsChannel.ALIPAY/WECHAT` 不允许自动记账（这些渠道必被 F-12/F-13 账单文件覆盖）；`BANK_DIRECT` 允许。
+4. **无常驻**：`SMS_RECEIVED` 静态 receiver（隐式广播豁免项，进程不存在也能被拉起），`goAsync` ≤10s 只处理本条；完整性由 L3 水位补扫兜底（打开 App/解锁/刷新触发）。
+5. **自动记账硬约束**：应用锁开启时（master key 为 auth-gated Keystore key）后台无法解密开库 → L2 置灰，降级为「待确认 + 解锁后补记」（代码依据：`KeyManager` 双别名 + `AppLockController.unlock(useAuth)`）。
+6. **权限默认零申请**：`READ_SMS`/`RECEIVE_SMS`/`POST_NOTIFICATIONS` 均在用户显式开启对应开关后才申请（DEC-026）。
+7. **原文不落库**（DEC-026）：识别成功只存抽取结果；未识别留痕仅存脱敏摘要 + 可限期清理；`description` 为自建摘要。
+
+### 18.3 与 F-12 / F-13 的关系
+
+- 入库：`ImportBillUseCase.importParsedRows`（新增公开入口，与 `invoke`/`importLocalFile` 共用 `assemble` 核心——单事务 + IGNORE 幂等 + 自动分类 + 自学习）。
+- 分类：短信走「第 3 步对手方关键词」（与微信同表 `COUNTERPARTY_KEYWORDS`），`platformCategory` 只存渠道词，不参与平台分类映射。
+- 自学习：`UpdateTransactionUseCase` / `BatchUpdateTransactionsUseCase` 的「改分类即学习」已扩展覆盖 `SMS_IMPORT`（短信分类本就是自动猜测，用户纠正更应被记住）。
+- 备份 JSON：`source` 已是 String 列，`SMS_IMPORT` 经 `fromValue` 往返 → **无字段变更**（不会重演 F-12 评审 P1-1）。
+
+### 18.4 二期（未做，保留预案）
+
+- `occurredAt` 列（DB v4）+ 跨源匹配改 ±10 分钟窗口，解决跨天错位漏判（本期已知盲区）；届时 `BackupJsonMapper` 需同步携带新字段（P1-1 教训）。
+- 通知监听（NotificationListenerService）作为广播丢失的二道兜底（本机通知使用权已被 `com.xiaomi.barrage`/`com.mi.health` 占用，侧载受限设置成本高）。
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

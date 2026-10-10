@@ -68,7 +68,11 @@ class BatchUpdateTransactionsUseCase @Inject constructor(
     private suspend fun learnCategory(ledgerId: String, ids: List<String>, categoryId: String) {
         ids.forEach { id ->
             val tx = transactionRepository.getById(id) ?: return@forEach
-            if (tx.source != TransactionSource.WECHAT_IMPORT && tx.source != TransactionSource.ALIPAY_IMPORT) {
+            // F-14：短信导入行同样参与自学习（短信分类本就是自动猜测，用户纠正更应被记住）。
+            if (tx.source != TransactionSource.WECHAT_IMPORT &&
+                tx.source != TransactionSource.ALIPAY_IMPORT &&
+                tx.source != TransactionSource.SMS_IMPORT
+            ) {
                 return@forEach
             }
             val keyword = tx.counterparty?.trim().orEmpty()

@@ -1,5 +1,6 @@
 package com.minibook.ui.home
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.datastore.LedgerDataStore
@@ -11,6 +12,7 @@ import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.usecase.budget.ObserveBudgetProgressUseCase
 import com.minibook.domain.usecase.category.ObserveCategoriesUseCase
 import com.minibook.domain.usecase.ledger.ObserveLedgersUseCase
+import com.minibook.domain.usecase.sms.SmsBillImportUseCase
 import com.minibook.domain.usecase.transaction.FetchMonthSummaryUseCase
 import com.minibook.domain.usecase.transaction.ObserveTransactionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,10 +25,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * 首页仪表板 UI 状态（TASK-023，UI §3 三态 + P-02 四态）。
@@ -96,7 +100,39 @@ class HomeViewModel @Inject constructor(
     private val observeCategories: ObserveCategoriesUseCase,
     private val observeBudgetProgress: ObserveBudgetProgressUseCase,
     private val ledgerDataStore: LedgerDataStore,
+    private val smsBillImport: SmsBillImportUseCase,
 ) : ViewModel() {
+
+    init {
+        // F-14 L3：**打开 App 时**静默增量补扫（三层兜底的中层）。
+        //
+        // 实测缺口 F1（2026-10-10）：此前 `catchUp` 只在打开「导入账单」页时触发，与设置项
+        // 「打开 App 时自动补扫」名实不符 —— 从不进导入页的用户永远不会被补扫兜底。
+        //
+        // 三层模型（用户 2026-10-10 拍板）：①短信到达即记账（L1/L2）→ ②打开 App 补扫（本处，
+        // 只兜「广播丢了」的增量）→ ③手动导入（L0 全量干跑）。**不做已读/未读、不做角标。**
+        //
+        // ⚠️ 日志（2026-10-10 真机教训）：这里原先用 `runCatching` 吞掉一切异常 —— 真机上
+        // 「开关已开、水位却一直没写出来」时无任何线索（静默补扫 + 静默失败 = 不可观测）。
+        // 现改为：成功记「扫描/自动/待确认/跳过原因」，失败记异常类名与栈；**只记计数与策略原因**，
+        // 不含短信原文、号码、卡号、余额（DEC-026）。
+        viewModelScope.launch {
+            try {
+                val result = smsBillImport.catchUp(ledgerDataStore.currentLedgerId.first())
+                if (result.skippedReason != null || result.scanned > 0) {
+                    Log.i(
+                        SMS_TAG,
+                        "L3 补扫：扫描 ${result.scanned}，自动 ${result.autoImported}，" +
+                            "待确认 ${result.pending}，跳过=${result.skippedReason ?: "-"}",
+                    )
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Exception) {
+                Log.w(SMS_TAG, "L3 补扫失败：${t.javaClass.name}", t)
+            }
+        }
+    }
 
     /** 所选月份：初始当前月；由 [previousMonth]/[nextMonth] 切换（nextMonth 上限当前月）。 */
     private val _selectedMonth = MutableStateFlow(YearMonth.now())
@@ -199,6 +235,9 @@ class HomeViewModel @Inject constructor(
     }
 
     companion object {
+        /** L3 补扫日志 TAG（与 `SmsReceivedReceiver` 同一 TAG，便于 `logcat -s MiniBookSms` 一处看全）。 */
+        private const val SMS_TAG = "MiniBookSms"
+
         /** 首页「最近交易」UI 截断条数（UI §2 P-02、A-3，MVP 不打分页）。 */
         const val MAX_RECENT_TRANSACTIONS = 10
 

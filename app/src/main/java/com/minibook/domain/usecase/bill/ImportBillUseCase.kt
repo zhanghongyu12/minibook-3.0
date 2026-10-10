@@ -96,6 +96,23 @@ class ImportBillUseCase @Inject constructor(
             importPrepared(prepared, ledgerId)
         }
 
+    /**
+     * 已解析行导入入口（F-14 短信账单）：与 [invoke] / [importLocalFile] **共用同一 [assemble] 核心**
+     * （快照分类 + 单事务 + `externalId` 幂等 + `IGNORE` 兜底），**不新建第二条写库路径**（DEC-025）。
+     *
+     * @param rows 已解析的有效行（短信解析器产出，`externalId` 已带 `sms:` 前缀）
+     * @param source 来源（F-14 固定 [TransactionSource.SMS_IMPORT]）
+     */
+    suspend fun importParsedRows(
+        rows: List<ParsedBillRow>,
+        source: TransactionSource,
+        ledgerId: String,
+    ): BillImportResult =
+        withContext(ioDispatcher) {
+            ensureBuiltInCategories(ledgerId)
+            assemble(BillParseResult.Success(rows = rows, skipped = emptyList()), source, ledgerId)
+        }
+
     /** 两入口共用的解析+落库核心：resolve → parse → assemble（[PreparedBillFile] 由 `use` 保证清理）。 */
     private suspend fun importPrepared(
         prepared: PreparedBillFile,
@@ -245,8 +262,8 @@ class ImportBillUseCase @Inject constructor(
             return byTypeAndName[type to mappedName] ?: othersByName[type]
         }
 
-        // 第 3 步：仅微信走对手方关键词（支付宝不走，避免误分类）。
-        if (source == TransactionSource.WECHAT_IMPORT) {
+        // 第 3 步：仅微信与 F-14 短信走对手方关键词（支付宝不走，避免误分类；短信无平台分类，只有户名）。
+        if (source == TransactionSource.WECHAT_IMPORT || source == TransactionSource.SMS_IMPORT) {
             val keywordName = BillCategoryMapping.resolveByCounterparty(source, row.counterparty, row.type)
             if (keywordName != null) {
                 return byTypeAndName[type to keywordName] ?: othersByName[type]

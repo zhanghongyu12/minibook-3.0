@@ -51,10 +51,27 @@ sealed class Destination(val route: String) {
     /** 邮箱凭据（F-13 多账号）：QQ 邮箱 IMAP 凭据列表/编辑全屏页（根图，同 Import 口径），顶栏返回 popBackStack。 */
     data object MailAccount : Destination("mail_account")
 
+    /** 待确认/未识别短信清单（F-14）：根图全屏页（同 Import 口径），顶栏返回 popBackStack。 */
+    data object SmsPending : Destination("sms-pending")
+
     // —— 账本管理（P-11） ——
 
     /** 账本管理（P-11：账本列表/切换/新增/重命名/删除）。 */
     data object LedgerManage : Destination("ledger-manage")
+
+    // —— 设置二级页（2026-10-10 改版：设置首页只留分组汇总，逐组进二级页） ——
+
+    /** 设置 · 外观（F-09：暗色模式 + 主题颜色）。 */
+    data object SettingsAppearance : Destination("settings-appearance")
+
+    /** 设置 · 安全（F-04/05：应用锁 + 锁定时长 + 数据加密）。 */
+    data object SettingsSecurity : Destination("settings-security")
+
+    /** 设置 · 数据（备份导出/导入 + 账单导入入口 + 邮箱凭据）。 */
+    data object SettingsData : Destination("settings-data")
+
+    /** 设置 · 短信账单（F-14：开关矩阵 + 白名单 + 权限状态）。 */
+    data object SettingsSms : Destination("settings-sms")
 
     // —— 交易详情（P-07） ——
 

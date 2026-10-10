@@ -9,13 +9,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * 设置页分区（UI §4 C-23）。
@@ -108,4 +112,43 @@ fun SwitchRow(
         Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
+}
+
+/**
+ * 设置行尾部「当前值」文本（2026-10-10 由 SettingsScreen 提取为公共组件，供设置二级页复用）。
+ *
+ * @param text 当前值文案（如「跟随系统」「1 分钟后」）。
+ */
+@Composable
+fun TrailingValue(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 设置行尾部「›」箭头（表达「可进入下级/可点开」）。 */
+@Composable
+fun TrailingChevron() {
+    Text(
+        text = "›",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * 设置二级页顶栏（2026-10-10 设置页改版）：标题 + ← 返回（emoji 占位，material-icons 缺失，
+ * 与导入页/账单导入页同口径 TASK-020）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsSubPageTopBar(title: String, onBack: () -> Unit) {
+    TopAppBar(
+        title = { Text(title) },
+        navigationIcon = {
+            IconButton(onClick = onBack) { Text("←", fontSize = 20.sp) }
+        },
+    )
 }

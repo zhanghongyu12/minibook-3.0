@@ -2,8 +2,8 @@
 
 > 项目：MiniBook Android 重构版（本地优先记账应用）
 > 维护者：全员可更新（项目状态区块由当前阶段负责角色更新）
-> 最后更新：2026-09-23（F-13 邮件账单自动导入实现完成，TASK-045~050 回写实况）
-> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；P2 技术债清账 + 文档收口完成；**F-13 邮件账单自动导入（Phase 3）已实现并通过本地构建 + 全量单测（TASK-045~050 已回写）；真机验收待设备**；待人工批准 push（收尾阶段明确不做真机 / release / Phase 3）
+> 最后更新：2026-10-10（F-14 短信账单导入：完成真机 + 模拟器验收，实测修复 5 个真机静默失效缺陷；验收后完成 UI 改版（TASK-059：未识别「已看过」标记 / 导入页三入口 / 设置分组汇总 + 四二级页，见 DEC-029）+ 两种扫描方式与白名单空态修复（TASK-060 / DEC-030）；JVM 全量单测 52 类 / 410 例全绿；TASK-051~060 全部收口）
+> 状态：F-12 微信/支付宝账单导入已全流程落地（PRD→架构→UI→实现→测试→评审→修复收口 9 commit）；P2 技术债清账 + 文档收口完成；**F-13 邮件账单自动导入（Phase 3）已实现并通过本地构建 + 全量单测（TASK-045~050 已回写）；真机验收待设备**；**F-14 短信账单导入已实现并完成真机 + 模拟器验收与验收后口径定案（`13_sms_bill_import.md` §14、DEC-027、DEC-028（含修订），TASK-051~060 全部收口；`:app:assembleDebug` 与 JVM 全量单测 52 类 / 410 例 0 失败；实测修复 6 个静默失效缺陷，F2 角标方案经用户决策撤销、最终为三层兜底（到达即记账 → 开 App 补扫 → 手动导入），并复测 4 类边界短信；验收后按用户三诉求完成 UI 改版（TASK-059 / DEC-029：未识别「已看过」折叠标记、导入页三入口、设置分组汇总 + 四二级页）与**两种扫描方式（TASK-060 / DEC-030：增量 / 全量 + 白名单空态）**，双端实测通过），仍未覆盖项见 TASK-057/058/060**；**未提交 git（规则 2，待批准）**；待人工批准 push（收尾阶段明确不做真机 / release / Phase 3）
 >
 > 文档编号映射（已对齐 AI-work-model 编号规范，document_rules §文档编号体系）：
 > - `docs/00_idea.md`（已归档，被 01_prd 取代）
@@ -1591,6 +1591,247 @@
   - [ ] 日志中检索不到授权码与解压口令（代码审查已保证无凭据日志路径；真机 logcat 检索复核待设备）
   - [ ] 断网场景：明确「网络异常」，F-12 手动导入路径不受影响（文案已实现 `MAIL_NETWORK_MESSAGE`；F-12 路径与 F-13 完全独立（代码结构保证）；真机触发待设备）
 - 需测试覆盖点：`ImportViewModel` 收取状态机（Fake UseCase）（实际：`MailImportPresenterTest` 12 例覆盖展示映射；ViewModel 状态机本身无 JVM 单测，属已知限制）；真机端到端与只读性核对（Tester，写入 `09_test_report.md`，待设备）。
+
+---
+
+---
+
+## Phase 3：F-14 短信账单导入（TASK-051~057）
+
+> 设计依据：`13_sms_bill_import.md`（完整方案）、`01_prd.md §F-14`、DEC-025（技术路线）、DEC-026（权限与隐私边界）。
+> 总原则：**不加 DB 字段**、**不新建写库路径**（复用 `ImportBillUseCase.importPrepared`）、**未识别必留痕**、**默认零权限申请**。
+> ⚠️ **验证限制**：当前无真实短信账单样本 → 解析/匹配以 fixture 单测为验收基线；**真机验收须先向用户申请**（用户明确要求）。
+
+### TASK-051: F-14 权限与开关骨架（Manifest + 设置区块 + 权限引导）
+
+- 状态：已完成（2026-10-09）（设计已定稿）
+- 优先级：P1
+- 负责角色：Developer（Android 权限 + UI）
+- 所属层：UI 层 + 清单
+- 关联需求：F-14；DEC-026
+- 估算：0.5 天
+- 依赖关系：无
+- 涉及文件：
+  - `AndroidManifest.xml`（新增 `READ_SMS` / `RECEIVE_SMS` / `POST_NOTIFICATIONS` + receiver 声明占位）
+  - `ui/settings/SmsSettingsSection.kt`（新增：开关矩阵 + 白名单列表 + 权限状态）
+  - `ui/settings/SettingsScreen.kt`（接入区块）
+- 描述：三项权限**默认不申请**；总开关关闭时零运行时请求；权限引导页可直达系统设置，并提供「改用分享导入」退路。
+- 验收标准：
+  - [ ] 总开关默认关闭；关闭状态下 App 不请求任何短信权限（运行时零调用）
+  - [ ] 三个开关可独立开合，开启时按需申请对应权限
+  - [ ] 权限被拒/受限 → 明确提示 + 去设置 + 分享导入退路
+  - [ ] `:app:assembleDebug` 绿
+- 需测试覆盖点：开关状态机（JVM，Fake 权限检查器）；真机授权路径待申请。
+
+---
+
+### TASK-052: F-14 读取层 `SmsBillReader`（分页 / 水位 / 双卡 / 内容哈希）
+
+- 状态：已完成（2026-10-09；仪器测试待真机）
+- 优先级：P1
+- 负责角色：Developer（Android 数据层）
+- 所属层：data 层
+- 关联需求：F-14；DEC-025
+- 估算：1 天
+- 依赖关系：TASK-051
+- 涉及文件：
+  - `data/local/sms/SmsBillReader.kt`（新增：`ContentResolver` 查询，**唯一 Android I/O 边界**）
+  - `data/local/sms/SmsBillCursor.kt`（新增：分页游标 + 水位模型）
+  - `domain/model/SmsModels.kt`（新增：`SmsMessageRow` 等）
+- 描述：`date ASC, _id ASC` 分页（批量 200，防 CursorWindow 溢出）；水位 `max(_id)`/`max(date)` + 重叠回扫 3~7 天；内容哈希 `sha256(address|receivedAtMs|body)`；双卡 `sub_id` 分组；注解 `READ_SMS`。
+- 验收标准：
+  - [ ] 分页在万条量级不溢出、可取消
+  - [ ] 水位增量：重复调用不重复返回；重叠窗口可覆盖迟到短信
+  - [ ] `_id` 复用场景由内容哈希兜住
+  - [ ] 单测：分页/水位/双卡/重复 `_id`/空库 5 类
+- 需测试覆盖点：`SmsBillCursor` 纯逻辑可单测；`SmsBillReader` 的 Cursor 交互建议 androidTest（待申请设备）。
+
+---
+
+### TASK-053: F-14 模板注册表与解析器（`SmsTemplateRegistry` / `SmsBillParser`）
+
+- 状态：已完成（2026-10-09；单测 21 例绿，真实样本回归待补）
+- 优先级：P1
+- 负责角色：Developer（领域层）
+- 所属层：domain 层
+- 关联需求：F-14；DEC-025
+- 估算：1 天
+- 依赖关系：TASK-052
+- 涉及文件：
+  - `domain/usecase/sms/SmsTemplateRegistry.kt`（新增）
+  - `domain/usecase/sms/SmsBillParser.kt`（新增）
+  - `app/src/test/.../sms/SmsBillParserTest.kt`（新增，fixture 驱动）
+- 描述：模板 = 发送方号码 + 抬头锚点 + 结构化捕获；产出统一 `ParsedBillRow`，`externalId = sms:<sha256(...)[:16]>`；三态结果 `Parsed` / `Unrecognized` / `NotBill`；金额转分、方向词表互斥判定、渠道归类（`BANK_DIRECT`/`ALIPAY`/`WECHAT`/`OTHER`）。
+- 验收标准：
+  - [ ] 每个模板 4 类 fixture：命中 / 金额边界 / 方向歧义（→Unrecognized）/ 格式漂移（→Unrecognized，**不得误记**）
+  - [ ] 非账单类（验证码/营销/快递）→ `NotBill`（带依据）
+  - [ ] 金额 ≤0 / 时间缺失 → `Unrecognized`
+  - [ ] JVM 单测全绿
+- 需测试覆盖点：解析器纯函数全覆盖；**无真实样本** → fixture 为唯一基线。
+
+---
+
+### TASK-054: F-14 跨源匹配器 + 干跑预览 + 待确认/未识别清单
+
+- 状态：已完成（2026-10-09）
+- 优先级：P1
+- 负责角色：Developer（领域层 + UI）
+- 所属层：domain + UI
+- 关联需求：F-14；DEC-025
+- 估算：1 天
+- 依赖关系：TASK-053
+- 涉及文件：
+  - `domain/usecase/sms/SmsBillMatcher.kt`（新增：双向共用）
+  - `domain/usecase/sms/BalanceChainAuditor.kt`（新增）
+  - `ui/sms/SmsPendingScreen.kt`（新增：待确认 / 未识别清单）
+  - `ui/billimport/SmsImportContent.kt`（新增：干跑预览与结果）
+- 描述：匹配规则「同账本 ∧ 同 type ∧ amountFen 相等 ∧ date 相等」→ 唯一自动判重 / ≥2 疑似（人工）/ 0 入库；**永不自动删**；账单文件入口也调用同一匹配器（双向）；预览展示四类计数与被抑制项。
+- 验收标准：
+  - [ ] 两向顺序（先短信后台账 / 先账单后短信）各有用例，判定一致
+  - [ ] 唯一/多候选/零候选三态用例
+  - [ ] 未识别清单可见、可手工转一笔、可标记非账单
+  - [ ] 余额链缺口可检出（缺余额数据时静默跳过）
+- 需测试覆盖点：匹配器与审计器纯函数单测；UI 状态机 JVM 测试。
+
+---
+
+### TASK-055: F-14 实时通道（`SmsReceivedReceiver` + 静默聚合通知）
+
+- 状态：已完成（2026-10-09；广播投递待真机验证）
+- 优先级：P2
+- 负责角色：Developer（Android + UI）
+- 所属层：data + UI
+- 关联需求：F-14；DEC-025
+- 估算：0.5 天
+- 依赖关系：TASK-054
+- 涉及文件：
+  - `data/local/sms/SmsReceivedReceiver.kt`（新增）
+  - `ui/notification/SmsNotificationHelper.kt`（新增：Channel 分级）
+  - `AndroidManifest.xml`（receiver 正式接线）
+- 描述：`SMS_RECEIVED` 静态接收器（`goAsync` ≤10s，只处理本条）；命中模板 → 「待确认」累积；**默认静默聚合不弹通知**；「待确认」Channel 低优先级、「自动记账完成」普通优先级；非账单短信零提醒。
+- 验收标准：
+  - [ ] 验证码/营销/快递类零通知（fixture 断言）
+  - [ ] 账单类进待确认且默认不弹通知
+  - [ ] 广播处理不超时（≤10s）、异常不影响系统短信
+  - [ ] HyperOS 后台策略有引导说明（真机验证待申请）
+- 需测试覆盖点：通知决策纯函数（JVM）；广播投递真机待申请。
+
+---
+
+### TASK-056: F-14 白名单与自动记账（L2）
+
+- 状态：已完成（2026-10-09；L2 真机两态待验证）
+- 优先级：P2
+- 负责角色：Developer（领域 + 存储）
+- 所属层：domain + data
+- 关联需求：F-14；DEC-025
+- 估算：1 天
+- 依赖关系：TASK-055
+- 涉及文件：
+  - `data/local/sms/SmsWhitelistStore.kt`（新增：DataStore）
+  - `domain/usecase/sms/SmsBillImportUseCase.kt`（新增：编排 + 计数闭合）
+  - `domain/usecase/sms/SmsWhitelistPolicy.kt`（新增：晋级/降级/四条件判定，纯函数）
+  - `di/SmsModule.kt`（新增）
+- 描述：四条件（白名单 ∧ 模板命中 ∧ 判无重复 ∧ 渠道允许）同时成立才自动写；「手动确认 3 次且无纠错」晋级；用户纠错（删/改自动记录）→ 立即降级；**应用锁开启时 L2 置灰**（`AppLockController` 状态判定）。
+- 验收标准：
+  - [ ] 四条件缺一即不自动写（4 个负向用例 + 1 个正向）
+  - [ ] 3 次确认晋级可复现；纠错降级可复现
+  - [ ] 自动写入走 `importPrepared`（同事务），可撤销
+  - [ ] 应用锁开启 → L2 不可用且给出原因
+  - [ ] 计数闭合断言在编排层生效
+- 需测试覆盖点：`SmsWhitelistPolicy` 纯函数全覆盖；编排 Fake 化单测。
+
+---
+
+### TASK-057: F-14 收口（构建 + 全量单测 + 文档回写 + 真机/模拟器验收）
+
+- 状态：已完成（含真机 + 模拟器验收，2026-10-10）
+- 优先级：P1
+- 负责角色：Developer + Tester
+- 所属层：全层
+- 关联需求：F-14；DEC-025、DEC-026、**DEC-027**
+- 估算：0.5 天
+- 依赖关系：TASK-051~056
+- 涉及文件：`02_architecture.md`、`04_api.md`、`05_ui.md`、`CHANGELOG.md`、`README.md`、`09_test_report.md`、`13_sms_bill_import.md`、`07_decisions.md`
+- 描述：单点串行全量构建 + 全量单测；文档回写（设计 §11 清单）；真机验收（用户 2026-10-10 授权后执行，含模拟器真实 PDU 注入）。
+- 验收标准：
+  - [x] `:app:assembleDebug` + `:app:testDebugUnitTest` 全绿（**52 类 / 406 例 / 0 失败**，2026-10-10 复跑）
+  - [x] 文档清单 §11 全部回写（并新增设计文档 §14 验收章节、DEC-027）
+  - [x] 真机验收完成（小米 Android 16 / HyperOS）：L0 真实数据干跑通过、权限授权后不重启即生效
+  - [x] 模拟器端到端验收完成：L0 计数闭合、方向、余额缺口、确认入库、幂等重扫、L1 待确认、**L2 后台自动记账**、非账单零提醒
+  - [x] 仍未覆盖（如实挂账）：应用锁开启态 L2 门控、真实银行账单短信、通知「逐条提醒」、L4 分享导入（其中 **L3 增量补扫场景已由 TASK-058 补做**）
+- 需测试覆盖点：全量单测；真机 L0/权限流；模拟器 L0/L1/L2 端到端。
+- 执行记录（2026-10-10）：构建与测试由主代理串行执行（规则 3），真机 `A1B2C3D4` 与模拟器 `emulator-5554` 亦由主代理独占操作；实测发现并修复 5 个「JVM 绿但真机静默失效」缺陷（详见 `13_sms_bill_import.md §14.3`）；**未提交 git**（规则 2，待用户批准）。
+
+---
+
+### TASK-058: F-14 验收后口径定案——三层兜底（F1 修复保留 / F2 角标撤销）+ 边界短信复测
+
+- 状态：已完成（2026-10-10；当日下午按用户决策**二次收口**：撤销角标）
+- 优先级：P1（默认配置下的可见性缺口）
+- 负责角色：Developer + Tester
+- 所属层：domain / ui
+- 关联需求：F-14；**DEC-028**（新增，当日修订：撤销角标）、DEC-026（隐私边界不变）、DEC-027
+- 估算：0.5 天（含二次收口）
+- 依赖关系：TASK-057
+- 涉及文件（**最终态**）：`SmsBillImportUseCase.kt`、`HomeViewModel.kt`、`13_sms_bill_import.md`、`09_test_report.md`、`07_decisions.md`、`CHANGELOG.md`、`README.md`；`HomeScreen.kt` 角标接线与 `SmsPendingTracker(.Test).kt` **已随撤销一并删除**
+- 描述：默认「静默聚合」下「未白名单发送方短信到达后 App 内毫无提示」的可见性缺口处置：① 补扫触发点由导入页改为**打开 App**（F1，保留）；② 水位「不越过待确认」+ 进程内跟踪器 + 首页角标（F2a/b/c）曾实现并验证通过，但真机实测角标**常驻去不掉**（F3：未识别条目无销账出口）→ 用户 2026-10-10 拍板「角标不要了，不需要已读未读」→ **全部撤销**，最终模型 = 三层兜底（①到达即记账 → ②打开 App 补扫 → ③手动导入）；并补做 4 类边界短信复测。
+- 验收标准：
+  - [x] `:app:assembleDebug` + `:app:testDebugUnitTest` 全绿（**52 类 / 406 例 / 0 失败**；F-14 占 7 类 / 73 例）
+  - [x] F1：真机每次开 App 均出补扫日志（`logcat -s MiniBookSms` → `L3 补扫：扫描 1，自动 0，待确认 1，跳过=-`）
+  - [x] F2 撤销落地：两端首页**无任何「待确认」节点**（角标已移除）、`SmsPendingTracker` 与单测文件已删除、无残留引用
+  - [x] F3（角标常驻）由决策消解：不再有任何「待确认/已读」状态；「不遗漏」由 L0 手动导入兜底（与水位无关，永远可找回）
+  - [x] 边界短信：通知类（106 端口）与「银行端口无金额」→ **非账单**（零提醒）；未登记模板 → **未识别**（清单页留痕）；**跨源判重**：手工 ￥77.00 与未入库同额同日短信 → 由「可导入」转「已存在/重复」
+  - [ ] 仍未覆盖（如实挂账）：双卡（`sub_id`）与长时间跨度（跨月/跨年，`emu sms send` 无法指定时间）；应用锁开启态；真实银行样本；L4；`catchUp` 编排本身无 JVM 单测
+- 需测试覆盖点：撤销后**无**跟踪器单测（文件一并删除，不保留死代码）；补扫分类计数（自动/待确认）作为日志口径；边界短信分类。
+- 执行记录（2026-10-10）：主代理单点执行（规则 3）；证据链见 `13_sms_bill_import.md §14.6`（含 §14.6.4 决策变更）、`09_test_report.md`（验收后口径定案节）；**未提交 git**（规则 2，待用户批准）。
+
+---
+
+### TASK-059: 验收后 UI 改版——未识别「已看过」标记 + 导入页三入口 + 设置分组汇总页（用户三诉求）
+
+- 状态：已完成（2026-10-10，双端实测）
+- 优先级：P1（体感：优先级②「不烦人」/ ②③ 信息架构）
+- 负责角色：Developer + Tester
+- 所属层：domain（水位）/ data（DataStore 键）/ ui（导入页、设置页）
+- 关联需求：F-14；**DEC-029**（新增）、DEC-026（隐私边界不变：只存时间戳）、DEC-028（撤销角标后的必然补位）、F-04/05/09（设置分区搬运，语义不变）
+- 估算：0.5 天
+- 依赖关系：TASK-058
+- 涉及文件（新增/改动）：
+  - 新增：`ui/settings/SettingsAppearanceScreen.kt`、`SettingsSecurityScreen.kt`、`SettingsDataScreen.kt`、`SettingsSmsScreen.kt`、`SettingsNavigation.kt`
+  - 改动：`SettingsScreen.kt`（重写为汇总页）、`SmsSettingsStore.kt`、`SmsModels.kt`、`SmsBillImportUseCase.kt`、`ImportViewModel.kt`、`SmsImportPresenter.kt`、`SmsImportContent.kt`、`ImportScreen.kt`、`SmsSettings.kt`、`SmsSettingsSection.kt`（`displayName()` 提为 internal）、`ui/components/Settings.kt`、`Destinations.kt`、`MiniBookNavHost.kt`、`MainScreen.kt`、`SmsImportPresenterTest.kt`
+- 描述：用户验收后三点要求 —— ①「扫描过的做标记，否则每次重新扫描都有之前未处理的」；②「导入账单页面…区分微信支付宝账单的不要了，只留下三个按钮选项，三个按钮上面简短的说明，然后点击进入不同的功能」；③「设置页面太长了，每种设置设计汇总，然后点击进入二级页面设置」。
+- 验收标准：
+  - [x] ① 未识别「已看过」= 单一时间戳水位（`unrecognized_ack_ms`，**只存时间戳**）→ `SmsPendingItem.seen`；清单上屏后 `acknowledgeUnrecognized()` 推进；`lines()` 只出未看过、`seenLines()` 进「▸ 此前已看过 N 条（点击展开）」折叠区
+  - [x] ① 口径不动：计数不变（模拟器 `扫描 17 条 = 可导入 0 + 未识别 1 + 非账单 3 + 已存在/重复 13` 两次扫描完全一致）、不删除/不过滤条目、待确认清单页仍可逐条看 + 手工记一笔
+  - [x] ① 真机复现并消除：`A1B2C3D4` 第 1 次扫描显快递短信，第 2 次折叠为「此前已看过 1 条」
+  - [x] ② 导入页三入口（账单文件 / 邮箱账单 / 短信账单，各带一行说明 + 按钮）；微信/支付宝导出指引折叠进「如何导出账单？」（文案未丢）；返回语义逐层退（结果态回三入口，入口页才退出）
+  - [x] ③ 设置首页 = 5 行分组汇总（账本 / 外观 / 安全 / 数据 / 短信账单，每行一行状态）+ 版本页脚；四个二级页 `settings-appearance/security/data/sms` 全部可达且内容与原分区逐条对应；账本仍走 `ledger-manage`
+  - [x] ③ `MainScreen` 去掉 `onNavigateToImport` / `onNavigateToMailAccount` 参数穿透（入口移入「数据」页，由该页在 NavHost 接线）；新增 `LocalSettingsNavigation` 跨层导航桥
+  - [x] `:app:assembleDebug` + `:app:testDebugUnitTest` 全绿（**52 类 / 408 例 / 0 失败**；F-14 7 类 / 75 例，本轮 +2 例）
+  - [ ] 未覆盖（如实挂账）：折叠区展开态真机截图未单独采集（同一 presenter 纯函数 + 单测覆盖）；真机仅抽验「短信账单」一个二级页
+- 需测试覆盖点：`SmsImportPresenterTest` +2 例（已看过移出主列表且计数闭合不变；`unrecognizedLine` 文案与主列表统一）。
+- 执行记录（2026-10-10 11:00–11:25）：构建/测试与双端安装验证均由主代理单点串行执行（规则 3）；证据链见 `13_sms_bill_import.md §15`、`09_test_report.md`（UI 改版章）、`07_decisions.md` DEC-029；截图见 `.claude-runs/f14b-*.png`；**未提交 git**（规则 2，待用户批准）。
+
+### TASK-060: 短信导入两种扫描方式（增量 / 全量）+ 白名单空态修复（用户第三次反馈 + 同日提问）
+
+- 状态：**已完成（2026-10-10 13:2x，真机实测通过）**
+- 依赖关系：TASK-059
+- 用户口径：「我本次导入已经看过这条短信，并且不用处理了，下次再重新导入时候就不要再标记出来了，做两种扫描方式，一种全量扫描，一种增量扫描，比如我 12:00 扫描过了，增量只扫描 12:00 以后的，只有全量的才全部扫描出来。」＋「另外白名单在哪看，就只有清空」
+- 涉及文件（新增/改动）：
+  - 改动：`data/local/sms/SmsBillReader.kt`（新增 `readAfter()` 严格增量读）、`domain/model/SmsModels.kt`（`SmsScanMode` + `SmsScanPreview.scanMode/sinceMs`）、`domain/usecase/sms/SmsBillImportUseCase.kt`（`scan(ledgerId, mode)`）、`ui/billimport/SmsImportPresenter.kt`（`scanModeLine()`）、`SmsImportContent.kt`（说明行）、`ImportViewModel.kt`（入口带 mode）、`ImportScreen.kt`（入口卡两按钮 + 重新扫描沿用模式）、`ui/settings/SmsSettingsSection.kt`（白名单空态）、`SmsImportPresenterTest.kt`
+- 验收标准：
+  - [x] 增量 = 只读节点之后的短信（严格 `date > 节点`，**不复用** 3 天重叠窗口的 `readSince()`），读完推进节点 ⇒ 已看过、不打算处理的条目**完全不出现**
+  - [x] **节点 = 本次扫描的墙钟时间**（用户 13:4x 即时纠正：「不应该是最后一条短信的时间，应该是当前扫描的时间」）；在读之前取 ⇒ 读完到写节点之间到达的短信下次仍会被读到；`catchUp`（L3）一并统一为「本次补扫的墙钟时间」
+  - [x] 全量 = 全部历史（**不动节点**），含「▸ 此前已看过 N 条」折叠区 ⇒ 不遗漏兜底不破
+  - [x] 入口卡两个按钮（`增量扫描` 主 / `全量扫描` 次）+ 一行小字说明差别；预览页显示扫描方式、本次覆盖起点与更新后的节点（仅时间戳，DEC-026 不变）
+  - [x] 计数口径不动：`SmsScanPreview.assertClosed()`、「未识别 N」全量口径、「待确认」数字语义（DEC-029 修订）一字未改
+  - [x] 真机 `A1B2C3D4`：增量 → `扫描 0 条`（快递短信不出现）；全量 → `扫描 1 条 … + ▸ 此前已看过 1 条`；节点复验 → L3 写 `13:47` → 增量 `本次覆盖 13:47 …，起点已更新为 13:48`，全量后节点不动，再增量 `本次覆盖 13:48 …，起点已更新为 13:49`
+  - [x] 白名单空态：不再显示「清空白名单」，说明改为「…后自动加入；加入后会在这里逐条列出，可单独关闭它的自动记账。」
+  - [x] `:app:assembleDebug` + `:app:testDebugUnitTest` 全绿（**52 类 / 410 例 / 0 失败**；F-14 7 类 / 77 例，本轮 +2 例）
+  - [ ] 未覆盖（如实挂账）：①白名单**非空态**本轮未目视验证（真机白名单为空；模拟器 AVD 重启后数据被重置，白名单亦空），该分支 = 一行 `HintText` + 原 `forEach` 不变 + 清空按钮移入 `else`；②**增量首次无节点**分支修正后未在设备上重现（节点已存在），由单测锁定文案
+- 需测试覆盖点：`SmsImportPresenterTest` +2 例（扫描方式三态文案；预览携带扫描方式且闭合不变）。
+- 执行记录（2026-10-10 13:0x–13:2x）：构建/测试与真机安装验证均由主代理单点串行执行（规则 3）；证据链见 `13_sms_bill_import.md §16`、`09_test_report.md`（增量/全量章）、`07_decisions.md` DEC-030；截图 `.claude-runs/f14d-real-incr-empty.png`、`f14d-real-full.png`、`f14d-real-settings-wl.png`；**未提交 git**（规则 2，待用户批准）。
 
 ---
 
