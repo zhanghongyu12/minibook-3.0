@@ -1,0 +1,13 @@
+# MiniBook F-15 服务端依赖（Python 3.12；开发与单测 SQLite / 生产 MySQL 8）
+# 安装：python -m venv .venv && .venv\Scripts\python.exe -m pip install -r requirements.txt
+fastapi==0.143.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.4
+alembic==1.20.0
+pydantic==2.14.0
+pydantic-settings==2.15.0
+argon2-cffi==25.1.0
+PyJWT==2.15.1
+PyMySQL==1.2.3
+pytest==9.1.1
+httpx==0.28.1

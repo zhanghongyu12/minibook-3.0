@@ -72,3 +72,12 @@ eg/
 
 # 委派给本机 Claude Code 的过程留痕（规则要求落盘，但不入版本库）
 .claude-runs/
+
+# Python 服务端（F-15：server/）
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.sqlite3
+server/*.db
+server/.env.local
