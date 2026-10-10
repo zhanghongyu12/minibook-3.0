@@ -51,7 +51,7 @@
 | 库名 | `minibook-encrypted.db` |
 | 当前版本 | **2**（version 1 → 2 迁移见 §7.5；F-12 账单导入加列 + 唯一索引） |
 | 加密 | SQLCipher（全库），密钥见 `02_architecture.md §7` |
-| 表数量 | 6（ledgers / categories / transactions / debts / budgets / sync_changes） |
+| 表数量 | **9**（v4）：ledgers / categories / transactions / debts / budgets / user_category_rules / sync_changes / **sync_state** / **sync_conflicts**（v1 = 6 张，v2 起 7 张，v4 起 9 张；`sync_changes` 至今仍为预留表） |
 | ORM | Room，`exportSchema = true`（schema JSON 入 VCS，用于迁移测试） |
 
 ---
@@ -887,5 +887,33 @@ F-14（短信账单导入）**不新增表、不新增列、不新增索引、�
 | 版本 | **DB v3 → v4**，需新增 `MigrationV3To4Test`（旧行 `occurredAt` 为 NULL → 匹配时回退按天） |
 | 连带影响 | ① `BackupJsonMapper` 须同步导出/导入 `occurredAt`（否则备份往返丢字段——F-12 评审 P1-1 同类问题）；② `TransactionFilter` 需加时间窗口参数或新增查询面；③ F-12/F-13 解析器需回填 `occurredAt`（账单文件通常有完整时间） |
 | 触发条件 | 真机验收中若观察到跨源错判/漏判实例，或用户要求「同一天多笔同额」精确区分时启动 |
+
+## 12. F-15 云端同步的数据影响（2026-10-10）
+
+### 12.1 本地：Room v3 → v4（**只加两表，既有表零改动**）
+
+| 变更 | 内容 |
+|---|---|
+| 新表 `sync_state` | 复合主键 (`entityType`, `entityId`)；`baseUpdatedAt`（上次与云端一致的版本）、`syncedAt` —— 三路冲突检测的 base |
+| 新表 `sync_conflicts` | `id` PK、`entityType`、`entityId`、`ledgerId`、`localJson`、`remoteJson`、`detectedAt`、`resolvedAt`、`resolution` —— 冲突输家副本留档 |
+| 既有表 | **零改动**：`sync_changes` 本轮**不写**（⚠️ 已修订：墓碑改由 `sync_state` 差分补发，见 DEC-035）；`syncStatus` 列本轮不接线（避免写放大，DEC-033） |
+| 迁移 | `MIGRATION_3_4` + `app/schemas/4.json`（编译生成入 VCS）+ `MigrationV3To4Test`（**instrumented**，沿用既有 `MigrationTestHelper` 基建） |
+| 实现状态 | **已落地（2026-10-10）**：`MiniBookDatabase` version = **4**，`DatabaseGate.open` 已注册 `MIGRATION_3_4`；两表 DDL 与实体 `@Index` 逐字对齐（`index_sync_state_ledgerId`、`index_sync_conflicts_entityType_entityId`、`index_sync_conflicts_ledgerId`） |
+| 附带 | 6 张业务实体标注 `@Serializable`（payload = Room 行原样 JSON）与可空字段 `= null` 默认值——**不改 schema**（DEC-036） |
+
+### 12.2 云端：`server/` 的 schema（**不在本 App 的 Room 内**）
+
+云端表由 Alembic 管理，权威定义见 `14_cloud_sync.md §3.3`：`users` / `refresh_tokens` / `devices` /
+`sync_records`（通用记录：PK `user_id + entity_type + entity_id`，业务字段在 `payload` JSON，`server_seq` 为拉取游标）/ `sync_counters`。
+
+**为什么云端不照抄 Room 的 6 张类型化表**：客户端 schema 会持续演进，类型化云端表会让「加一列」变成「改服务端 + 迁移 + 契约」三件事；
+云端只是副本、不做 join/聚合，故用通用记录表 + `entity_spec.py` 逐实体字段白名单校验（DEC-033）。
+
+**实现状态（2026-10-10）**：已落地，权威 DDL = `server/alembic/versions/0001_init.py`
+（SQLite 实跑通过；MySQL 侧离线渲染核验 `DATETIME(6)` / `JSON` / `BIGINT` / `InnoDB` / `utf8mb4`）。
+实现比设计**多一列** `sync_records.updated_at_raw`（回传客户端**原始 ISO 串**，否则客户端会把重复 push 的 no-op
+误判成冲突；详见 `14_cloud_sync.md §12.2`）。
+
+---
 
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

@@ -131,6 +131,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
+    // OkHttp（F-15 云同步：手动同步的 HTTP 客户端；不引 Retrofit/Ktor/WorkManager，见 docs/14_cloud_sync.md §5.1）
+    implementation(libs.okhttp)
+
     // JavaMail（F-13 邮件账单导入：QQ 邮箱 IMAP 只读拉取）
     implementation(libs.sun.mail.android)
     implementation(libs.sun.activation.android)

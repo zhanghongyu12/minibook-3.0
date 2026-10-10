@@ -3,6 +3,7 @@ package com.minibook.data.local.db.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 账本实体，对齐 DATABASE §4.4。
@@ -14,6 +15,7 @@ import androidx.room.PrimaryKey
     tableName = "ledgers",
     indices = [Index(value = ["position"]), Index(value = ["isDefault"])],
 )
+@Serializable
 data class LedgerEntity(
     @PrimaryKey val id: String,
     val name: String,

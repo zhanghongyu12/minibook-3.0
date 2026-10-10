@@ -975,4 +975,43 @@ MailAccountStore(凭据) → ImapMailClient(IMAP 只读拉取, 含 ID 命令)
 - `occurredAt` 列（DB v4）+ 跨源匹配改 ±10 分钟窗口，解决跨天错位漏判（本期已知盲区）；届时 `BackupJsonMapper` 需同步携带新字段（P1-1 教训）。
 - 通知监听（NotificationListenerService）作为广播丢失的二道兜底（本机通知使用权已被 `com.xiaomi.barrage`/`com.mi.health` 占用，侧载受限设置成本高）。
 
+## 19. Phase 4 设计：云端同步（F-15）
+
+> 设计依据：`14_cloud_sync.md`（完整方案）、`01_prd.md §F-15`、DEC-031~034。
+> 一句话定位：**本地仍是唯一写入真相源**，云端是「异地副本 + 换机恢复 + 多设备一致」；网络只在用户手动点同步时使用（离线优先不变）。
+
+### 19.1 与 §6「云端预留」的关系（预留如何被兑现）
+
+| §6 的预留 | F-15 的落地 |
+|---|---|
+| `RemoteDataSource` 接口（本期为空） | **不按「数据源替换」路线走**：同步是**独立用例**（`SyncUseCase`），不把 Room 换成 Remote |
+| `SyncChange` 表 | **复用为墓碑日志**（`action='delete'`），不重建全量 outbox |
+| 业务实体 `syncStatus` 列 | 本轮**不接线**（避免无谓写放大）；同步状态由 DataStore + `sync_state` 表表达 |
+| `DataSourceModule` 单点切换 | 不变（同步不改数据源绑定） |
+
+**口径修正说明（诚实登记）**：§6.3 原设想「混合 DataSource + 后台 SyncWorker + 全量 outbox」在实现前被 DEC-033 改掉——
+理由：outbox 要侵入每一处写路径（**漏一处即静默不同步**），而「`updatedAt` 差分 + 删除写墓碑」只侵入删除一处；
+且首版是**手动**同步，不需要后台消费队列。`syncStatus` 与 `SyncChange` 的预留位保留，二期做后台自动同步时再启用。
+
+### 19.2 分层落点
+
+| 层 | 组件 | 职责 |
+|---|---|---|
+| data（网络） | `data/remote/SyncApi.kt` + `SyncDtos.kt` | OkHttp + kotlinx-serialization；全 App 唯一云网络出口 |
+| data（凭据） | `data/remote/SyncAuthStore.kt` + `SyncTokenAuthenticator.kt` | 令牌 Keystore 包裹后落 DataStore；401 静默刷新一次 |
+| domain | `domain/usecase/sync/SyncPlan.kt` | **纯函数**：本地 diff → 待上行 / 待下行 / 冲突（可 JVM 单测） |
+| domain | `domain/usecase/sync/SyncUseCase.kt` | 三模式编排 + 同步前快照 + 墓碑 + 冲突留档 + 结果汇总 |
+| local | Room v4：新增 `sync_state` / `sync_conflicts`（+ 既有 `sync_changes` 作墓碑） | 冲突基线 / 冲突留档 / 墓碑 |
+| ui | `ui/settings/SettingsCloudScreen.kt` + `SyncPresenter.kt` | 设置 → 数据 → 云同步（账号 / 三按钮 / 状态 / 冲突） |
+
+### 19.3 关键架构口径
+
+1. **离线优先不变**：读路径只读 Room；同步失败不影响 App 任何功能。
+2. **「本地不丢」五道保险**（快照 / 墓碑 / 冲突留档 / 失败不推进游标 / dry-run 预览）——详见 `14_cloud_sync.md §4.7`。
+3. **幂等**：`entity_id` = 客户端 UUID（本地主键），服务端不重编 ID；同 `updated_at` 重复 push = no-op。
+4. **游标**：拉取用服务端 `server_seq`，上行用本地 `last_pushed_at`（`>=` 比较，同秒编辑不漏）。
+5. **隐私边界**：上云 = 6 类业务实体；不上云 = 短信原文 / 白名单 / 邮箱凭据 / 设备偏好（DEC-034 / DEC-026 / DEC-023）。
+
+---
+
 （本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）

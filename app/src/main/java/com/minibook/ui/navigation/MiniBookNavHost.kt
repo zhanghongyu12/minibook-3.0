@@ -32,6 +32,7 @@ import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
 import com.minibook.ui.settings.LocalSettingsNavigation
 import com.minibook.ui.settings.SettingsAppearanceScreen
+import com.minibook.ui.settings.SettingsCloudScreen
 import com.minibook.ui.settings.SettingsDataScreen
 import com.minibook.ui.settings.SettingsNavigation
 import com.minibook.ui.settings.SettingsSecurityScreen
@@ -306,10 +307,16 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         onNavigateToMailAccount = {
                             rootController.navigate(Destination.MailAccount.route)
                         },
+                        onNavigateToCloudSync = {
+                            rootController.navigate(Destination.SettingsCloud.route)
+                        },
                     )
                 }
                 composable(Destination.SettingsSms.route) {
                     SettingsSmsScreen(onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.SettingsCloud.route) {
+                    SettingsCloudScreen(onBack = { rootController.popBackStack() })
                 }
 
                 // 底部弹层（sheets）家族：可选 `{id}` 查询参数（UUID，§12）。

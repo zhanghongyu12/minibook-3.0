@@ -4,6 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 交易实体，对齐 DATABASE §4.1。
@@ -34,13 +35,14 @@ import androidx.room.PrimaryKey
         Index(value = ["ledgerId", "externalId"], unique = true, name = "index_transactions_ledgerId_externalId"),
     ],
 )
+@Serializable
 data class TransactionEntity(
     @PrimaryKey val id: String,
     val ledgerId: String,
     val type: String,
     val amount: Long,
     val categoryId: String,
-    val description: String?,
+    val description: String? = null,
     val date: String,
     val createdAt: String,
     val updatedAt: String,

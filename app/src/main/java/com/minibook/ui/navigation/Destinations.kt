@@ -73,6 +73,9 @@ sealed class Destination(val route: String) {
     /** 设置 · 短信账单（F-14：开关矩阵 + 白名单 + 权限状态）。 */
     data object SettingsSms : Destination("settings-sms")
 
+    /** 设置 · 云同步（F-15：账号 + 三模式手动同步 + 预览 / 结果 / 冲突留档）。 */
+    data object SettingsCloud : Destination("settings-cloud")
+
     // —— 交易详情（P-07） ——
 
     /** 交易详情全屏页（P-07）：新增/查看/编辑三合一，替代旧 ModalBottomSheet；

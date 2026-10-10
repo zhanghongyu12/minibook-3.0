@@ -7,6 +7,9 @@ import com.minibook.data.local.db.dao.CategoryDao
 import com.minibook.data.local.db.dao.DebtDao
 import com.minibook.data.local.db.dao.LedgerDao
 import com.minibook.data.local.db.dao.SyncChangeDao
+import com.minibook.data.local.db.dao.SyncConflictDao
+import com.minibook.data.local.db.dao.SyncDao
+import com.minibook.data.local.db.dao.SyncStateDao
 import com.minibook.data.local.db.dao.TransactionDao
 import com.minibook.data.local.db.dao.UserCategoryRuleDao
 import com.minibook.data.local.security.DatabaseGate
@@ -93,4 +96,25 @@ object DatabaseModule {
     fun provideUserCategoryRuleDao(gate: DatabaseGate): UserCategoryRuleDao =
         gate.database?.userCategoryRuleDao()
             ?: error("DatabaseGate 未解锁/未打开，无法提供 UserCategoryRuleDao")
+
+    @Provides
+    fun provideSyncStateDao(gate: DatabaseGate): SyncStateDao =
+        gate.database?.syncStateDao()
+            ?: error("DatabaseGate 未解锁/未打开，无法提供 SyncStateDao")
+
+    @Provides
+    fun provideSyncConflictDao(gate: DatabaseGate): SyncConflictDao =
+        gate.database?.syncConflictDao()
+            ?: error("DatabaseGate 未解锁/未打开，无法提供 SyncConflictDao")
+
+    /**
+     * F-15 同步引擎专用跨表 DAO（DEC-033）。
+     *
+     * 与其它 DAO 同口径：**未解锁时直接 error**，不做静默降级——同步在未开库时本就不该跑
+     * （调用方 [com.minibook.domain.usecase.sync.SyncUseCase] 先查 [DatabaseProvider.database]）。
+     */
+    @Provides
+    fun provideSyncDao(gate: DatabaseGate): SyncDao =
+        gate.database?.syncDao()
+            ?: error("DatabaseGate 未解锁/未打开，无法提供 SyncDao")
 }

@@ -56,6 +56,7 @@ fun SettingsDataScreen(
     onBack: () -> Unit,
     onNavigateToImport: () -> Unit = {},
     onNavigateToMailAccount: () -> Unit = {},
+    onNavigateToCloudSync: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -157,6 +158,12 @@ fun SettingsDataScreen(
                             )
                         },
                         onClick = onNavigateToMailAccount,
+                    )
+                    SettingRow(
+                        title = "云同步",
+                        subtitle = "登录云端账号，手动上传 / 下载账目数据（本地数据不会丢）",
+                        trailing = { TrailingChevron() },
+                        onClick = onNavigateToCloudSync,
                     )
                 })
             }

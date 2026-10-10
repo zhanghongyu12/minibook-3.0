@@ -3,6 +3,7 @@ package com.minibook.data.local.db.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 债务实体，对齐 DATABASE §4.2。
@@ -21,6 +22,7 @@ import androidx.room.PrimaryKey
         Index(value = ["ledgerId", "syncStatus"]),
     ],
 )
+@Serializable
 data class DebtEntity(
     @PrimaryKey val id: String,
     val ledgerId: String,
@@ -29,7 +31,7 @@ data class DebtEntity(
     val kind: String,
     val direction: String,
     val date: String,
-    val remark: String?,
+    val remark: String? = null,
     val createdAt: String,
     val updatedAt: String,
     val syncStatus: String = "local",

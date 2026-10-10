@@ -1,8 +1,79 @@
 # 测试报告
 
+> 历史：**F-15 服务端 API 首轮单测已绿（pytest 47 例 / 0 失败 @SQLite）**——已被下方「MySQL 双 DSN 轮」取代，保留备查
 > 状态：F-14（短信账单导入）**JVM 单测已绿**（52 类 / 410 例 / 0 失败）；**真机 + 模拟器验收已完成（2026-10-10）**，并完成验收后口径定案（F1 修复保留；F2 角标方案按用户决策**撤销**）+ 边界短信复测 + **验收后 UI 改版（TASK-059 / DEC-029）** + **增量 / 全量两种扫描方式（TASK-060 / DEC-030）**——见下方最新章节
-> 最后更新：2026-10-10
+> 最后更新：2026-10-10（F-15 服务端：内网 MySQL 8 联调轮）
 > 维护者：Tester
+
+## 最新测试（F-15：真 MySQL 8 双 DSN 全绿 + Android 网络栈 30 例 + 同步核心 20 例，2026-10-10）
+
+### 测试信息
+
+| 项目 | 内容 |
+|------|------|
+| 测试日期 | 2026-10-10（F-15 服务端 MySQL 联调轮 + Android 网络栈 TASK-065） |
+| 被测对象 | ① `server/`（FastAPI + SQLAlchemy 2 + Alembic，用户系统 + 同步接口）② Android `data/remote/`（OkHttp 网络栈与令牌编排） |
+| 运行环境 | ① Windows 本机 Python 3.12.0 + `server/.venv`；② 同机 JDK 21 + Gradle（`JAVA_HOME=D:\soft\jdk\jdk21`） |
+| 数据库 | **内网 MySQL 8.0.46**（`192.168.190.130:49779`，docker `mysql:8.0`，utf8mb4 / utf8mb4_unicode_ci，`default-time-zone=+08:00`）+ **SQLite**（同一套用例再跑一遍） |
+| 执行方式 | 主代理单点串行（规则 3）；`pytest -q --junitxml=…` 与 `gradlew :app:testDebugUnitTest` |
+| 设计与差分 | `docs/14_cloud_sync.md` §7 验收 A1~A11、**§12 实现状态与差分** |
+
+### 结果总览
+
+| 指标 | 数值 |
+|------|------|
+| pytest @ **MySQL**（`minibook_test`） | **52 例 / 0 失败 / 0 错误 / 0 跳过**，`exit=0`，junitxml `tests="52" errors="0" failures="0" skipped="0"`（含 TASK-064 新增 3 例日志隐私） |
+| pytest @ **SQLite** | **52 例 / 0 失败 / 0 错误 / 0 跳过**，`exit=0`（同一套用例，双 DSN 双绿） |
+| Android JVM 单测（`com.minibook.data.remote.*`） | **30 例 / 0 失败**：`SyncDtosTest` 7、`SyncErrorsTest` 5、`SyncUrlValidatorTest` 6、`SyncAuthStoreTest` 6、`SyncTokenAuthenticatorTest` 6（`BUILD SUCCESSFUL`，逐类核验 junit XML） |
+| Android JVM 单测（同步核心 TASK-066） | **20 例 / 0 失败 / 0 跳过**：`SyncPlanTest` 19（三模式、三路比较、LWW 双向、墓碑差分、本地已删不复活、仅下载不删本地、跨类型计数）+ `SyncPayloadContractTest` 1（**未跳过** ⇒ 真的解析了 `server/app/entity_spec.py`，6 类字段集与实体序列化器键集**逐字一致**） |
+| Android JVM 单测（同步 UI TASK-067） | **21 例 / 0 失败**：`SyncPresenterTest` 覆盖预览四计数、危险确认判定与文案、三模式明细裁剪、结果卡（成功/失败/可重试）、状态行四态、冲突口径映射、时间格式化回退、短 id 与快照名边界 |
+| **真实服务端端到端（无设备，新增）** | `SyncApiE2ETest` **1 例 / 0 失败 / 3.05s**（**未跳过**）：生产 `SyncApi` 真 OkHttp → 真 API → 真 MySQL。注册→登录→`me`→推 3 类实体→拉回（中文+emoji 逐字一致、UTF-8 44 字节相等）→重复推送 `applied=0` 且 `server_seq` 不前进→墓碑下行→`status` 计数→`refresh` 轮换→旧 refresh token 被拒→坏令牌归 `TOKEN_INVALID`。默认由 `app/build/e2e-base-url.txt` 开关控制（未配置如实 skipped） |
+| MySQL 侧独立核验（同上 E2E 落库结果） | `sync_records` 3 条（ledger/category/transaction）、1 条墓碑、`updated_at_raw` 与客户端原样逐字一致（`2026-10-10T08:30:00.000000000Z`）、墓碑 `payload` 为 **JSON literal null**（`JSON_TYPE='NULL'`、`payload = CAST('null' AS JSON)`，旧描述不残留）；核验后测试数据已清理（users/records/tokens/devices 全为 0） |
+| 全量 JVM 单测回归（`:app:testDebugUnitTest`） | **481 例 / 0 失败 / 0 错误 / 0 跳过**（60 套件）：含既有 410 例全部复跑通过 ⇒ 「6 张实体加 `@Serializable` + 可空字段补 `= null`」与新增 UI 层**未碰坏任何既有行为**（E2E 用例需开关文件，默认如实 skipped，不计入本行） |
+| Alembic @ MySQL（真连库） | `alembic upgrade head` → `0001_init (head)`，建 `users`/`refresh_tokens`/`devices`/`sync_records`/`sync_counters` + `alembic_version`；**六张表全部 `InnoDB` + `utf8mb4_unicode_ci`**；`downgrade base ⇄ upgrade head` 双向真跑通过；`sync_counters` 首行 `server_seq=0` |
+| 端到端 HTTP 冒烟（uvicorn 真进程 → 真 MySQL） | `healthz` 报 `db=mysql`；注册 201 → 登录（`expires_in=1800`，access 243 字符）→ `push` `applied=1 server_seq=1` → `pull` 取回 1 条 → `status` `counts={"ledger":1}`；**中文 23 字符 / 44 UTF-8 字节逐字一致**（`equal=True`） |
+| 本轮实测修复的 4 个真缺陷 | ① `alembic/env.py` 把 URL 回写 configparser → 口令 URL 编码含 `%` 时 `ValueError: invalid interpolation syntax`，`alembic upgrade` 直接失败；② MySQL 8 对 `CHARSET=utf8mb4` 默认给 `utf8mb4_0900_ai_ci`，与部署口径不一致；③ `downgrade` 先 `DROP INDEX` 撞外键支撑索引（errno 1553）→ 中途失败留下半删库；④ Android `hasTokens` 只看密文非空，Keystore key 失效时误报「已登录」；⑤ `://x` 类畸形地址漏过校验（另修 health 测试硬编码 `db == "sqlite"`） |
+
+### 未验证（不得声称已验证）
+
+1. ~~**服务端日志不含 payload 的自动化断言**（TASK-064）~~ → **已闭合（2026-10-10）**：`server/tests/test_log_privacy.py` 3 例，
+   覆盖 push / pull / 整批校验失败三条路径，断言日志文本中不出现备注哨兵、金额哨兵，以及 `"payload"` / `"description"`
+   这类字段名（字段名出现即等价于整个 body 被打印）；SQLite 与 MySQL 双 DSN 各 **52 例 / 0 失败**。
+2. **真机 / 局域网端到端（TASK-068 剩余）** 未做——需设备（真机装着用户真实数据的正式版，签名不同，
+   装 debug 包会要求卸载）。客户端↔服务端**真实 HTTP** 端到端已覆盖（见上表 `SyncApiE2ETest`）。
+3. **`MigrationV3To4Test` 已写但未运行**（instrumented 需真机/模拟器；真机 `A1B2C3D4` 装着用户真实数据的正式版，
+   装 debug 测试 APK 会因签名不同要求卸载 ⇒ 不得在真机跑，需先获批启模拟器）。当前只以 `4.json` 静态比对替代。
+3. **真机联调（TASK-068）未做**：真机 `A1B2C3D4` → 本机 API 的首次上传 / 仅下载对账 / 冲突两端一致 / 断网中断重试，均待执行。
+4. **多进程与并发竞态**：登录限流为单进程内存实现；两端同时 push 同一条尚不存在的记录时，后到者可能收到 `server_error`（重试即幂等通过）。
+5. Android 侧 Keystore 真机行为未测（JVM 用 `FakeSecretCipher` 替代；「落盘非明文」已用真 DataStore 文件断言）。
+
+## 历史测试（F-15 服务端 API 首轮：pytest 47 例全绿 @SQLite，2026-10-10）
+
+### 测试信息
+
+| 项目 | 内容 |
+|------|------|
+| 测试日期 | 2026-10-10（F-15 服务端开发轮） |
+| 被测对象 | `server/`（FastAPI + SQLAlchemy 2 + Alembic，F-15 云端同步服务端：用户系统 + 同步接口） |
+| 运行环境 | Windows 本机，**Python 3.12.0** + `server/.venv`（fastapi 0.143.0 / SQLAlchemy 2.1.4 / alembic 1.20.0 / PyMySQL 1.2.3 / PyJWT 2.15.1 / argon2-cffi 25.1.0 / pytest 9.1.1） |
+| 数据库 | **SQLite**（每个用例一个临时库，零依赖）；**MySQL 未跑**（无环境，TASK-069） |
+| 执行方式 | 主代理单点串行（规则 3）：`server\.venv\Scripts\python.exe -m pytest -q`，退出码 0 |
+| 设计与差分 | `docs/14_cloud_sync.md`（§3 设计 / §7 验收 A1~A11 / **§12 实现状态与差分**） |
+
+### 结果总览
+
+| 指标 | 数值 |
+|------|------|
+| pytest | **47 例 / 0 失败 / 0 错误 / 0 跳过**（exit code `0`） |
+| 用例分布 | `test_auth` 11（含用户名大小写归一化、限流、刷新轮换与撤销、过期 access、argon2 非明文断言）；`test_isolation` 4（越权/伪造头/计数隔离）；`test_sync_push` 10（白名单、整批回滚、信封一致性、墓碑、批量上限、中文备注往返）；`test_sync_pull` 5（增量游标、分页无重无漏、limit 钳制、墓碑下发、未授权）；`test_idempotency` 3；`test_conflict` 4；`test_migration` 3；`test_timeutil` 5；`test_health` 2 |
+| Alembic | `alembic upgrade head` 在 SQLite **真建表通过**（`users`/`refresh_tokens`/`devices`/`sync_records`/`sync_counters` + `server_seq=0` 首行，`alembic_version=0001_init`）；MySQL 侧以 `alembic upgrade head --sql` **离线渲染**核验：`DATETIME(6)` / `JSON` / `BIGINT` / `VARCHAR(32|36|64)` / 复合主键 `(user_id, entity_type, entity_id)` / `ENGINE=InnoDB CHARSET=utf8mb4` 均在 DDL 中 |
+| 首轮失败与修复 | 首跑 20 例 401 —— 根因：JWT `iat/exp` 用 **naive** UTC 调 `.timestamp()`，被按本地时区解释，`exp` 少算 8 小时 ⇒ 新签发令牌立即 `token_expired`。改为 aware UTC 后全绿（已写入 `14_cloud_sync.md §12.2`）。另修 `alembic.ini` 中文注释导致 configparser `UnicodeDecodeError`（Windows cp936） |
+
+### 未验证（不得声称已验证）
+
+1. **MySQL 上跑同一套测试**：`TEST_DATABASE_URL` 通路（含「库名必须含 `test`」护栏）已就绪，但**未执行**——本机无 MySQL（TASK-069）。
+2. **日志不含 payload 的自动化断言**：实现上只记 `user_id`/计数/错误码，但缺「日志文本检索不到金额/备注样例」的自动化断言（TASK-064 未闭合项）。
+3. Android 客户端（TASK-065~067）、真机端到端（TASK-068）未开始。
 
 ## 最新测试（F-14 增量 / 全量两种扫描方式 + 白名单空态，2026-10-10 13:2x）
 

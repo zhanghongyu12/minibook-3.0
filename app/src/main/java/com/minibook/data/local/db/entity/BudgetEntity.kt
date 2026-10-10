@@ -3,6 +3,7 @@ package com.minibook.data.local.db.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 预算实体，对齐 DATABASE §4.5 / DEC-008。
@@ -18,11 +19,12 @@ import androidx.room.PrimaryKey
         Index(value = ["ledgerId", "month", "categoryId"], unique = true),
     ],
 )
+@Serializable
 data class BudgetEntity(
     @PrimaryKey val id: String,
     val ledgerId: String,
     val month: String,
-    val categoryId: String?,
+    val categoryId: String? = null,
     val amount: Long,
     val createdAt: String,
     val updatedAt: String,

@@ -2,7 +2,7 @@
 
 > 状态：已确认（本文件为决策档案，持续追加）
 > 维护者：全员可追加（Architect 汇总本阶段决策）
-> 最后更新：2026-09-23
+> 最后更新：2026-10-10
 > 说明：DEC-001 为技术栈选型；DEC-002~DEC-009 对应阶段 3 拍板的 8 项最终决定（D-1~D-8，与 ARCHITECTURE §14 / DATABASE 落地口径一一对应）；DEC-010~DEC-021 为 Phase 2 决策；DEC-022/DEC-023 为 Phase 3（F-13 邮件账单自动导入）决策。编号递增不复用；已确认决策不可删除，只能标记为「已废弃」。
 
 ---
@@ -536,6 +536,120 @@
   JVM `:app:assembleDebug :app:testDebugUnitTest` = **BUILD SUCCESSFUL；52 类 / 410 例 / 0 失败 / 0 跳过**（本轮 +2 例）。
   证据与截图清单见 `13_sms_bill_import.md §16`。
 
----
+## DEC-031: F-15 服务端技术选型（MySQL 生产 + SQLite 开发）与「双 DSN」策略
 
-（本文件为设计文档，随实现对细节的差分由后续修订更新；版本历史由协调者统一管理。）
+- 日期：2026-10-10
+- 背景：用户要求「开发 api 服务，用 python 开发」并让数据上云。口径问答结论：**先本机跑通 / 用户名+口令 JWT /
+  全量核心业务表**（见 `14_cloud_sync.md §0`）；数据库用户随后明确「**数据库不用 pg 用 mysql**」（2026-10-10）。
+  本机现状：Python 3.12.0 有、**Docker 无**、**MySQL 未安装**（无服务、无客户端、3306 未监听）。
+- 决策：
+  1. 框架 **FastAPI + Uvicorn**、ORM **SQLAlchemy 2.0**、迁移 **Alembic**、配置 **pydantic-settings**、测试 **pytest + TestClient**；
+  2. **双 DSN**：一切由 `DATABASE_URL` 驱动——开发与单测用 **SQLite**（零外部依赖，DB 环境未就绪也不阻塞），
+     生产/联调切 **MySQL 8**（驱动 **PyMySQL**，纯 Python 免编译），**不改一行代码**；
+  3. 用 **Python 3.12**（本机 `D:\soft\python\3.12.0`）而非 3.14：argon2/pydantic-core 等原生轮子在 3.14 上未必有预编译包；
+  4. 服务端代码独立放 **`server/`**（与 Android 工程并列，不混进 Gradle 构建）；
+  5. 本轮**不做**公网部署 / HTTPS / 容器化，只本机 uvicorn 跑通；上云路径见 `14_cloud_sync.md §9`；
+  6. **MySQL 特有口径写进设计**（`14_cloud_sync.md §3.4`，不写清必踩）：utf8mb4 字符集 + InnoDB 引擎；
+     索引列显式长度（`id`/`user_id` VARCHAR(36)、`username` VARCHAR(32)、`entity_type` VARCHAR(32)、`entity_id` VARCHAR(64)）；
+     `payload` 用 JSON 类型（SQLite 侧落 TEXT，可移植）；**`updated_at` 必须 DATETIME(6)**
+     （`sa.DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql")`，MySQL 默认 DATETIME 无小数秒，会把毫秒截掉、
+     令「同 `updated_at` = no-op」判定失真）；**用户名统一转小写**（MySQL 排序规则大小写不敏感、SQLite 敏感，
+     否则单测绿而 MySQL 上 `Admin`/`admin` 撞车）；`sync_counters` 自增用 `SELECT … FOR UPDATE` 行锁；
+     时间一律 UTC naive（不依赖服务器时区）。
+- 替代方案：Django（弃：只要 8 个接口、无模板/Admin 需求，FastAPI 更轻且 OpenAPI 自带）；Flask（弃：需自行拼校验与文档）；
+  异步 ORM（Tortoise/Gino，弃：Alembic 生态与 SQLite/MySQL 双支持不如 SQLAlchemy 稳）；SQLite 单库到底
+  （弃：上云要多设备并发写、且用户已指定 MySQL，必须能切 MySQL）；PostgreSQL（**用户明确否决**：「数据库不用 pg 用 mysql」）。
+- 影响：新增 `server/` 目录与 `requirements.txt`；Android 侧零影响。
+
+## DEC-032: F-15 用户系统与令牌口径（用户名 + 口令，JWT + 刷新轮换）
+
+- 日期：2026-10-10
+- 背景：用户要求「加入用户系统」；问答确认「用户名 + 密码 + JWT，不做邮件验证」。
+- 决策：
+  1. 账号 = **用户名 + 口令**（用户名 3~32 位 `[A-Za-z0-9_.-]` 且唯一；口令 ≥8 位）；**不做邮箱验证与找回**（本轮零外部依赖）；
+  2. 口令哈希 **argon2id**；登录失败统一 `invalid_credentials`（不泄露「用户是否存在」）；
+  3. **Access JWT（HS256，默认 30 分钟）** + **Refresh 令牌（随机 32B，只存哈希，默认 30 天）**；
+     刷新**必轮换**（旧令牌立即作废），登出撤销；刷新令牌可撤销状态落库；
+  4. **越权隔离写进 WHERE**：所有同步读写强制 `user_id = current_user.id`，**禁止**「先按 id 查出再判归属」；
+  5. 轻量限流（登录/注册 10 次/分钟/IP+用户名）；服务端日志只记 `user_id`、计数、错误码，**不记 payload**（DEC-034）。
+- 替代方案：邮箱 + 口令（弃：本轮无 SMTP，验证/找回邮件发不出去）；手机号 + 验证码（弃：需短信服务商与签名报备）；
+  Session Cookie（弃：移动端 Bearer 更直接、无 CSRF 面）；长期不过期的 access token（弃：泄露即长期有效）。
+- 影响：`users` / `refresh_tokens` / `devices` 三表；客户端需安全存储令牌（见 DEC-034）。
+
+## DEC-033: F-15 同步协议（三模式 / 通用记录表 / 墓碑 / LWW + 冲突留档）
+
+- 日期：2026-10-10
+- 背景：用户要求「数据上云，但是本地不能丢，保证本地与云端一致，可以手动与云端数据同步，或者本地上云或者云端下载」。
+- 决策：
+  1. **三种手动模式**：双向（先 push 后 pull）/ 仅上传 / 仅下载；**不做自动后台同步**（WorkManager 留接口，二期）；
+  2. 云端用**通用记录表** `sync_records`（PK `user_id + entity_type + entity_id`，业务字段进 `payload` JSON），
+     **不照抄 6 张类型化表**：客户端 schema 会持续演进，类型化云端表会把「加一列」变成「改服务端 + 迁移 + 契约」三件事；
+     代价 = 服务端不做 SQL 级业务查询（本轮不需要），但**校验不放松**——`entity_spec.py` 为 6 类实体定义字段白名单，
+     Pydantic 逐条校验，未知字段/类型错误一律拒绝；
+  3. `entity_id` = **客户端生成的 UUID**（本地表主键），服务端不重编 ID ⇒ push 天然幂等；
+     重复提交同一 `updated_at` = no-op（不涨 `server_seq`）；
+  4. 拉取游标 = **服务端单调 `server_seq`**（`sync_counters` 事务内 `SELECT … FOR UPDATE` 自增，SQLite/MySQL 通用）：`since_seq` 断点续传、
+     分页 200（上限 500）；上传游标 = 本地 `last_pushed_at`，取 `updated_at >= last_pushed_at`
+     （`>=` 保证同秒多次编辑不漏，重复推送幂等无害）；
+  5. **删除只走墓碑**：本地删除在同一事务写 `sync_changes(action='delete')`（复用既有预留表），上行后由对端 pull 应用；
+     服务端墓碑常驻（`deleted=true` 不物理删）。**「仅下载」绝不因「云端没有」而删除本地任何行**（防新账号清空本地）；
+  6. **冲突 = LWW + 留档**：以 `sync_state.base_updated_at`（上次一致版本）做**三路比较**；`updated_at` 较新者胜，
+     **输家副本写入本地 `sync_conflicts`**，UI 显示冲突数并可查看——**绝不静默丢弃**（客户端时钟偏移会让 LWW 判错，
+     留档是事后纠错的前提）；
+  7. **「本地不丢」五道保险**：① 同步前自动本地快照（复用 F-04 明文 JSON，保留最近 3 份）② 删除只走墓碑 + 仅下载不删本地
+     ③ 冲突留档 ④ 失败不推进游标（可重试、不跳变更）⑤ dry-run 预览（上传 N / 下载 M / 冲突 K / 删除 D，D>0 时二次确认）；
+  8. push 中任一条校验失败 → **整批回滚**（不做部分写入），避免出现「两端各自半同步」的不一致状态。
+- 替代方案：outbox 全量改造写路径（弃：要改每一处 insert/update/delete，**漏一处即静默不同步**；改用 `updatedAt` 差分，
+  只侵入「删除」一处）；CRDT/字段级合并（弃：个人记账场景复杂度远超收益）；「云端为准」全量覆盖（弃：会丢本地未同步改动）。
+- 影响：服务端 `sync_records` / `sync_counters`；客户端 Room **v3 → v4** 只加 `sync_state` / `sync_conflicts` 两表（既有表零改动）。
+
+## DEC-034: F-15 上云数据边界、令牌存储与同步前快照
+
+- 日期：2026-10-10
+- 背景：本项目已有两条隐私红线——F-13 的邮箱凭据（DEC-023）与 F-14 的短信原文/发送方（DEC-026）。
+  上云是第三个「数据离开设备」的动作，必须先定边界再写代码。
+- 决策：
+  1. **上云**：6 类业务实体（账本/分类/交易/债务/预算/分类规则）全字段，**含交易备注**（账目完整性优先；如需排除备注，二期加开关）；
+  2. **不上云**：短信原文与发送方白名单、IMAP 邮箱凭据、应用锁状态与外观偏好等**设备本地性质**数据；
+  3. **传输**：本机/内网开发允许 HTTP（界面明示风险）；**公网必须 HTTPS**（Nginx + 证书，二期）；不引入任何统计/上报 SDK；
+  4. **令牌存储**：Android Keystore 包裹后 base64 落 DataStore，**绝不明文落盘**；401 时静默刷新一次再重试；
+  5. **同步前快照**：每次同步前自动写本地明文 JSON 备份（`files/sync_backup/`，保留最近 3 份，**不随同步上传**）；
+  6. 云端为**明文存储**（本轮取舍：本地仍 SQLCipher 加密）。**上公网前必须完成**：数据库不裸露公网 + 磁盘加密 +
+     备份加密 + 服务端日志脱敏。
+- 替代方案：云端端到端加密（弃：本轮成本与密钥管理复杂度高，需先有威胁模型）；同步时不带备注（弃：会造成两端账目不一致）；
+  把快照也上云（弃：快照是本地兜底，不该反向依赖网络）。
+- 影响：`SettingsCloudScreen` 明示「仅同步账目数据，不含短信原文/邮箱凭据/白名单」；`14_cloud_sync.md §6` 记录取舍与上公网前置清单。
+
+## DEC-035: 墓碑改为「`sync_state` 差分补发」，不再在删除路径写 `sync_changes`
+
+- 日期：2026-10-10
+- 背景：DEC-033 第 5 条原定「本地删除在同一事务写 `sync_changes(action='delete')`」，实现阶段发现三个问题：
+  1. 要改**至少 5 处**写路径（交易单条/批量、债务、分类(+预算)、预算、规则、账本），**漏一处即静默不同步**；
+  2. 「删账本」是 `DELETE ... WHERE ledgerId = ?` 的**批量清表**（甚至 5 表连带），那些行的 id 根本没经过任何写路径；
+  3. F-04「导入替换」会整库重写，同样绕过写路径。
+- 决策：墓碑 = **「`sync_state` 里有该 id、本地业务表已无该 id」**。上行时补发 `deleted=true` 信封，成功后清掉该基线行。
+  **零写路径侵入**，且天然覆盖上述全部删除来源（含未来的新删除入口）。
+- 代价与硬约束：差分必须用**完整的本地集合**。因此同步取**全量投影**，而不是 `updated_at >= 游标` 的增量——
+  若只取增量，未加载的行会被误判成「本地已删」，进而**误发墓碑删掉云端数据**。这条约束写在
+  `SyncEntityAdapter` 的类注释里，改动该处必须先读 DEC-035。
+- 替代方案：outbox/变更表（DEC-033 已否）；在每个删除路径写墓碑（否：漏一处即静默不同步）；
+  用 `sync_changes` 存量行反推删除（否：该表本轮本来就没写入，存量无意义）。
+- 影响：`SyncPlan.tombstones`、`SyncUseCase` 上行批次含墓碑；`sync_changes` 表本轮**保持不写**（保留为二期变更审计）。
+  `14_cloud_sync.md §4.2 / §4.6 / §5.5` 的墓碑口径以本条为准（§12.2 记为差分）。
+
+## DEC-036: 云端 payload = Room 行原样 JSON（实体 `@Serializable`）+ 跨语言契约断言
+
+- 日期：2026-10-10
+- 背景：服务端白名单（`entity_spec.py`）的键名就是 camelCase 列名；若客户端手写一层「实体 → DTO」mapper，
+  两侧漂移是**不可见**的——直到真机同步时才以 `validation_error: 未知字段 / 缺少字段` 的形式爆炸。
+- 决策：
+  1. 6 张业务实体直接标注 `@Serializable`，上行 = 实体序列化、下行 = 反序列化后 `INSERT OR REPLACE`。
+     `SyncEntityAdapter` 因此只有三个动作：全量投影 / 按 payload 落地 / 按 id 删除。**少一层命名转换 = 少一类静默错位**。
+  2. 新增 `SyncPayloadContractTest`：解析 `server/app/entity_spec.py` 的 6 类字段白名单，与各实体序列化器的
+     `elementNames` **逐字比对**；找不到 `server/` 时用 `Assume` **跳过（如实记 skipped，不冒充通过）**。
+  3. 可空字段补 `= null` 默认值：服务端按 `explicitNulls=false` 存储会**省略 null 键**，回传时缺键必须仍能反序列化。
+- 附带决策（同批）：上行判据从「`updated_at >= last_pushed_at`」改为「**与 `sync_state` 基线不一致**」，
+  `last_pushed_at` 退化为纯展示字段。好处：时钟回拨不再漏推，且与 DEC-035 的墓碑差分共用同一份完整本地集合。
+- 代价：业务实体带上序列化注解（无运行时副作用；Room schema 不受影响——`4.json` 相对 `3.json` 的差异仅两张新表）。
+- 影响：`SyncEntityAdapter` / `SyncRegistry` / `SyncPayloadContractTest`；`14_cloud_sync.md §12.2` 记为差分。
+

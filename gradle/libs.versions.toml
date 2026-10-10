@@ -24,6 +24,8 @@ javamail = "1.6.7"
 # Kotlinx
 coroutines = "1.10.2"
 serializationJson = "1.8.1"
+# OkHttp（F-15 云同步唯一新增网络依赖；4.12.0 为本机 Gradle 缓存既有版本，离线也可解析）
+okhttp = "4.12.0"
 # 测试
 junit = "4.13.2"
 androidxTestJunit = "1.2.1"
@@ -58,6 +60,7 @@ sun-activation-android = { group = "com.sun.mail", name = "android-activation", 
 # Kotlinx
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 # Compose（版本由 BOM 2025.09.01 统一管理，不写各自版本）
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }

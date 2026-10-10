@@ -3,6 +3,7 @@ package com.minibook.data.local.db.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 用户自学习归类规则实体（F-12 分类自学习，DB version 3）。
@@ -29,6 +30,7 @@ import androidx.room.PrimaryKey
         ),
     ],
 )
+@Serializable
 data class UserCategoryRuleEntity(
     @PrimaryKey val id: String,
     val ledgerId: String,

@@ -4,6 +4,87 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **F-15 真 MySQL 8 落地验证（2026-10-10，TASK-069 收口，用户提供内网 MySQL 连接信息）**：
+  在内网 MySQL **8.0.46**（docker `mysql:8.0`，`192.168.190.130:49779`，库 `minibook` / 测试库 `minibook_test`）上真连库跑通：
+  `alembic upgrade head` 建 5 张业务表 + `alembic_version`（全 `InnoDB` + **`utf8mb4_unicode_ci`** + `DATETIME(6)` + `JSON`）；
+  `downgrade base ⇄ upgrade head` 双向真跑通过；**同一套 `pytest` 52 例 / 0 失败，MySQL 与 SQLite 双 DSN 双绿**
+  （52 = 原 49 + **TASK-064 新增 3 例「日志不得含 payload」隐私断言**：push / pull / 整批校验失败三条路径，
+  断言日志里查不到备注与金额哨兵、以及 `"payload"` / `"description"` 字段名）；
+  uvicorn 真进程端到端冒烟（注册 201 → 登录 → push `applied=1` → pull 取回 → status 计数）通过，
+  且中文经 `HTTP API → MySQL → 拉回` **逐字一致**（23 字符 / 44 UTF-8 字节）。`server/.env` 落本机 DSN（已被 `.gitignore` 忽略）。
+  - 本轮实测暴露并修复 5 个真缺陷：① `alembic/env.py` 把 URL 回写进 configparser → 口令 URL 编码含 `%` 时
+    `ValueError: invalid interpolation syntax`，`alembic upgrade` 直接失败（改为只读取、不回写）；
+    ② MySQL 8 对 `CHARSET=utf8mb4` 默认给 `utf8mb4_0900_ai_ci`，与部署口径不符（显式 `COLLATE utf8mb4_unicode_ci`）；
+    ③ `downgrade()` 先 `DROP INDEX` 撞外键支撑索引（`errno 1553`）且中途失败留下半删库（改为只 `DROP TABLE`，先子表后父表）；
+    ④ Android `hasTokens` 只看密文非空 → Keystore key 失效时误报「已登录」（改为必须真的解得开）；
+    ⑤ `://x` / 越界端口等畸形服务器地址漏过校验（补主机名+端口白名单）。
+    另修 health 测试把 `db == "sqlite"` 写死（改为与真实引擎比对）。
+- **F-15 Android 云端网络栈（TASK-065 完成，2026-10-10）**：新增唯一三方依赖 **OkHttp 4.12.0**，
+  `data/remote/{SyncDtos,SyncErrors,SyncUrlValidator,SyncApi,SyncRemote,SyncAuthStore,SyncTokenAuthenticator}.kt`
+  + `data/local/security/SecretCipher.kt`（Keystore 别名 `minibook_sync_token`，**不动**开库路径的 `KeyManager`）
+  + `di/SyncModule.kt`；debug 清单单独开 `usesCleartextTraffic`（release 仍禁明文）。
+  401 → 刷新一次 → 重试；网络故障**不清**账号态、令牌撤销才清。**JVM 单测 30 例 / 0 失败**
+  （DTO 口径 7 + 错误码 5 + 地址校验 6 + AuthStore 6 + 令牌编排 6；含「落盘字节里没有明文令牌」断言）。
+
+- **F-15 Android 同步 UI（TASK-067 完成，2026-10-10）**：设置 → 数据 → **云同步**二级页落地
+  （`ui/settings/{SettingsCloudScreen,SettingsCloudViewModel,SyncPresenter}.kt`，路由 `settings-cloud`，
+  数据页新增入口行）。账号区（服务器地址 / 用户名 / 口令，登录 / **注册后自动登录** / 退出时先尽力撤销刷新令牌）、
+  三模式按钮（双向同步 / 仅上传 / 仅下载）+ **预览确认卡** + 结果卡（成功给四计数，失败明说「游标未推进」）、
+  状态行（上次同步 / 待处理冲突数，**只有计数与时间，不含账目明细**）、冲突留档查看（类型 / 短 id / 处置口径 /
+  **两份副本原文**，可手工恢复），并明示上云数据边界（DEC-034）与同步前自动备份。
+  业务判定与全部文案抽到 `SyncPresenter` 纯函数层，Composable 不含规则。**`SyncPresenterTest` 21 例 / 0 失败**；
+  **全量 JVM 回归 481 例 / 0 失败**。
+- **F-15 服务端日志隐私断言（TASK-064 收口，2026-10-10）**：新增 `server/tests/test_log_privacy.py` 3 例——
+  推送（成功路径）、拉取（响应里有、日志里没有）、整批校验失败（被拒条目原始值不得进日志）；
+  断言口径：**记录值**（备注 / 金额哨兵）与**字段名**（`"payload"` / `"description"`）都不得出现在日志文本。
+  双 DSN 各 **52 例 / 0 失败 / 0 跳过**（SQLite 与 MySQL 8，两次 `exit=0`）。
+
+- **F-15 真实服务端端到端（无设备部分，2026-10-10 新增）**：`app/src/test/.../SyncApiE2ETest.kt` ——
+  用**生产代码路径**（`SyncApi` 真 OkHttp + 真 DTO + 真错误码映射）打真在跑的 API（真 MySQL），
+  断言：注册→登录→`me`→推 3 类实体→拉回（**中文 + emoji 逐字一致、UTF-8 44 字节相等**）→
+  重复推送 **no-op**（`applied=0` 且 `server_seq` 不前进）→ 墓碑下行 → `status` 计数 → `refresh` 轮换 →
+  **旧 refresh token 被拒** → 坏令牌归 `TOKEN_INVALID`。**1 例 / 0 失败 / 3.05s**；
+  另在 MySQL 侧独立核验落库结果（3 条记录 / 1 条墓碑 / `updated_at_raw` 逐字一致 / 墓碑 `payload` 为 JSON null），
+  核验后测试数据已清理。默认由 `app/build/e2e-base-url.txt` 开关控制，未配置时如实 skipped（不冒充通过）。
+
+- **F-15 Android 同步核心（TASK-066 完成，2026-10-10）**：本地同步引擎落地——
+  `domain/usecase/sync/{SyncModels,SyncPlan,SyncUseCase}.kt`（三模式 双向/仅上传/仅下载；三路比较 base↔local↔remote + LWW + 输家留档）、
+  `data/local/sync/SyncEntityAdapter.kt`（6 类实体适配器 + 注册表）、Room **v3 → v4**
+  （只加 `sync_state` / `sync_conflicts`，**既有 7 表 CREATE 与索引逐字未变**，`app/schemas/com.minibook.data.local.db.MiniBookDatabase/4.json` 已生成）、
+  `di/DatabaseModule.kt` 增 3 个 DAO 提供者。「本地不丢」五道保险全部接线：同步前快照 `files/sync_backup/`（留最近 3 份）、
+  删除只走墓碑、冲突留档、失败不推进游标、dry-run 预览 == 执行。
+  **JVM 单测 20 例 / 0 失败 / 0 跳过**（`SyncPlanTest` 19 + `SyncPayloadContractTest` 1）；**全量回归 460 例 / 0 失败 / 0 跳过**。
+  - 两处设计修订（`07_decisions.md` 记 **DEC-035 / DEC-036**）：墓碑改为「`sync_state` 有、本地已无」的**差分补发**
+    （原方案要改 5+ 处删除路径，漏一处即静默不同步；差分零侵入，且覆盖「删账本」批量清表与「导入替换」）；
+    上行判据改为「与基线不一致」⇒ 时钟回拨不再漏推；payload 定为 Room 行**原样 JSON** + 跨语言键集断言
+    （`SyncPayloadContractTest` **未跳过** ⇒ 真的解析了 `server/app/entity_spec.py` 并逐字一致）。
+  - 未闭合：`MigrationV3To4Test` 已写**未跑**（instrumented 需设备；真机 `A1B2C3D4` 有用户真实数据，禁装测试 APK）；
+    同步 UI（TASK-067）与真机 E2E（TASK-068）待做。
+
+- **F-15 服务端 API 实现（2026-10-10，本轮落地，用户请求「开发 api 服务，让数据上云」）**：新增 `server/`
+  （FastAPI + SQLAlchemy 2 + Alembic + PyMySQL，纯 Python）——用户系统（注册 / 登录 / 刷新轮换 / 登出 / `me`，
+  argon2id 口令 + JWT + 登录限流）、同步接口（`POST /sync/push`、`GET /sync/pull`、`GET /sync/status`；
+  幂等 no-op / 墓碑 / LWW 冲突回传 / **整批回滚**）、6 类实体字段白名单校验、Alembic `0001_init`
+  （SQLite 实跑通过；MySQL 侧离线 DDL 核验 `DATETIME(6)` / JSON / BIGINT / InnoDB / utf8mb4 / 复合主键）、
+  `server/README.md`（起服务 / 测试 / 双 DSN 说明）。
+  **测试：`pytest` 47 例 / 0 失败（SQLite）**，`alembic upgrade head` 通过。
+  仍未闭合：MySQL 上跑同套测试（**TASK-069 等用户给 DSN**）、日志不含 payload 的自动化断言、Android 客户端（TASK-065~067）。
+  实现差分（游标原子自增、`updated_at_raw`、`server_seq_global`、JWT aware-UTC 踩坑等）记在 `14_cloud_sync.md §12`。
+
+- **F-15 云端同步设计（2026-10-10，用户请求「开发 api 服务，让数据上云」；本轮仅设计，未动代码）**：新增 `14_cloud_sync.md`
+  （完整设计：口径问答、目标/非目标、总体架构、服务端选型与目录、数据模型、API 契约、认证与隔离、同步协议三模式、
+  冲突策略、墓碑、Android 落点、Room v3→v4 迁移、隐私边界、11 条可测验收断言、测试计划、上云路径、风险）；
+  并回写 `01_prd.md §F-15`（需求 + 验收 + 异常处理）、`02_architecture.md §19`（与 §6「云端预留」的兑现关系 + 口径修正说明）、
+  `03_database.md §12`（本地只加两表 + 云端 schema 指针）、`07_decisions.md` **DEC-031~034**、`06_tasks.md` **TASK-061~068**。
+  四项已确认口径：**先本机跑通 / 数据库 = MySQL（用户明确「不用 pg 用 mysql」；代码 DSN 驱动，SQLite 走开发与单测）/
+  用户名+口令 JWT 不做邮件验证 / 全量核心业务表**；MySQL 特有口径（utf8mb4、索引长度、JSON 列、**DATETIME(6)**、
+  用户名大小写归一化、`FOR UPDATE` 游标）已写入 `14_cloud_sync.md §3.4` 与 DEC-031。
+  实现待开始（TASK-061 起）；**MySQL 环境未就绪是当前唯一阻塞项**（TASK-069，需用户选定提供 DSN / 本机安装 / 容器测试库）。
+
 ## v1.0.0 收尾
 
 P2 技术债清账 + 文档收口（本地 debug 交付，不涉及真机 / release / 云端）。
