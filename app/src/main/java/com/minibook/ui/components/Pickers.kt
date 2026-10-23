@@ -137,7 +137,11 @@ fun LedgerSelector(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (ledger != null) {
-            Text(ledger.icon, fontSize = 18.sp)
+            LedgerGlyph(
+                icon = ledger.icon,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                size = 18.dp,
+            )
             Spacer(Modifier.width(6.dp))
             Text(
                 ledger.name,

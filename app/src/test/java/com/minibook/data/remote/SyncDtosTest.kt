@@ -25,6 +25,71 @@ class SyncDtosTest {
         encodeDefaults = true
     }
 
+    // —— 账号资料 / 注销（2026-10-12）：这两条契约错了会**误清用户数据**，必须逐字断言 ——
+
+    @Test
+    fun `改资料请求：null 字段不上线（只改昵称不会顺带改口令）`() {
+        val onlyNickname = json.encodeToString(
+            SyncProfileUpdateRequest.serializer(),
+            SyncProfileUpdateRequest(nickname = "小明"),
+        )
+        assertTrue(onlyNickname.contains("\"nickname\":\"小明\""))
+        // 口令字段必须完全不出现：服务端按「字段是否出现」判定要不要改口令
+        assertFalse(onlyNickname.contains("old_password"))
+        assertFalse(onlyNickname.contains("new_password"))
+
+        val onlyPassword = json.encodeToString(
+            SyncProfileUpdateRequest.serializer(),
+            SyncProfileUpdateRequest(oldPassword = "old-pass-1", newPassword = "new-pass-1"),
+        )
+        assertTrue(onlyPassword.contains("\"old_password\":\"old-pass-1\""))
+        assertTrue(onlyPassword.contains("\"new_password\":\"new-pass-1\""))
+        // nickname 必须不出现：出现 null 会被服务端解读成「清除显示名」
+        assertFalse(onlyPassword.contains("nickname"))
+    }
+
+    @Test
+    fun `改资料请求：空串昵称要上线（表示清除显示名）`() {
+        val text = json.encodeToString(
+            SyncProfileUpdateRequest.serializer(),
+            SyncProfileUpdateRequest(nickname = ""),
+        )
+        // 空串 ≠ null：空串是「我要清掉」，null 是「别动它」，这是全链路唯一的分界线
+        assertTrue(text.contains("\"nickname\":\"\""))
+    }
+
+    @Test
+    fun `改资料响应：带新令牌对与昵称、注册时间；缺字段不炸`() {
+        val text = """
+            {"user":{"user_id":"u1","username":"demo_user_b","nickname":"小明",
+             "created_at":"2026-10-12T02:00:00Z"},
+             "tokens":{"access_token":"a","refresh_token":"r","token_type":"bearer","expires_in":900,
+             "user":{"user_id":"u1","username":"demo_user_b","nickname":"小明"}}}
+        """.trimIndent()
+        val dto = json.decodeFromString(SyncProfileUpdateResponse.serializer(), text)
+        assertEquals("小明", dto.user.nickname)
+        assertEquals("2026-10-12T02:00:00Z", dto.user.createdAt)
+        assertEquals("a", dto.tokens?.accessToken)
+
+        // 只改昵称时不带 tokens；旧服务端不带 nickname/created_at：都不能炸（客户端要能降级）
+        val minimal = json.decodeFromString(
+            SyncProfileUpdateResponse.serializer(),
+            """{"user":{"user_id":"u1","username":"demo_user_b"}}""",
+        )
+        assertNull(minimal.user.nickname)
+        assertNull(minimal.user.createdAt)
+        assertNull(minimal.tokens)
+    }
+
+    @Test
+    fun `注销请求：字段名是 password`() {
+        val text = json.encodeToString(
+            SyncDeleteAccountRequest.serializer(),
+            SyncDeleteAccountRequest("p@ss-1234"),
+        )
+        assertEquals("""{"password":"p@ss-1234"}""", text)
+    }
+
     @Test
     fun `push 请求：信封 snake_case、payload 原样 camelCase`() {
         val payload = buildJsonObject {

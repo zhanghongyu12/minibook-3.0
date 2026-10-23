@@ -16,6 +16,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.minibook.BuildConfig
 import com.minibook.domain.model.SmsSettings
 import com.minibook.ui.components.SettingRow
 import com.minibook.ui.components.SettingSection
@@ -28,6 +29,7 @@ import com.minibook.ui.home.LocalHomeNavigation
  * 用户原话：「设置页面太长了，每种设置设计汇总，然后点击进入二级页面设置。」
  *
  * 结构 = 一张卡片 5 行，每行一个分组 + 一行**当前状态汇总** + `›`，点击进二级页：
+ * - 账号 → `settings-account`（2026-10-12 起第一行：登录 / 资料 / 退出 / 注销）；
  * - 账本 → `ledger-manage`（P-11，经 [LocalHomeNavigation] 走根图导航）；
  * - 外观 → [SettingsAppearanceScreen]`settings-appearance`（暗色模式 + 主题色）；
  * - 安全 → [SettingsSecurityScreen]`settings-security`（应用锁 + 锁定时长 + 数据加密）；
@@ -54,6 +56,7 @@ fun SettingsScreen(
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val lockTimeout by viewModel.lockTimeout.collectAsStateWithLifecycle()
     val mailAccountCount by viewModel.mailAccountCount.collectAsStateWithLifecycle()
+    val accountSummary by viewModel.accountSummary.collectAsStateWithLifecycle()
     val smsSettings by smsViewModel.settings.collectAsStateWithLifecycle()
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -76,6 +79,15 @@ fun SettingsScreen(
             // —— 分组汇总：一行一组，点进二级页 ——
             item {
                 SettingSection(title = null, content = {
+                    // 账号（2026-10-12，用户要求「账号设置提到设置页面第一行」）：登录 / 资料 /
+                    // 退出 / 注销都在「账号」页，二级页标题与入口同名。它是唯一与"身份、跨设备"
+                    // 相关的入口，未登录时也是这一屏最可能的行动点，故放第一行。
+                    SettingRow(
+                        title = "账号",
+                        subtitle = accountSummary,
+                        trailing = { TrailingChevron() },
+                        onClick = settingsNavigation::openAccount,
+                    )
                     SettingRow(
                         title = "账本",
                         subtitle = "切换、新增、重命名与删除账本",
@@ -118,10 +130,28 @@ fun SettingsScreen(
                 })
             }
 
+            // —— 关于：法务文本（TASK-076）。放在「设置」里，两跳可达，不做首启强制弹窗。 ——
+            item {
+                SettingSection(title = "关于", content = {
+                    SettingRow(
+                        title = "隐私政策",
+                        subtitle = "数据只存在本机；只有你开启云同步才会上传账目",
+                        trailing = { TrailingChevron() },
+                        onClick = settingsNavigation::openPrivacyPolicy,
+                    )
+                    SettingRow(
+                        title = "用户协议",
+                        subtitle = "服务范围、账号责任、数据与备份说明",
+                        trailing = { TrailingChevron() },
+                        onClick = settingsNavigation::openTerms,
+                    )
+                })
+            }
+
             // —— 版本（页脚；关于页只有一行，不占一次跳转） ——
             item {
                 Text(
-                    text = "MiniBook v1.0.0",
+                    text = "MiniBook v" + BuildConfig.VERSION_NAME,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

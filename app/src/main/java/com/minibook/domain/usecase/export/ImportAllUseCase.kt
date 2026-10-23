@@ -1,6 +1,7 @@
 package com.minibook.domain.usecase.export
 
 import com.minibook.data.datasource.TransactionRunner
+import com.minibook.data.local.datastore.LedgerDataStore
 import com.minibook.domain.model.Budget
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
@@ -57,13 +58,14 @@ import kotlinx.coroutines.withContext
  *    ledgers/transactions/debts 的 `id` 与 `createdAt/updatedAt` 由数据层重新生成
  *    （LedgerDataSourceAdapter / RoomDataSourceImpl）；categories 经 `upsertList`（REPLACE）
  *    保留 id。业务字段（金额/日期/分类/名称/对方等）与引用完整性完整保留。
- * 2. 非 legacy 重建 ledgers 后，「当前账本」（LedgerDataStore，Preferences）可能指向已被
- *    重建的旧账本 id（悬空）；本 UseCase 不触碰 DataStore（账本切换为纯状态变更，
- *    ARCHITECTURE §8.3），刷新由 UI 层（TASK-027 导入后强制刷新/重定位当前账本）配合。
+ * 2. 非 legacy 重建 ledgers 后会重新生成 id，「当前账本」指针随即悬空（指向已不存在的账本）
+ *    ⇒ 首页显示「¥0.00 · 暂无交易记录」，**看起来像导入失败**。本类已在**事务成功后**把指针
+ *    改为导入后的默认账本（2026-10-12 修正），不需要 UI 层再配合刷新/重定位。
  */
 class ImportAllUseCase @Inject constructor(
     private val transactionRunner: TransactionRunner,
     private val ledgerRepository: LedgerRepository,
+    private val ledgerDataStore: LedgerDataStore,
     private val categoryRepository: CategoryRepository,
     private val transactionRepository: TransactionRepository,
     private val debtRepository: DebtRepository,
@@ -88,11 +90,15 @@ class ImportAllUseCase @Inject constructor(
             val debts = backup.debts.map { it.toDomain() }
             val budgets = backup.budgets.map { it.toDomain() }
 
-            if (ledgers == null) {
+            val result = if (ledgers == null) {
                 importLegacy(categories, transactions, debts, budgets)
             } else {
                 importFull(ledgers, categories, transactions, debts, budgets)
             }
+            // 事务成功后**才**改「当前账本」指针：导入会重建 ledgers 并重新生成 id，旧指针随即悬空，
+            // 表现为首页「¥0.00 / 暂无交易记录」——用户会以为导入失败。放在事务外，保证回滚时指针不动。
+            ledgerRepository.getDefault()?.id?.let { ledgerDataStore.setCurrentLedgerId(it) }
+            result
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -324,7 +330,9 @@ class ImportAllUseCase @Inject constructor(
 
     private companion object {
         const val DEFAULT_NAME: String = "默认账本"
-        const val DEFAULT_ICON: String = "📒"
+
+        /** 与 [com.minibook.ui.components.LedgerIcons.BOOK] 同 key（2026-10-13 起由 emoji `📒` 改为矢量 key）。 */
+        const val DEFAULT_ICON: String = "book"
         const val DEFAULT_COLOR: String = "#5D6D7E"
         const val DEFAULT_POSITION: Int = 0
     }

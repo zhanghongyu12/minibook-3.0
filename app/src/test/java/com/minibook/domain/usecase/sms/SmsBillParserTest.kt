@@ -247,4 +247,75 @@ class SmsBillParserTest {
         assertTrue(preview.contains("金额 100.00 元"))
         assertNotNull(SmsTemplateRegistry.match("95526", body))
     }
+
+    // ------------------------------------------------ TASK-084 ④ 贷款/授信营销短信过滤
+
+    @Test
+    fun `授信营销短信：用户样例一（农商银行 398000）判非账单`() {
+        // 用户 2026-10-13 提供的真实原文（fixture）。
+        val outcome = parse(
+            "【农商银行】您好，我行授予您398000元，于6月30日停办，可用于日常消费，房屋装修，生意应急 " +
+                "回6查利息 回8确认金额 拒收请回复R",
+        )
+        assertTrue("应为非账单，实际=$outcome", outcome is SmsParseOutcome.NotBill)
+    }
+
+    @Test
+    fun `授信营销短信：用户样例二（建设银行 398000）判非账单`() {
+        val outcome = parse(
+            "【建设银行】尊敬的客户，我行可特批您398000元周转款，三年内灵活借还，5月16日截止，请及时回复 " +
+                "回1查询利息 回2办理 拒收请回复R",
+        )
+        assertTrue("应为非账单，实际=$outcome", outcome is SmsParseOutcome.NotBill)
+    }
+
+    @Test
+    fun `授信营销短信：没有退订后缀也能靠语义词筛掉`() {
+        val outcome = parse("【某某银行】我行授予您398000元，于6月30日停办，可用于日常消费，房屋装修")
+        assertTrue("应为非账单，实际=$outcome", outcome is SmsParseOutcome.NotBill)
+    }
+
+    @Test
+    fun `回复指令型营销：回1查询利息 判非账单`() {
+        val outcome = parse("【农业银行】我行现有优惠利率，回1查询利息。")
+        assertTrue("应为非账单，实际=$outcome", outcome is SmsParseOutcome.NotBill)
+    }
+
+    @Test
+    fun `贷款还款短信有强锚点：不被营销过滤误杀`() {
+        val p = parsed("【某某银行】您尾号3170的贷款于10月8日扣款500.00元，余额605.91元。")
+        assertEquals(TransactionType.EXPENSE, p.row.type)
+        assertEquals(50_000L, p.row.amountFen)
+    }
+
+    @Test
+    fun `真实交易短信带退订尾缀：不被非账单预筛误杀`() {
+        val p = parsed("【某某银行】您账户3170于10月8日19:45通过网银在线支付100.00元。余额605.91元。退订回T")
+        assertEquals(TransactionType.EXPENSE, p.row.type)
+        assertEquals(10_000L, p.row.amountFen)
+    }
+
+    // ------------------------------------------------ TASK-084 ⑥ 退款口径（记收入 + 单独「退款」分类）
+
+    @Test
+    fun `退款短信：记为收入并把平台分类标成退款`() {
+        val p = parsed("【某某银行】您账户3170于10月8日19:45收到退款100.00元。活期余额605.91元。")
+        assertEquals(TransactionType.INCOME, p.row.type)
+        assertEquals("退款", p.row.platformCategory)
+        assertEquals(10_000L, p.row.amountFen)
+    }
+
+    @Test
+    fun `退款短信：正文先出现消费字样也仍判收入`() {
+        val p = parsed("【某某银行】您账户3170于10月8日19:45消费100.00元的订单已退款到账。余额605.91元。")
+        assertEquals(TransactionType.INCOME, p.row.type)
+        assertEquals("退款", p.row.platformCategory)
+    }
+
+    @Test
+    fun `退款口径不影响非退款短信的方向判定`() {
+        val p = parsed("【某某银行】您账户3170于10月8日19:45通过网银在线支付100.00元。余额605.91元。")
+        assertEquals(TransactionType.EXPENSE, p.row.type)
+        assertTrue(p.row.platformCategory != "退款")
+    }
 }

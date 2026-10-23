@@ -41,7 +41,7 @@ private const val DEFAULT_PARSE_ERROR_EXPAND_THRESHOLD: Int = 3
  * 单平台导出指引卡（UI §9.5 C-34）。
  *
  * emoji + 平台名（[titleMedium]）+ 分步导出路径文本（`bodySmall`，[onSurfaceVariant]）+
- * 文件格式提示（`labelMedium`）；底面 `surfaceVariant.copy(alpha=0.5f)`、`medium` 圆角
+ * 文件格式提示（`labelMedium`）；底面 `surfaceContainerLow`、`medium` 圆角
  * （同 `HomeQuickEntry` 轻量卡片口径）。
  *
  * @param emoji 平台图标（emoji 占位，TASK-020 偏差同口径）。
@@ -61,7 +61,7 @@ fun PlatformGuideCard(
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),

@@ -22,3 +22,22 @@ def test_openapi_available(client):
     assert "/api/v1/auth/register" in paths
     assert "/api/v1/sync/push" in paths
     assert "/api/v1/sync/pull" in paths
+
+
+def test_docs_can_be_disabled(monkeypatch):
+    """`ENABLE_DOCS=false` 时不该挂载 /docs、/redoc、/openapi.json（线上公网明文入口的收敛口径）。"""
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("ENABLE_DOCS", "false")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app()) as disabled:
+            assert disabled.get("/openapi.json").status_code == 404
+            assert disabled.get("/docs").status_code == 404
+            assert disabled.get("/redoc").status_code == 404
+            assert disabled.get("/healthz").status_code == 200  # 探针不受影响
+    finally:
+        get_settings.cache_clear()

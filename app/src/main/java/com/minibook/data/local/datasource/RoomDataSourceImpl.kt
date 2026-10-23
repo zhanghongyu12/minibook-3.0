@@ -10,6 +10,7 @@ import com.minibook.data.datasource.TransactionDataSource
 import com.minibook.data.datasource.TransactionRunner
 import com.minibook.data.datasource.UserCategoryRuleDataSource
 import com.minibook.data.local.db.CategoryAggRow
+import com.minibook.data.local.db.MiniBookDatabase
 import com.minibook.data.local.db.PeriodTrendRow
 import com.minibook.data.local.db.dao.BudgetDao
 import com.minibook.data.local.db.dao.CategoryDao
@@ -59,8 +60,11 @@ import kotlinx.coroutines.flow.map
  *
  * 锁周期安全（ARCHITECTURE §7.5 / DatabaseModule 注释）：本实现**不缓存 DAO 引用**，
  * 构造注入 [DatabaseProvider]，每方法经 `gate.database?.xxxDao()` 取「当前已打开数据库」的 DAO；
- * 未解锁时 `gate.database` 为 null → 统一 `error(...)` 硬失败。重锁→再解锁后
- * 自动取到新建 DB 的 DAO，绝不持有已关闭实例。
+ * 未解锁时 `gate.database` 为 null → 一次性 `suspend` 查询统一 `error(...)` 硬失败（宁可不记错，不静默返空），
+ * 而**返回 Flow 的 `observe*` 一律经 [gatedFlow] 门控**：解密门关闭期间不发射、不抛异常
+ * （F-16i，2026-10-13 真机崩溃修复——重锁瞬间 UI 生命周期恢复会重启上游 Flow，
+ * 旧实现在调用点 `ledgerDao() ?: error(...)` 同步抛出，直接把主线程打崩）。
+ * 重锁→再解锁后自动取到新建 DB 的 DAO，绝不持有已关闭实例。
  *
  * 映射口径（DEC-001 / DATABASE §9）：
  * - `amount` 保持 `Long` 分，不转换不丢精度；`date`/`createdAt`/`updatedAt` ISO 字符串原样透传。
@@ -227,24 +231,30 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =
-        transactionDao().observeFiltered(
-            ledgerId = ledgerId,
-            type = filter.type?.value,
-            categoryId = filter.categoryId,
-            dateFrom = filter.dateFrom,
-            dateTo = filter.dateTo,
-            remark = filter.remark,
-            amountMin = filter.amountMin,
-            amountMax = filter.amountMax,
-        ).map { list -> list.map(TransactionMapper::toDomain) }
+        gated { db ->
+            db.transactionDao().observeFiltered(
+                ledgerId = ledgerId,
+                type = filter.type?.value,
+                categoryId = filter.categoryId,
+                dateFrom = filter.dateFrom,
+                dateTo = filter.dateTo,
+                remark = filter.remark,
+                amountMin = filter.amountMin,
+                amountMax = filter.amountMax,
+            ).map { list -> list.map(TransactionMapper::toDomain) }
+        }
 
     override fun observeDailyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
-        transactionDao().observeDailyTrend(ledgerId, start, end)
-            .map { list -> list.map { it.toDomain() } }
+        gated { db ->
+            db.transactionDao().observeDailyTrend(ledgerId, start, end)
+                .map { list -> list.map { it.toDomain() } }
+        }
 
     override fun observeMonthlyTrend(ledgerId: String, start: String, end: String): Flow<List<PeriodTrend>> =
-        transactionDao().observeMonthlyTrend(ledgerId, start, end)
-            .map { list -> list.map { it.toDomain() } }
+        gated { db ->
+            db.transactionDao().observeMonthlyTrend(ledgerId, start, end)
+                .map { list -> list.map { it.toDomain() } }
+        }
 
     override fun observeCategoryAgg(
         ledgerId: String,
@@ -252,8 +262,10 @@ class RoomDataSourceImpl @Inject constructor(
         start: String,
         end: String,
     ): Flow<List<CategoryAgg>> =
-        transactionDao().observeCategoryAgg(ledgerId, type.value, start, end)
-            .map { list -> list.map { it.toDomain() } }
+        gated { db ->
+            db.transactionDao().observeCategoryAgg(ledgerId, type.value, start, end)
+                .map { list -> list.map { it.toDomain() } }
+        }
 
     override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary {
         val row = transactionDao().monthSummary(
@@ -303,12 +315,14 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     override fun observeByLedger(ledgerId: String, filter: DebtFilter): Flow<List<Debt>> =
-        debtDao().observeFiltered(
-            ledgerId = ledgerId,
-            kind = filter.kind?.value,
-            direction = filter.direction?.value,
-            partyName = filter.partyName,
-        ).map { list -> list.map(DebtMapper::toDomain) }
+        gated { db ->
+            db.debtDao().observeFiltered(
+                ledgerId = ledgerId,
+                kind = filter.kind?.value,
+                direction = filter.direction?.value,
+                partyName = filter.partyName,
+            ).map { list -> list.map(DebtMapper::toDomain) }
+        }
 
     override suspend fun netByParty(ledgerId: String): Map<String, Long> =
         debtDao().observeNetByParty(ledgerId).first().associate { it.partyName to it.netFen }
@@ -342,16 +356,19 @@ class RoomDataSourceImpl @Inject constructor(
         categoryDao().countByLedger(ledgerId)
 
     override fun observeByLedger(ledgerId: String, type: CategoryType?): Flow<List<Category>> =
-        when (type) {
-            // DAO observeByType 的 type 参数为非空（DATABASE §6.3），null=全部由 expense+income 双流合并。
-            null -> combine(
-                categoryDao().observeByType(ledgerId, CategoryType.EXPENSE.value),
-                categoryDao().observeByType(ledgerId, CategoryType.INCOME.value),
-            ) { expense, income -> expense + income }
-                .map { list -> list.map(CategoryMapper::toDomain) }
+        gated { db ->
+            val categoryDao = db.categoryDao()
+            when (type) {
+                // DAO observeByType 的 type 参数为非空（DATABASE §6.3），null=全部由 expense+income 双流合并。
+                null -> combine(
+                    categoryDao.observeByType(ledgerId, CategoryType.EXPENSE.value),
+                    categoryDao.observeByType(ledgerId, CategoryType.INCOME.value),
+                ) { expense, income -> expense + income }
+                    .map { list -> list.map(CategoryMapper::toDomain) }
 
-            else -> categoryDao().observeByType(ledgerId, type.value)
-                .map { list -> list.map(CategoryMapper::toDomain) }
+                else -> categoryDao.observeByType(ledgerId, type.value)
+                    .map { list -> list.map(CategoryMapper::toDomain) }
+            }
         }
 
     // ===== UserCategoryRuleDataSource（F-12 分类自学习，DB version 3） =====
@@ -389,12 +406,9 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     override suspend fun deleteByCategory(ledgerId: String, month: YearMonth, categoryId: String) {
-        // BudgetDao 仅 deleteTotal（categoryId IS NULL），分类预算删除按表列等价 SQL 补齐。
-        writableDatabase().delete(
-            "budgets",
-            "ledgerId = ? AND month = ? AND categoryId = ?",
-            arrayOf(ledgerId, month.toString(), categoryId),
-        )
+        // 2026-10-13：改走 DAO（原先用裸 writableDatabase().delete 绕过 Room 失效通知，
+        // 导致删除分类预算后预算进度流不重发、列表要退出页面再进才刷新）。
+        budgetDao().deleteCategoryBudget(ledgerId, month.toString(), categoryId)
     }
 
     override suspend fun deleteByCategoryId(categoryId: String) {
@@ -403,8 +417,10 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> =
-        budgetDao().observeByMonth(ledgerId, month.toString())
-            .map { list -> list.map(BudgetMapper::toDomain) }
+        gated { db ->
+            db.budgetDao().observeByMonth(ledgerId, month.toString())
+                .map { list -> list.map(BudgetMapper::toDomain) }
+        }
 
     // ===== SyncChangeDataSource（Phase 3 预留，本期只建表不写数据） =====
 
@@ -425,6 +441,15 @@ class RoomDataSourceImpl @Inject constructor(
     }
 
     // ===== 内部工具 =====
+
+    /**
+     * 门控 Flow（F-16i）：解密门关闭（`gate.database == null`）期间**不发射、不抛异常**，
+     * 解锁后自动切到新建库的 DAO 流。实现见 [gatedFlow]。
+     *
+     * 只给返回 `Flow` 的 `observe*` 用；一次性 `suspend` 查询**不得**改用它——
+     * 那些方法只应在解锁后被调用，静默返空会把「没解锁」误报成「没有数据」。
+     */
+    private fun <T> gated(block: (MiniBookDatabase) -> Flow<T>): Flow<T> = gate.gatedFlow(block)
 
     private suspend fun upsertBudget(ledgerId: String, month: YearMonth, categoryId: String?, amount: Long) {
         val now = Instant.now().toString()

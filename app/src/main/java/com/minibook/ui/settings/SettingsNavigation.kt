@@ -23,6 +23,23 @@ interface SettingsNavigation {
 
     /** 打开「短信账单」二级页（根图 `settings-sms`）。 */
     fun openSms()
+
+    /**
+     * 打开「账号」页（根图 `settings-account`）。
+     *
+     * 2026-10-12 起设置首页「账号」行指向这里（标题与入口同名）；原先指向的
+     * 「账号与同步」页已拆成「账号」页 + 「云同步」页（同步入口在「数据」里）。
+     */
+    fun openAccount()
+
+    /** 打开「账号与同步」页（根图 `settings-cloud`；数据页的同步入口仍用它）。 */
+    fun openCloud()
+
+    /** 打开「隐私政策」页（根图 `settings-privacy-policy`；TASK-076）。 */
+    fun openPrivacyPolicy()
+
+    /** 打开「用户协议」页（根图 `settings-terms`；TASK-076）。 */
+    fun openTerms()
 }
 
 /**
@@ -36,5 +53,9 @@ val LocalSettingsNavigation: ProvidableCompositionLocal<SettingsNavigation> =
             override fun openSecurity() = Unit
             override fun openData() = Unit
             override fun openSms() = Unit
+            override fun openAccount() = Unit
+            override fun openCloud() = Unit
+            override fun openPrivacyPolicy() = Unit
+            override fun openTerms() = Unit
         }
     }

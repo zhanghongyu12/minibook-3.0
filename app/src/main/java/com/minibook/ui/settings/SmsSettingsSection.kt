@@ -125,13 +125,23 @@ fun SmsSettingsSection(viewModel: SmsSettingsViewModel = hiltViewModel()) {
                         "加入后会在这里逐条列出，可单独关闭它的自动记账。",
                 )
             } else {
-                HintText("白名单（${whitelist.size} 个发送方，打开 = 允许该发送方自动记账）：")
+                HintText(
+                    "白名单（${whitelist.size} 个发送方）。每个发送方两个开关：" +
+                        "上一行 = 允许它免确认自动记账；下一行 = 允许导入它的账单（关掉后该来源" +
+                        "不再计入账单，显示为「非账单」）。",
+                )
                 whitelist.forEach { entry ->
                     SwitchRow(
                         title = "${entry.sender}（已确认 ${entry.confirmedCount} 次）",
                         checked = entry.autoEnabled,
                         enabled = !appLockEnabled,
                         onCheckedChange = { viewModel.setWhitelistAutoEnabled(entry.sender, it) },
+                    )
+                    SwitchRow(
+                        title = "　允许导入：${entry.sender}",
+                        checked = entry.importEnabled,
+                        enabled = !appLockEnabled,
+                        onCheckedChange = { viewModel.setWhitelistImportEnabled(entry.sender, it) },
                     )
                 }
                 TextButton(

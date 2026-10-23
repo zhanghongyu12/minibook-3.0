@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 /**
  * 图表空态（报表，UI §8.2 C-31）。
  *
- * 图标（surfaceVariant 圆底）+「暂无数据」，用于某张图无任何数据时占位；单点降级由各图表自身
+ * 图标（surfaceContainerHigh 圆底）+「暂无数据」，用于某张图无任何数据时占位；单点降级由各图表自身
  * 处理（1 点画点/单柱/满圈），这里只负责空态。图标默认用内置手绘“柱状图”占位（material-icons 缺失，
  * 沿用工程手绘 ImageVector 方案），调用方可注入自己的 [ImageVector]。
  *
@@ -50,7 +50,7 @@ fun ChartEmptyState(
             modifier = Modifier
                 .size(64.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

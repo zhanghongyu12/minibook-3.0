@@ -6,6 +6,9 @@ import androidx.room.Room
 import com.minibook.data.local.db.MiniBookDatabase
 import java.util.Arrays
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /**
@@ -30,6 +33,7 @@ class DatabaseGate(
 ) : DatabaseProvider {
     private val lock = Any()
     private val databaseRef = AtomicReference<MiniBookDatabase?>(null)
+    private val openStateRef = MutableStateFlow<MiniBookDatabase?>(null)
 
     /** 是否已解锁且数据库连接可用。 */
     val isOpen: Boolean
@@ -38,6 +42,12 @@ class DatabaseGate(
     /** 当前打开的 [MiniBookDatabase]；未解锁（未 open）时为 null，调用方不得强解包。 */
     override val database: MiniBookDatabase?
         get() = databaseRef.get()
+
+    /**
+     * 「已打开数据库」流（F-16i）：随 [open]/[close] 变化——解锁发射实例、重锁回 null。
+     * 供返回 Flow 的数据源方法做门控（见 [com.minibook.data.local.datasource.gatedFlow]）。
+     */
+    override val openState: StateFlow<MiniBookDatabase?> = openStateRef.asStateFlow()
 
     /**
      * 用给定 passphrase 打开 SQLCipher 数据库。
@@ -72,9 +82,11 @@ class DatabaseGate(
                 // migration（密码错误会在 schema 校验时抛 SQLiteException）。
                 db.openHelper.writableDatabase
                 databaseRef.set(db)
+                openStateRef.value = db
                 db.isOpen
             } catch (e: Exception) {
                 databaseRef.set(null)
+                openStateRef.value = null
                 Log.e(TAG, "DatabaseGate.open 失败：${e.message}", e)
                 false
             } finally {
@@ -99,6 +111,7 @@ class DatabaseGate(
     fun close() {
         synchronized(lock) {
             databaseRef.getAndSet(null)?.close()
+            openStateRef.value = null
         }
     }
 

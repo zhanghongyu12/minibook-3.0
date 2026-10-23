@@ -15,6 +15,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.SelectableDates
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,9 @@ import java.time.LocalDate
 /**
  * 可选日期字段（C-10 口径扩展，支持「未设置」+ 可清空）：Null 表示不过滤。
  * 复用 [Surface] 样式 + [DatePickerDialog]；展示 `yyyy-MM-dd`（经 [TimeFormatter.formatDate]）。
+ *
+ * 联动约束（docs/15 第 5 条，2026-10-13）：[minDateMillis]/[maxDateMillis]（UTC 毫秒）用于
+ * 把「止 ≥ 起」做成**日期选择器内不可选**（跨月区间仍可选，但反向区间选不出来），而不是选完再报错。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +45,8 @@ internal fun OptionalDateField(
     date: String?,
     onDateChange: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    minDateMillis: Long? = null,
+    maxDateMillis: Long? = null,
 ) {
     var showDialog by remember { mutableStateOf(false) }
 
@@ -87,6 +93,13 @@ internal fun OptionalDateField(
     if (showDialog) {
         val pickerState = rememberDatePickerState(
             initialSelectedDateMillis = dateToUtcMillis(date ?: LocalDate.now().toString()),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    if (minDateMillis != null && utcTimeMillis < minDateMillis) return false
+                    if (maxDateMillis != null && utcTimeMillis > maxDateMillis) return false
+                    return true
+                }
+            },
         )
         DatePickerDialog(
             onDismissRequest = { showDialog = false },

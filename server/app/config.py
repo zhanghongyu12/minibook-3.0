@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     auth_rate_limit_per_minute: int = 10
 
+    #: 是否暴露 `/docs`、`/redoc`、`/openapi.json`（2026-10-23 起支持关闭）。
+    #: 公网明文入口上少一份完整接口清单：线上 `.env` 里设 `ENABLE_DOCS=false`；
+    #: 开发与单测保持默认 `True`（`tests/test_health.py` 有两条测试分别覆盖开 / 关）。
+    enable_docs: bool = True
+
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")

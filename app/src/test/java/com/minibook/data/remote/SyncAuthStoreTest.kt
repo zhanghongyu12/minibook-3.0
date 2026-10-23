@@ -55,6 +55,40 @@ class SyncAuthStoreTest {
         ""
     }
 
+    /**
+     * 「服务端 200 但本地其实没登录」是本项目出现过的最隐蔽的失败：
+     * 界面停在「未登录」而**没有任何提示**，看起来就是「登录按钮坏了」。
+     * 因此 [SyncAuthStore.saveSession] 必须**读回验证**，读不回来就抛可读的错。
+     */
+    @Test
+    fun `令牌写入后不可读 必须抛错而不是静默成功`() = runTest {
+        val store = newStore(BrokenReadCipher())
+
+        val failure = runCatching {
+            store.saveSession(
+                baseUrl = "http://192.168.1.5:8000",
+                userId = "u-1",
+                username = "alice",
+                accessToken = "ACCESS-TOKEN-123456",
+                refreshToken = "REFRESH-TOKEN-123456",
+                expiresInSeconds = 1800,
+            )
+        }.exceptionOrNull()
+
+        assertTrue(
+            "必须抛出可读的失败（实际：$failure）",
+            failure is IllegalStateException,
+        )
+        assertFalse("失败后不得处于已登录态", store.current().isLoggedIn)
+    }
+
+    /** 加密能成功、解密失效——等价于 Keystore 钥匙不可用（RKP 失败/钥匙失效）。 */
+    private class BrokenReadCipher : SecretCipher {
+        override fun encrypt(plaintext: String): String = "enc:$plaintext"
+
+        override fun decrypt(blob: String): String = throw IllegalStateException("钥匙不可用")
+    }
+
     @Test
     fun `保存会话：可读回令牌，且落盘字节里没有明文令牌`() = runTest {
         val store = newStore()
@@ -140,17 +174,68 @@ class SyncAuthStoreTest {
         assertEquals(2, state.conflictCount)
     }
 
+    /**
+     * **读取**路径的契约（DEC-034）：钥匙失效（换机恢复 / 系统重置）时按「未登录」处理、**不抛异常**，
+     * 用户重新登录即可 —— 绝不能因为一把读不出来的钥匙把 App 弄崩。
+     *
+     * 注意与「**写入**路径」的区别：登录时若令牌写进去读不回来，必须**报错**（见本文件
+     * `令牌写入后不可读 必须抛错而不是静默成功`），否则就是「服务端 200、界面却一直未登录」的静默失败。
+     */
     @Test
-    fun `令牌解密失败：按未登录处理，不抛异常`() = runTest {
-        val store = newStore(cipher = object : SecretCipher {
-            override fun encrypt(plaintext: String): String = "broken-blob"
-            override fun decrypt(blob: String): String = throw IllegalStateException("Keystore key 失效")
-        })
-
+    fun `钥匙中途失效：读取按未登录处理，不抛异常`() = runTest {
+        val cipher = SwitchableCipher()
+        val store = newStore(cipher)
         store.saveSession("http://x", "u-1", "alice", "a", "r", expiresInSeconds = 1800)
+        assertTrue("写入时钥匙可用 ⇒ 已登录", store.current().isLoggedIn)
+
+        cipher.broken = true // 钥匙失效（换机恢复 / 系统重置）
 
         assertNull(store.accessToken())
         assertNull(store.refreshToken())
-        assertFalse(store.current().isLoggedIn) // hasTokens=false ⇒ 视为未登录
+        assertFalse("hasTokens=false ⇒ 视为未登录，且不得抛异常", store.current().isLoggedIn)
+    }
+
+    /** 可切换「钥匙是否失效」的假实现（模拟钥匙在写入之后失效）。 */
+    private class SwitchableCipher : SecretCipher {
+        var broken = false
+
+        override fun encrypt(plaintext: String): String =
+            if (broken) "broken-blob" else "enc:$plaintext"
+
+        override fun decrypt(blob: String): String =
+            if (broken) throw IllegalStateException("Keystore key 失效") else blob.removePrefix("enc:")
+    }
+
+    /**
+     * 首页账号信息行（F-16a，2026-10-13）的名字来源：**纯派生属性、离线可读**。
+     * 已登录 = 昵称优先、回退用户名；未登录 = null（首页显示「未登录」+「登录」链接）。
+     */
+    @Test
+    fun `展示名：昵称优先 回退用户名 未登录为 null`() = runTest {
+        val store = newStore()
+        assertNull("未登录不得显示任何名字", store.current().displayName)
+
+        store.saveSession("http://x", "u-1", "alice", "a", "r", expiresInSeconds = 1800)
+        assertEquals("没设昵称时回退用户名", "alice", store.current().displayName)
+
+        store.updateNickname("小明")
+        assertEquals("小明", store.current().nickname)
+        assertEquals("设了昵称就优先用昵称", "小明", store.current().displayName)
+    }
+
+    /**
+     * 登出必须清掉昵称缓存：否则换账号登录时首页会显示**上一个人的昵称**（优先级③「不记错」）。
+     */
+    @Test
+    fun `登出清掉昵称缓存`() = runTest {
+        val store = newStore()
+        store.saveSession("http://x", "u-1", "alice", "a", "r", expiresInSeconds = 1800)
+        store.updateNickname("小明")
+        assertEquals("小明", store.current().displayName)
+
+        store.clearSession()
+
+        assertEquals("", store.current().nickname)
+        assertNull(store.current().displayName)
     }
 }

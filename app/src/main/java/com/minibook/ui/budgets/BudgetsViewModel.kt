@@ -8,6 +8,7 @@ import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.usecase.budget.ClearCategoryBudgetUseCase
+import com.minibook.domain.usecase.budget.ClearTotalBudgetUseCase
 import com.minibook.domain.usecase.budget.ObserveBudgetProgressUseCase
 import com.minibook.domain.usecase.budget.SetCategoryBudgetUseCase
 import com.minibook.domain.usecase.budget.SetTotalBudgetUseCase
@@ -48,7 +49,9 @@ import kotlinx.coroutines.launch
  *     DEC-008），成功 emit [saved]（UI 关弹层）+ snackbar；
  *   - [setCategoryBudget]：`SetCategoryBudgetUseCase`（分类预算唯一由 DB
  *     `UNIQUE(ledgerId, month, categoryId)` 保证，DEC-008），upsert；
- *   - [clearCategoryBudget]：`ClearCategoryBudgetUseCase` 物理删除。
+ *   - [clearCategoryBudget]：`ClearCategoryBudgetUseCase` 物理删除；
+ *   - [clearTotalBudget]：`ClearTotalBudgetUseCase` 删除当月总预算（2026-10-13 新增，
+ *     用户原话「预算填写了不能删除或者清空」）。
  * - 编辑错误经 [editorError]（弹层内联展示），保存/删除结果经 [snackbar]（页面轻提示）。
  * - **分类选择数据**：[expenseCategories]（type=expense，账本内置重订阅）供分类预算编辑弹层的
  *   分类选择器（C-02 限定支出）；分类元信息已由 `CategoryBudgetProgress.category` 携带，
@@ -66,6 +69,7 @@ class BudgetsViewModel @Inject constructor(
     private val setTotalBudgetUseCase: SetTotalBudgetUseCase,
     private val setCategoryBudgetUseCase: SetCategoryBudgetUseCase,
     private val clearCategoryBudgetUseCase: ClearCategoryBudgetUseCase,
+    private val clearTotalBudgetUseCase: ClearTotalBudgetUseCase,
 ) : ViewModel() {
 
     /** 当前查看月份（初始当前月，`java.time.YearMonth`）。 */
@@ -199,6 +203,28 @@ class BudgetsViewModel @Inject constructor(
             try {
                 clearCategoryBudgetUseCase(_month.value, categoryId)
                 _snackbar.value = "已删除分类预算"
+                _saved.emit(Unit)
+            } catch (e: Exception) {
+                _editorError.value = e.message?.ifBlank { null } ?: "删除失败"
+            } finally {
+                _isSaving.value = false
+            }
+        }
+    }
+
+    /**
+     * 删除当前月份的月度总预算（2026-10-13，F-15x；用户原话「预算填写了不能删除或者清空」）。
+     *
+     * 清空后当月若无任何分类预算，页面回到空态引导（重新设置总预算）。
+     *
+     * 成功 → snackbar + emit [saved]（UI 关弹层）；失败 → [editorError]。
+     */
+    fun clearTotalBudget() {
+        viewModelScope.launch {
+            _isSaving.value = true
+            try {
+                clearTotalBudgetUseCase(_month.value)
+                _snackbar.value = "已删除月度总预算"
                 _saved.emit(Unit)
             } catch (e: Exception) {
                 _editorError.value = e.message?.ifBlank { null } ?: "删除失败"

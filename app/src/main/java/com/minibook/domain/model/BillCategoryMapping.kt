@@ -50,6 +50,9 @@ object BillCategoryMapping {
         // 微信「-退款」变体：用更精确子串且排在「微信红包」之前（否则「微信红包-退款」被「微信红包」先命中）。
         Entry(TransactionSource.WECHAT_IMPORT, "红包-退款", TransactionType.INCOME, "退款"),
         Entry(TransactionSource.WECHAT_IMPORT, "平台商户-退款", TransactionType.INCOME, "退款"),
+        // F-14 短信通道（TASK-084 ⑥）：含「退款」的短信由 SmsBillParser 把 platformCategory 标成
+        // 「退款」→ 落到收入侧同名「退款」分类（用户 2026-10-13 拍板：退款记收入、单独分类、不配对红冲）。
+        Entry(TransactionSource.SMS_IMPORT, "退款", TransactionType.INCOME, "退款"),
         // 微信红包 → 支出人情 / 收入礼金（保留红包→人情/礼金）。
         Entry(TransactionSource.WECHAT_IMPORT, "微信红包", TransactionType.EXPENSE, "人情"),
         Entry(TransactionSource.WECHAT_IMPORT, "微信红包", TransactionType.INCOME, "礼金"),

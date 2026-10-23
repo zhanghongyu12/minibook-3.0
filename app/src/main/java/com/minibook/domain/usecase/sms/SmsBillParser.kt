@@ -26,12 +26,37 @@ object SmsBillParser {
 
     /** 支出词表（命中即支出）。 */
     private val EXPENSE_KEYWORDS = listOf(
-        "支付", "消费", "扣款", "支出", "取现", "转出", "还款", "代扣", "退款",
+        // 注意：「退款」**不在**支出表里 —— 用户 2026-10-13 拍板（TASK-084 ⑥）：退款记为「收入」，
+        // 并落在单独的「退款」分类（见 [REFUND_KEYWORD] 与 BillCategoryMapping 的短信条目）。
+        "支付", "消费", "扣款", "支出", "取现", "转出", "还款", "代扣",
     )
 
     /** 收入词表（命中即收入）。 */
     private val INCOME_KEYWORDS = listOf(
-        "入账", "到账", "收入", "存入", "转入", "收款", "发放", "利息",
+        "入账", "到账", "收入", "存入", "转入", "收款", "发放", "利息", "退款",
+    )
+
+    /** 退款关键词（TASK-084 ⑥）：命中即判收入，并把平台分类标成「退款」以落到同名内置分类。 */
+    private const val REFUND_KEYWORD = "退款"
+
+    /** 非账单：回复指令/退订类（贷款营销短信的典型收尾，如「拒收请回复R」）。 */
+    private val NOT_BILL_REPLY_COMMAND = listOf("拒收请回复", "拒收回复", "退订", "回t退订")
+
+    /** 「回6查利息」「回8确认金额」类回复指令里紧跟数字的动词（手写扫描，零正则，DEC-024）。 */
+    private val REPLY_COMMAND_VERBS = setOf('查', '办', '确', '退', '了', '复')
+
+    /**
+     * 授信/贷款营销语义词（TASK-084 ④）。这些短信会命中「消费」「利息」等词并拖着一个巨大的
+     * 「额度」数字（例：「我行授予您398000元…可用于日常消费」「我行可特批您398000元周转款」），
+     * 若放行会被 L2 静默记成 398000 元的支出/收入 —— 违背优先级①「不写错账」。
+     */
+    private val CREDIT_OFFER_WORDS = listOf(
+        "授予您", "特批您", "预授信", "可借", "周转款", "备用金", "贷款", "额度", "利率",
+    )
+
+    /** 强交易锚点词：有其一即认为确实是交易短信（营销文案里一般不会出现）。 */
+    private val STRONG_TRANSACTION_WORDS = listOf(
+        "扣款", "入账", "到账", "支出", "转出", "转入", "取现", "还款", "缴费", "代扣", "存入", "发放",
     )
 
     /** 非账单：验证码/安全类。 */
@@ -85,11 +110,28 @@ object SmsBillParser {
             return SmsParseOutcome.NotBill(reason = "空短信")
         }
 
+        // 非账单预筛（TASK-084 ④）：回复指令/退订与授信营销先筛掉，避免它们命中「消费」「利息」
+        // 等词后被当成账单（尤其不能被 L2 自动记账静默写错账）。**两类都要求「没有强交易锚点」**：
+        // 真实交易短信偶尔也带「退订回T」，不能为了过滤营销把真账单一起杀掉（优先级①不遗漏）。
+        val reply = replyCommandHit(body)
+        if (reply != null && !hasStrongTransactionAnchor(body)) {
+            return SmsParseOutcome.NotBill(reason = "回复指令/退订类：$reply")
+        }
+        val credit = firstHit(body, CREDIT_OFFER_WORDS)
+        if (credit != null && !hasStrongTransactionAnchor(body)) {
+            return SmsParseOutcome.NotBill(reason = "授信/贷款营销类：${credit.second}")
+        }
+
         val expenseHit = firstHit(body, EXPENSE_KEYWORDS)
         val incomeHit = firstHit(body, INCOME_KEYWORDS)
 
+        // 退款口径（TASK-084 ⑥，用户 2026-10-13 拍板）：含「退款」的短信直接判**收入**，
+        // 不再比较「消费/支付」与「退款」谁更靠前（否则「您消费的 5 元退款已到账」会被判成支出）。
+        val isRefund = body.contains(REFUND_KEYWORD)
+
         // 方向必须**唯一确定**：两侧都命中时按更靠前出现者判定（位置相同视为歧义）。
         val type: TransactionType = when {
+            isRefund -> TransactionType.INCOME
             expenseHit != null && incomeHit == null -> TransactionType.EXPENSE
             incomeHit != null && expenseHit == null -> TransactionType.INCOME
             expenseHit != null && incomeHit != null -> when {
@@ -142,7 +184,8 @@ object SmsBillParser {
             paymentMethod = channelWord,
             description = description,
             externalId = externalIdOf(message.address, date, body),
-            platformCategory = channelWord,
+            // 退款短信把平台分类标成「退款」，让 BillCategoryMapping 落到同名内置分类（TASK-084 ⑥）。
+            platformCategory = if (isRefund) REFUND_KEYWORD else channelWord,
         )
 
         return SmsParseOutcome.Parsed(
@@ -167,6 +210,56 @@ object SmsBillParser {
             if (idx >= 0 && (best == null || idx < best.first)) best = idx to k
         }
         return best
+    }
+
+    /**
+     * 回复指令/退订命中（TASK-084 ④）：返回命中片段，无则 null。
+     *
+     * 覆盖两类写法：①「拒收请回复R」「退订」「回T退订」；②「回6查利息」「回8确认金额」
+     * 「回2办理」这类「回 + 数字 + 动词」的菜单式引导。**手写扫描、零正则**（DEC-024）。
+     */
+    private fun replyCommandHit(body: String): String? {
+        for (word in NOT_BILL_REPLY_COMMAND) {
+            if (body.contains(word, ignoreCase = true)) return word
+        }
+        var i = body.indexOf('回')
+        while (i >= 0) {
+            val digit = body.getOrNull(i + 1)
+            val verb = body.getOrNull(i + 2)
+            if (digit != null && digit in '0'..'9' && verb != null && verb in REPLY_COMMAND_VERBS) {
+                return body.substring(i, minOf(body.length, i + 3))
+            }
+            i = body.indexOf('回', i + 1)
+        }
+        return null
+    }
+
+    /** 是否含强交易锚点（尾巴 4 位卡号 / 余额 / 扣款入账类动词）——用于放行真正的交易短信。 */
+    private fun hasStrongTransactionAnchor(body: String): Boolean {
+        if (body.contains("余额")) return true
+        if (hasCardTail(body)) return true
+        return STRONG_TRANSACTION_WORDS.any { body.contains(it) }
+    }
+
+    /** 「尾号」+ 至少 4 位数字（允许中间夹空格）。 */
+    private fun hasCardTail(body: String): Boolean {
+        var i = body.indexOf("尾号")
+        while (i >= 0) {
+            var digits = 0
+            var j = i + 2
+            while (j < body.length && digits < 4) {
+                val c = body[j]
+                when {
+                    c in '0'..'9' -> digits++
+                    c == ' ' -> Unit
+                    else -> break
+                }
+                j++
+            }
+            if (digits >= 4) return true
+            i = body.indexOf("尾号", i + 2)
+        }
+        return false
     }
 
     /** 金额扫描结果：交易金额 + 余额（可空）。 */

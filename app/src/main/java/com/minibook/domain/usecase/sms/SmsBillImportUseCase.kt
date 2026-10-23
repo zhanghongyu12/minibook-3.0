@@ -16,6 +16,7 @@ import com.minibook.domain.model.SmsParseOutcome
 import com.minibook.domain.model.SmsPendingItem
 import com.minibook.domain.model.SmsScanMode
 import com.minibook.domain.model.SmsScanPreview
+import com.minibook.domain.model.SmsSenderSummary
 import com.minibook.domain.model.SmsWhitelistEntry
 import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.usecase.bill.ImportBillUseCase
@@ -92,9 +93,26 @@ class SmsBillImportUseCase @Inject constructor(
             val unrecognized = mutableListOf<SmsPendingItem>()
             val notBillReasons = mutableListOf<String>()
             val parsedAll = mutableListOf<SmsParseOutcome.Parsed>()
+            // 导入来源（docs/15 第 2 条，2026-10-13）：「允许导入」被关掉的发送方，其短信一律
+            // **不解析、不计入账单**，只往「非账单」计数里记一条理由（计数闭合不变、不静默消失）。
+            val noImport = whitelistStore.entries().filterNot { it.importEnabled }
+                .mapTo(mutableSetOf()) { it.sender }
+            val senderAgg = linkedMapOf<String, SmsSenderAggregate>()
 
             for (message in messages) {
-                when (val outcome = parseMessage(message)) {
+                val agg = senderAgg.getOrPut(message.address) { SmsSenderAggregate() }
+                agg.totalCount++
+                agg.lastAtMs = maxOf(agg.lastAtMs, message.receivedAtMs)
+                if (agg.institution == null) {
+                    agg.institution = SmsSenderNamer.name(message.address, message.body)
+                }
+                if (message.address in noImport) {
+                    notBillReasons += "来源未勾选（${message.address}）"
+                    continue
+                }
+                val outcome = parseMessage(message)
+                if (outcome is SmsParseOutcome.Parsed) agg.billCount++
+                when (outcome) {
                     is SmsParseOutcome.NotBill -> notBillReasons += outcome.reason
                     is SmsParseOutcome.Unrecognized -> unrecognized += SmsPendingItem(
                         id = message.id,
@@ -128,6 +146,10 @@ class SmsBillImportUseCase @Inject constructor(
                 }
             }
 
+            // 来源清单（docs/15 第 2 条）：把**真出过账单**的发送方登记进来源配置（默认允许导入），
+            // 只新增不覆盖；纯通知/营销号不登记，避免把来源列表撑成垃圾堆。
+            whitelistStore.rememberSenders(senderAgg.filterValues { it.billCount > 0 }.keys)
+
             val preview = SmsScanPreview(
                 scanTotal = messages.size,
                 importable = importable,
@@ -140,6 +162,7 @@ class SmsBillImportUseCase @Inject constructor(
                 scanMode = mode,
                 sinceMs = if (incremental) watermark ?: 0L else 0L,
                 scannedAtMs = scanAtMs,
+                senders = SmsSenderSummaryBuilder.build(senderAgg, noImport),
             )
             preview.assertClosed()
             preview
@@ -161,7 +184,13 @@ class SmsBillImportUseCase @Inject constructor(
         withContext(ioDispatcher) {
             val rows = preview.importable.map { it.row }
             val result: BillImportResult =
-                importBillUseCase.importParsedRows(rows, TransactionSource.SMS_IMPORT, ledgerId)
+                importBillUseCase.importParsedRows(
+                    rows,
+                    TransactionSource.SMS_IMPORT,
+                    ledgerId,
+                    // L0/L3 全量预览确认：用户看得见每一行，允许归一化弱匹配规则出建议（TASK-084）。
+                    allowWeakRuleMatch = true,
+                )
 
             recordManualConfirmations(preview.importable)
 
@@ -250,6 +279,8 @@ class SmsBillImportUseCase @Inject constructor(
             listOf(parsed.row),
             TransactionSource.SMS_IMPORT,
             ledgerId,
+            // L1「待确认」是用户看得见、改得动的路径：允许归一化弱匹配规则出建议（TASK-084）。
+            allowWeakRuleMatch = true,
         )
         if (result.success > 0) {
             whitelistStore.upsert(SmsWhitelistPolicy.afterManualConfirm(whitelistStore.find(parsed.sender))
@@ -329,6 +360,10 @@ class SmsBillImportUseCase @Inject constructor(
     suspend fun setAutoEnabled(sender: String, enabled: Boolean) =
         whitelistStore.setAutoEnabled(sender, enabled)
 
+    /** 「允许导入」来源开关（docs/15 第 2 条）：关掉后该发送方的短信不计入账单。 */
+    suspend fun setSenderImportEnabled(sender: String, enabled: Boolean) =
+        whitelistStore.setImportEnabled(sender, enabled)
+
     /** 库内短信总数（与外部 oracle 对齐，设计 §3.10）。 */
     suspend fun countInProvider(): Int = reader.countAll()
 
@@ -397,3 +432,5 @@ data class SmsCatchUpResult(
     val pending: Int = 0,
     val skippedReason: String? = null,
 )
+
+/** 扫描期发送方聚合与「导入来源」清单构造见 [SmsSenderSummaryBuilder]（抽出去是为了可 JVM 单测）。 */

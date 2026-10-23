@@ -32,6 +32,7 @@ class SyncApi @Inject constructor(
         const val PATH_REFRESH = "/api/v1/auth/refresh"
         const val PATH_LOGOUT = "/api/v1/auth/logout"
         const val PATH_ME = "/api/v1/me"
+        const val PATH_DELETE_ACCOUNT = "/api/v1/auth/delete-account"
         const val PATH_PUSH = "/api/v1/sync/push"
         const val PATH_PULL = "/api/v1/sync/pull"
         const val PATH_STATUS = "/api/v1/sync/status"
@@ -88,6 +89,35 @@ class SyncApi @Inject constructor(
             accessToken = accessToken,
             deserializer = SyncUserDto.serializer(),
         )
+
+    override suspend fun updateProfile(
+        baseUrl: String,
+        accessToken: String,
+        request: SyncProfileUpdateRequest,
+    ): SyncProfileUpdateResponse =
+        call(
+            baseUrl = baseUrl,
+            path = PATH_ME,
+            method = "PATCH",
+            body = json.encodeToString(SyncProfileUpdateRequest.serializer(), request),
+            accessToken = accessToken,
+            deserializer = SyncProfileUpdateResponse.serializer(),
+        )
+
+    override suspend fun deleteAccount(
+        baseUrl: String,
+        accessToken: String,
+        request: SyncDeleteAccountRequest,
+    ) {
+        // 用 POST 而不是 DELETE：DELETE 带请求体在部分反向代理/网关下会被丢掉（账户删除必须可靠）
+        callRaw(
+            baseUrl = baseUrl,
+            path = PATH_DELETE_ACCOUNT,
+            method = "POST",
+            body = json.encodeToString(SyncDeleteAccountRequest.serializer(), request),
+            accessToken = accessToken,
+        )
+    }
 
     // ==== 同步 ====
 
@@ -159,12 +189,19 @@ class SyncApi @Inject constructor(
         if (accessToken != null) requestBuilder.header("Authorization", "Bearer $accessToken")
         when (method) {
             "GET" -> requestBuilder.get()
+            "PATCH" -> requestBuilder.patch((body ?: "").toRequestBody(JSON_CONTENT_TYPE.toMediaType()))
             else -> requestBuilder.post((body ?: "").toRequestBody(JSON_CONTENT_TYPE.toMediaType()))
         }
 
-        val response = try {
+        // 读 body 同样是网络 I/O：**必须**留在 withContext 里面。
+        // 2026-10-12 实测缺陷：原实现把 `resp.body?.string()` 放在 withContext 外面，
+        // 小响应侥幸已进缓冲区、大响应就会在调用方线程真读 socket ⇒ NetworkOnMainThreadException
+        // （自动同步没暴露它，因为 SyncUseCase 整段已在 IO 上；账号页直接调本方法才踩到）。
+        val (response, text) = try {
             withContext(ioDispatcher) {
-                client.newCall(requestBuilder.build()).execute()
+                client.newCall(requestBuilder.build()).execute().use { resp ->
+                    resp to resp.body?.string().orEmpty()
+                }
             }
         } catch (e: UnknownServiceException) {
             // OkHttp 对「明文被系统拦截」抛此异常（正式包连 http:// 内网地址时）
@@ -173,11 +210,8 @@ class SyncApi @Inject constructor(
             throw SyncApiException(SyncErrorCode.NETWORK_ERROR, e.message.orEmpty())
         }
 
-        response.use { resp ->
-            val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw toApiException(resp.code, text)
-            return text
-        }
+        if (!response.isSuccessful) throw toApiException(response.code, text)
+        return text
     }
 
     /** HTTP 非 2xx → [SyncApiException]；优先用服务端错误体，解析不了就按状态码归类。 */

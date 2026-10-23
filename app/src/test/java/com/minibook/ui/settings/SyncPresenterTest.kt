@@ -1,6 +1,7 @@
 package com.minibook.ui.settings
 
 import com.minibook.data.remote.SyncAccountState
+import com.minibook.data.remote.SyncErrorCode
 import com.minibook.domain.usecase.sync.CloudStatusLine
 import com.minibook.domain.usecase.sync.ConflictWinner
 import com.minibook.domain.usecase.sync.SyncConflictRecord
@@ -24,6 +25,67 @@ import org.junit.Test
  * 计数不能漏项、危险操作必须能看出危险、失败必须说清「游标未推进（可重试）」。
  */
 class SyncPresenterTest {
+
+    // —— 账号页纯逻辑（2026-10-12 新增：显示名回退 + 改口令前置校验） ——
+
+    @Test
+    fun `显示名有昵称用昵称否则回退用户名`() {
+        assertEquals("小明", SyncPresenter.accountDisplayName("小明", "demo_user_b"))
+        // 昵称未设置 / 空串 / 纯空白 / 首尾空白：都不该让界面出现空标题或带空格的显示名
+        assertEquals("demo_user_b", SyncPresenter.accountDisplayName(null, "demo_user_b"))
+        assertEquals("demo_user_b", SyncPresenter.accountDisplayName("", "demo_user_b"))
+        assertEquals("demo_user_b", SyncPresenter.accountDisplayName("   ", "demo_user_b"))
+        assertEquals("小明", SyncPresenter.accountDisplayName("  小明  ", "demo_user_b"))
+    }
+
+    @Test
+    fun `改口令前置校验逐条给出原因`() {
+        assertNull(SyncPresenter.passwordChangeError("old-pass-1", "new-pass-1"))
+        assertEquals("请先填写原口令", SyncPresenter.passwordChangeError("", "new-pass-1"))
+        assertEquals("新口令至少 8 位", SyncPresenter.passwordChangeError("old-pass-1", "1234567"))
+        assertEquals("新口令至少 8 位", SyncPresenter.passwordChangeError("old-pass-1", ""))
+        assertEquals(
+            "新口令不能与原口令相同",
+            SyncPresenter.passwordChangeError("same-pass", "same-pass"),
+        )
+    }
+
+    @Test
+    fun `注册前置校验 口令位数不足时直说位数`() {
+        // 2026-10-12 真机事故回归：6 位口令被服务端 422 挡下，而界面当时只显示同步用的
+        // 「数据校验失败，未写入云端」——用户完全看不出是口令长度问题。
+        assertEquals("口令至少 8 位", SyncPresenter.registerError("demo_user", "123456"))
+        assertNull(SyncPresenter.registerError("demo_user", "12345678"))
+        assertEquals("请先填写用户名", SyncPresenter.registerError("  ", "12345678"))
+    }
+
+    @Test
+    fun `注册前置校验 用户名不合规时说清规则`() {
+        val tooShort = SyncPresenter.registerError("ab", "12345678")
+        assertTrue(tooShort!!.startsWith("用户名不合规"))
+        assertTrue(tooShort.contains("3–32 位"))
+        assertEquals("用户名不合规：${SyncPresenter.AUTH_RULES}", SyncPresenter.registerError("zhang hy", "12345678"))
+        assertNull(SyncPresenter.registerError("zhang.hy_1-x", "12345678"))
+    }
+
+    @Test
+    fun `登录前置校验 只拦空提交`() {
+        assertEquals("请先填写用户名", SyncPresenter.loginError("", "123456"))
+        assertEquals("请先填写口令", SyncPresenter.loginError("demo_user", ""))
+        assertNull(SyncPresenter.loginError("demo_user", "123"))
+    }
+
+    @Test
+    fun `认证类 422 文案改为说清规则 其余复用同步文案`() {
+        val rules = SyncPresenter.authErrorMessage(SyncErrorCode.VALIDATION_ERROR, "数据校验失败，未写入云端")
+        assertTrue(rules.startsWith("输入不符合要求"))
+        assertTrue(rules.contains("口令至少 8 位"))
+        assertEquals(
+            "用户名或口令不正确",
+            SyncPresenter.authErrorMessage(SyncErrorCode.INVALID_CREDENTIALS, "用户名或口令不正确"),
+        )
+        assertEquals("网络不可用", SyncPresenter.authErrorMessage(SyncErrorCode.NETWORK_ERROR, "网络不可用"))
+    }
 
     @Test
     fun `预览主句逐项给出四个计数`() {
@@ -304,4 +366,62 @@ class SyncPresenterTest {
         outcome = "lww:remote",
         winner = ConflictWinner.REMOTE,
     )
+
+    // ── 2026-10-12 第二轮：注册时间（时区）与注册 / 资料校验 ──────────────────
+
+    @Test
+    fun `时间格式化 缺时区的 ISO 串按 UTC 解释而不是原样显示`() {
+        // 真机缺陷：服务端曾返回不带时区的 naive UTC（`2026-10-12T02:36:12.277299`），
+        // Instant.parse 解析失败 ⇒ 界面把 UTC 原样显示（比本地时间早 8 小时）。
+        assertEquals(
+            SyncPresenter.fullTime("2026-10-12T02:36:12Z"),
+            SyncPresenter.fullTime("2026-10-12T02:36:12"),
+        )
+        assertEquals(
+            SyncPresenter.humanTime("2026-10-12T02:36:12Z"),
+            SyncPresenter.humanTime("2026-10-12T02:36:12"),
+        )
+    }
+
+    @Test
+    fun `时间格式化 完整时间输出年月日时分`() {
+        val text = SyncPresenter.fullTime("2026-10-12T02:36:12Z")
+        assertEquals(16, text.length) // yyyy-MM-dd HH:mm（本地时区）
+        assertTrue(text.contains(":"))
+        assertNotEquals("2026-10-12T02:36:12Z", text) // 已被解析并格式化
+    }
+
+    @Test
+    fun `时间格式化 空串与非法串给占位或原样返回不崩`() {
+        assertEquals("—", SyncPresenter.fullTime(""))
+        assertEquals("—", SyncPresenter.humanTime(""))
+        assertEquals("不是时间", SyncPresenter.fullTime("不是时间"))
+    }
+
+    @Test
+    fun `注册页 两次口令不一致时直说不一致`() {
+        assertNull(SyncPresenter.confirmError("abcd1234", "abcd1234"))
+        val reason = SyncPresenter.confirmError("abcd1234", "abcd1235")
+        assertTrue(reason != null && reason.contains("不一致"))
+    }
+
+    @Test
+    fun `改资料 邮箱留空放行 格式不对直说`() {
+        assertNull(SyncPresenter.profileError("")) // 留空 = 未填写
+        assertNull(SyncPresenter.profileError("  a.b@example.com  "))
+        assertTrue(SyncPresenter.profileError("not-an-email") != null)
+        assertTrue(SyncPresenter.profileError("a@b") != null) // 域名缺点
+    }
+
+    @Test
+    fun `注册页 未勾选协议时直说原因且点得到两份文件`() {
+        assertNull(SyncPresenter.agreementError(true))
+        val reason = SyncPresenter.agreementError(false)
+        assertTrue(
+            reason != null &&
+                reason.contains("《用户协议》") &&
+                reason.contains("《隐私政策》") &&
+                reason.contains("勾选同意")
+        )
+    }
 }

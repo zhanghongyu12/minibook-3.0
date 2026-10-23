@@ -2,6 +2,7 @@ package com.minibook.data.remote
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -33,10 +34,12 @@ class SyncAuthStore @Inject constructor(
         val KEY_BASE_URL = stringPreferencesKey("base_url")
         val KEY_USERNAME = stringPreferencesKey("username")
         val KEY_USER_ID = stringPreferencesKey("user_id")
+        val KEY_NICKNAME = stringPreferencesKey("nickname")
         val KEY_ACCESS_TOKEN = stringPreferencesKey("access_token_enc")
         val KEY_REFRESH_TOKEN = stringPreferencesKey("refresh_token_enc")
         val KEY_ACCESS_EXPIRES_AT = longPreferencesKey("access_expires_at_ms")
         val KEY_DEVICE_ID = stringPreferencesKey("device_id")
+        val KEY_AUTO_SYNC = booleanPreferencesKey("auto_sync_enabled")
         val KEY_SERVER_CURSOR = longPreferencesKey("server_cursor")
         val KEY_LAST_PUSHED_AT = stringPreferencesKey("last_pushed_at")
         val KEY_LAST_SYNC_AT = stringPreferencesKey("last_sync_at")
@@ -60,6 +63,16 @@ class SyncAuthStore @Inject constructor(
 
     suspend fun baseUrl(): String = current().baseUrl
 
+    /**
+     * 自动同步开关（**默认开**，DEC-038）：已登录时「打开 / 回到 App」静默跑一次双向同步。
+     * 关掉后只剩手动三模式。开关本身不是敏感信息，明文存。
+     */
+    suspend fun autoSyncEnabled(): Boolean = dataStore.data.first()[KEY_AUTO_SYNC] ?: true
+
+    suspend fun setAutoSyncEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_AUTO_SYNC] = enabled }
+    }
+
     /** 登录/注册成功后落盘会话（令牌加密）。 */
     suspend fun saveSession(
         baseUrl: String,
@@ -77,6 +90,9 @@ class SyncAuthStore @Inject constructor(
             prefs[KEY_REFRESH_TOKEN] = secretCipher.encrypt(refreshToken)
             prefs[KEY_ACCESS_EXPIRES_AT] = System.currentTimeMillis() + expiresInSeconds * 1000L
         }
+        // 写完**必须能读回**才算登录成功：否则会出现「服务端 200、本地却没登录」的静默失败
+        // ——用户看到的就是「点了登录没反应」。宁可在这里抛一条能读懂的错。
+        check(current().isLoggedIn) { "登录信息未能写入本地（令牌写入后不可读，请重试）" }
     }
 
     /** 令牌轮换后只更新令牌与到期时间（不动账号与游标）。 */
@@ -107,10 +123,23 @@ class SyncAuthStore @Inject constructor(
         dataStore.edit { prefs ->
             prefs.remove(KEY_USER_ID)
             prefs.remove(KEY_USERNAME)
+            prefs.remove(KEY_NICKNAME)
             prefs.remove(KEY_ACCESS_TOKEN)
             prefs.remove(KEY_REFRESH_TOKEN)
             prefs.remove(KEY_ACCESS_EXPIRES_AT)
         }
+    }
+
+    /**
+     * 缓存服务端昵称（**展示用副本**，非权威数据）。
+     *
+     * 用途：首页顶部「登录信息」行要在**不发起网络请求**的前提下显示昵称
+     * （2026-10-13 用户要求：未登录显示登录链接、已登录显示昵称）。
+     * 权威值永远在服务端（`GET /me` 的 `nickname`）——本处只是把它缓存下来供离线展示；
+     * 每次成功拉到资料（账号页进入 / 保存资料）都会覆盖写一次。
+     */
+    suspend fun updateNickname(nickname: String) {
+        dataStore.edit { it[KEY_NICKNAME] = nickname }
     }
 
     /** 设备 ID：首次调用生成 UUID 并持久化（随请求上报，用于服务端设备列表）。 */
@@ -160,6 +189,7 @@ class SyncAuthStore @Inject constructor(
         baseUrl = this[KEY_BASE_URL].orEmpty(),
         username = this[KEY_USERNAME].orEmpty(),
         userId = this[KEY_USER_ID].orEmpty(),
+        nickname = this[KEY_NICKNAME].orEmpty(),
         deviceId = this[KEY_DEVICE_ID].orEmpty(),
         serverCursor = this[KEY_SERVER_CURSOR] ?: 0L,
         lastPushedAt = this[KEY_LAST_PUSHED_AT].orEmpty(),
@@ -177,6 +207,8 @@ data class SyncAccountState(
     val baseUrl: String = "",
     val username: String = "",
     val userId: String = "",
+    /** 服务端昵称的本地缓存副本（可能为空；权威值在服务端）。 */
+    val nickname: String = "",
     val deviceId: String = "",
     val serverCursor: Long = 0L,
     val lastPushedAt: String = "",
@@ -190,4 +222,16 @@ data class SyncAccountState(
 
     /** 服务器地址是否已配置（未登录时也可先填地址）。 */
     val hasServer: Boolean get() = baseUrl.isNotEmpty()
+
+    /**
+     * 首页「登录信息」行要显示的名字：已登录 = 昵称优先、回退用户名；未登录 = null。
+     *
+     * 纯派生属性（无网络、无 IO），供首页在离线时也能立刻显示出名字。
+     */
+    val displayName: String? get() = when {
+        !isLoggedIn -> null
+        nickname.isNotBlank() -> nickname
+        username.isNotBlank() -> username
+        else -> null
+    }
 }

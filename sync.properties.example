@@ -1,0 +1,16 @@
+# 远程入口地址模板：复制为同目录下的 sync.properties（已 gitignore）再填真值
+#
+# 为什么要这个文件：远程服务器地址属于「本机/服务器专用配置」，**不进版本库**
+# （见 docs/14_cloud_sync.md §17 与 tools/check-secrets.ps1 的提交前体检）。
+#
+# 键说明：
+#   sync.baseUrl      正式包（release）内置的入口；同时决定 release 的明文放行 host。
+#                     例：https://api.example.com   或   http://<公网IP>:<端口>
+#                     留空 = 未配置（正式包会明确提示「未配置服务器地址」，不会静默失败）。
+#   sync.debugBaseUrl 调试包（debug）内置地址；留空则回落 http://127.0.0.1:8000
+#                     （配合 adb reverse tcp:8000 tcp:8000 联调）。填远程地址即可让调试包直连线上。
+#
+# 注意：调试包界面里始终保留地址输入框，可在手机上临时改地址；正式包不显示地址输入框。
+
+sync.baseUrl=
+sync.debugBaseUrl=

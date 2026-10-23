@@ -1,6 +1,7 @@
 package com.minibook.ui.settings
 
 import com.minibook.data.remote.SyncAccountState
+import com.minibook.data.remote.SyncErrorCode
 import com.minibook.domain.usecase.sync.CloudStatusLine
 import com.minibook.domain.usecase.sync.ConflictWinner
 import com.minibook.domain.usecase.sync.SyncConflictRecord
@@ -60,9 +61,8 @@ object SyncPresenter {
         }
     }
 
-    /** 触发二次确认的条件：会删数据或存在冲突（DEC-033 第 7 条⑤）。 */
-    fun needsDangerConfirm(plan: SyncPlan): Boolean =
-        plan.deleteCount > 0 || plan.conflictCount > 0
+    /** 触发二次确认的条件：会删数据或存在冲突（DEC-033 第 7 条⑤；判定在 [SyncPlan.needsConfirm]）。 */
+    fun needsDangerConfirm(plan: SyncPlan): Boolean = plan.needsConfirm
 
     fun confirmTitle(mode: SyncMode): String = "确认${mode.label}"
 
@@ -146,19 +146,122 @@ object SyncPresenter {
         ConflictWinner.REMOTE -> "云端"
     }
 
-    /** ISO 时间 → 本地「MM-dd HH:mm」；解析不了就原样返回（宁可难看，不可显示错误时间）。 */
+    /**
+     * ISO 时间 → 本地「MM-dd HH:mm」；解析不了就原样返回（宁可难看，不可显示错误时间）。
+     *
+     * 2026-10-12 真机缺陷：服务端曾返回**不带时区**的 UTC 串（`2026-10-12T02:36:12.277299`），
+     * `Instant.parse` 直接抛异常 ⇒ 「注册时间」把 UTC 原样显示（比本地时间早 8 小时且难看）。
+     * 现在：服务端保证带 `Z`（`UserOut` 的序列化器），客户端再兜一层「没带时区就按 UTC 解释」。
+     */
     fun humanTime(iso: String): String {
         if (iso.isEmpty()) return "—"
         return try {
-            FORMATTER.format(Instant.parse(iso))
+            FORMATTER.format(Instant.parse(withUtcOffsetIfMissing(iso)))
         } catch (e: Exception) {
             iso
         }
     }
 
+    /** 完整时间（带年份）→ 本地「yyyy-MM-dd HH:mm」；账号页的注册时间 / 上次登录用。 */
+    fun fullTime(iso: String): String {
+        if (iso.isEmpty()) return "—"
+        return try {
+            FULL_FORMATTER.format(Instant.parse(withUtcOffsetIfMissing(iso)))
+        } catch (e: Exception) {
+            iso
+        }
+    }
+
+    /** 没有时区信息的 ISO 串按 UTC 解释（与服务端 `UTCDateTime`（naive UTC）的存储口径一致）。 */
+    private fun withUtcOffsetIfMissing(iso: String): String {
+        val hasZone = iso.endsWith("Z") || iso.contains('+') || iso.lastIndexOf('-') > 9
+        return if (hasZone) iso else iso + "Z"
+    }
+
     /** 只留首段 8 字符，避免整屏 UUID 噪音。 */
     fun shortId(id: String): String = if (id.length <= 8) id else id.take(8)
 
+    /**
+     * 账号显示名（2026-10-12）：有昵称用昵称，否则回退用户名。纯函数，单测覆盖。
+     */
+    fun accountDisplayName(nickname: String?, username: String): String =
+        nickname?.trim()?.takeIf { it.isNotEmpty() } ?: username
+
+    /**
+     * 改口令的前置校验（2026-10-12）：返回 null = 通过，否则是给用户看的原因。
+     *
+     * 与服务端口径一致（`schemas.ProfileUpdateRequest`：新口令 ≥ [MIN_PASSWORD_LENGTH]），
+     * 放在客户端只为**少一次白跑的网络请求**；最终判定仍在服务端。
+     */
+    fun passwordChangeError(oldPassword: String, newPassword: String): String? = when {
+        oldPassword.isEmpty() -> "请先填写原口令"
+        newPassword.length < MIN_PASSWORD_LENGTH -> "新口令至少 $MIN_PASSWORD_LENGTH 位"
+        newPassword == oldPassword -> "新口令不能与原口令相同"
+        else -> null
+    }
+
+    /** 与服务端 `schemas.USERNAME_PATTERN` 等价：3–32 位，字母 / 数字 / 点 / 下划线 / 连字符。 */
+    private val USERNAME_REGEX = Regex("^[A-Za-z0-9_.-]{3,32}$")
+
+    /** 与服务端 `schemas.EMAIL_PATTERN` 等价（宽松：有 @、两侧非空、域名带点）。 */
+    private val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+
+    /**
+     * 账号表单规则（注册本地校验失败、以及服务端 422 时都用它）。
+     *
+     * 2026-10-12 真机事故：用户用 **6 位口令**点注册 → 服务端 422 → 界面只显示同步用的
+     * 「数据校验失败，未写入云端」，用户完全看不出是口令长度问题。服务端是唯一权威
+     * （`RegisterRequest`：username 3–32 + pattern，password ≥ [MIN_PASSWORD_LENGTH]），
+     * 客户端**先在本地拦下并把规则说清**，不发无用的请求。
+     */
+    const val AUTH_RULES = "用户名 3–32 位（字母 / 数字 / 点 / 下划线 / 连字符），口令至少 8 位"
+
+    /** 注册前置校验：不合规就本地拦下，并说清是哪一条。 */
+    fun registerError(username: String, password: String): String? = when {
+        username.isBlank() -> "请先填写用户名"
+        !USERNAME_REGEX.matches(username) -> "用户名不合规：$AUTH_RULES"
+        password.length < MIN_PASSWORD_LENGTH -> "口令至少 $MIN_PASSWORD_LENGTH 位"
+        else -> null
+    }
+
+    /** 登录前置校验（服务端只要求非空，这里只拦「空提交」）。 */
+    fun loginError(username: String, password: String): String? = when {
+        username.isBlank() -> "请先填写用户名"
+        password.isEmpty() -> "请先填写口令"
+        else -> null
+    }
+
+    /** 认证类失败文案：服务端 422 说清规则，其余（网络 / 用户名被占用 / 口令错误）复用同步文案。 */
+    fun authErrorMessage(code: SyncErrorCode, syncMessage: String): String =
+        if (code == SyncErrorCode.VALIDATION_ERROR) "输入不符合要求：$AUTH_RULES" else syncMessage
+
+    /** 注册页「确认口令」校验。 */
+    fun confirmError(password: String, confirm: String): String? =
+        if (password == confirm) null else "两次输入的口令不一致"
+
+    /**
+     * 注册页协议勾选校验（TASK-076）。
+     *
+     * 国信办秘字〔2019〕191 号三.4 禁止「默认勾选同意」，三.2 禁止「频繁征求同意」；
+     * 《移动互联网应用程序信息服务管理规定》第十六条要求注册时明示并取得同意。
+     * 所以：勾选框**默认不勾**，未勾时在本地拦下并直说原因（不是静默失败、不是模糊报错）。
+     */
+    fun agreementError(agreed: Boolean): String? =
+        if (agreed) null else "请先阅读并勾选同意《用户协议》和《隐私政策》"
+
+    /** 邮箱格式（宽松）：空 = 未填写（允许）；不合规就直说。 */
+    fun profileError(email: String): String? {
+        val trimmed = email.trim()
+        if (trimmed.isEmpty() || EMAIL_REGEX.matches(trimmed)) return null
+        return "邮箱格式不正确（示例：name@example.com）"
+    }
+
+    /** 与服务端 `MIN_PASSWORD_LENGTH` 保持一致。 */
+    const val MIN_PASSWORD_LENGTH = 8
+
     private val FORMATTER: DateTimeFormatter =
         DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
+
+    private val FULL_FORMATTER: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 }

@@ -113,6 +113,17 @@ class SmsSettingsViewModel @Inject constructor(
     }
 
     /**
+     * 「允许导入」逐项开关（docs/15 第 2 条，2026-10-13）：关掉后该来源的短信不再计入账单
+     * （扫描时进「非账单」），与「自动记账」是两件事——前者管要不要，后者管要不要免确认。
+     */
+    fun setWhitelistImportEnabled(sender: String, enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { smsBillImport.setSenderImportEnabled(sender, enabled) }
+            _whitelist.value = runCatching { smsBillImport.whitelist() }.getOrDefault(_whitelist.value)
+        }
+    }
+
+    /**
      * 清空短信白名单（隐私清理，UI 层先经 danger 强确认）。
      *
      * 备注：`SmsBillImportUseCase` 未暴露「清空」入口，故此处直接调 data 层

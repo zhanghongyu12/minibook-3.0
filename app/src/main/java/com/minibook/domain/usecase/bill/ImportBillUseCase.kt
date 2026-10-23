@@ -18,7 +18,9 @@ import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
 import com.minibook.domain.model.UserCategoryRule
 import com.minibook.domain.repository.UserCategoryRuleRepository
+import com.minibook.domain.usecase.category.CategoryRuleNormalizer
 import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
+import com.minibook.domain.usecase.category.MerchantDictionary
 import com.minibook.util.TimeFormatter
 import java.io.File
 import java.util.UUID
@@ -55,6 +57,7 @@ class ImportBillUseCase @Inject constructor(
     private val transactionDataSource: TransactionDataSource,
     private val ensureBuiltInCategories: EnsureBuiltInCategoriesUseCase,
     private val userCategoryRuleRepository: UserCategoryRuleRepository,
+    private val merchantDictionary: MerchantDictionary,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
 
@@ -102,15 +105,24 @@ class ImportBillUseCase @Inject constructor(
      *
      * @param rows 已解析的有效行（短信解析器产出，`externalId` 已带 `sms:` 前缀）
      * @param source 来源（F-14 固定 [TransactionSource.SMS_IMPORT]）
+     * @param allowWeakRuleMatch 是否允许「需要猜」的弱匹配规则参与分类（默认 false）。
+     *   **只允许在用户看得见、改得动的路径上传 true**（短信 L0/L3 预览确认）；L2 到达即记账恒为 false
+     *   ——写错不静默进账本（优先级①，见 [CategoryRuleNormalizer]）。
      */
     suspend fun importParsedRows(
         rows: List<ParsedBillRow>,
         source: TransactionSource,
         ledgerId: String,
+        allowWeakRuleMatch: Boolean = false,
     ): BillImportResult =
         withContext(ioDispatcher) {
             ensureBuiltInCategories(ledgerId)
-            assemble(BillParseResult.Success(rows = rows, skipped = emptyList()), source, ledgerId)
+            assemble(
+                BillParseResult.Success(rows = rows, skipped = emptyList()),
+                source,
+                ledgerId,
+                allowWeakRuleMatch,
+            )
         }
 
     /** 两入口共用的解析+落库核心：resolve → parse → assemble（[PreparedBillFile] 由 `use` 保证清理）。 */
@@ -135,6 +147,7 @@ class ImportBillUseCase @Inject constructor(
         parseResult: BillParseResult.Success,
         source: TransactionSource,
         ledgerId: String,
+        allowWeakRuleMatch: Boolean = false,
     ): BillImportResult {
         // 行级过滤计数（DEC-015：NEUTRAL/CLOSED/ZERO_AMOUNT 计数、PARSE_ERROR 保留明细）。
         var neutral = 0
@@ -163,6 +176,12 @@ class ImportBillUseCase @Inject constructor(
         // 自学习规则：按 ledgerId 一次查出，循环内按 source 内存子串匹配（C4「不逐行查库」）。
         val rules: List<UserCategoryRule> = userCategoryRuleRepository.getRules(ledgerId)
 
+        // 内置商户词典（docs/15 第 7 条）：只在「用户看得见、改得动」的预览路径上装载与使用
+        // （allowWeakRuleMatch=true）；L2 到达即记账不查词典，防止全局词典静默写错账。
+        if (allowWeakRuleMatch) {
+            merchantDictionary.ensureLoaded()
+        }
+
         val now = TimeFormatter.nowIso()
 
         // 单事务整批写入（DEC-015 原子性口径）：任一真实写入异常 → 整体回滚零落库。
@@ -184,7 +203,15 @@ class ImportBillUseCase @Inject constructor(
                     continue
                 }
 
-                val categoryId = resolveCategoryId(row, source, byTypeAndName, othersByName, validCategoryIds, rules)
+                val categoryId = resolveCategoryId(
+                    row,
+                    source,
+                    byTypeAndName,
+                    othersByName,
+                    validCategoryIds,
+                    rules,
+                    allowWeakRuleMatch,
+                )
                     ?: error("账本 $ledgerId 缺少 ${row.type.value} 的「${BillCategoryMapping.OTHERS_CATEGORY_NAME}」兜底分类")
 
                 toInsert += Transaction(
@@ -224,14 +251,19 @@ class ImportBillUseCase @Inject constructor(
 
     /**
      * 分类决策（F-12 自动分类 + 分类校准 + 自学习，B4/C4 优先级逐条落地）：
-     * 1. 用户自学习规则：counterparty 含 rule.keyword（子串）命中即用 rule.categoryId；
-     *    多条命中取 keyword 最长者（最具体优先）、再按 updatedAt 最新兜底；命中分类须仍属当前账本
+     * 1. 用户自学习规则：经 [CategoryRuleNormalizer] 归一化后匹配（原始串包含 / 归一化相等 /
+     *    归一化核心词被包含 = 强匹配；归一化公共前缀 ≥ 2 字 = 弱匹配）。强匹配恒可用；弱匹配仅在
+     *    `allowWeakRuleMatch=true`（用户看得见的预览路径）时可用。命中分类须仍属当前账本
      *    （`rule.categoryId in validCategoryIds`），否则视为失效、继续下探。
+     * 1.5 内置商户词典（[MerchantDictionary]，docs/15 第 7 条）：同样只在预览路径可用，
+     *    命中即给建议分类；L2 自动记账恒跳过本步。
      * 2. 内置类型映射 [BillCategoryMapping.resolve]（红包/转账/群收款/退款/收款 命中即用；
      *    商户消费/扫码付款等无类型映射 → null）。
      * 3. 仅当 2 未命中且 source=wechat：[BillCategoryMapping.resolveByCounterparty] 对手方关键词。
      * 4. 仍未命中且微信「扫二维码付款」→ 目标分类名「付款」；其余（含商户消费未命中）→「其他」兜底。
      * 支付宝：1 → 2 →「其他」，**不走** counterparty 关键词与「扫二维码付款」分支。
+     *
+     * @param allowWeakRuleMatch 是否允许弱匹配规则（默认 false = 只认强匹配，L2 自动记账用）。
      */
     private fun resolveCategoryId(
         row: ParsedBillRow,
@@ -240,19 +272,41 @@ class ImportBillUseCase @Inject constructor(
         othersByName: Map<CategoryType, String>,
         validCategoryIds: Set<String>,
         rules: List<UserCategoryRule>,
+        allowWeakRuleMatch: Boolean = false,
     ): String? {
         val type = row.type.toCategoryType()
 
-        // 第 1 步：用户自学习规则（子串命中）。
+        // 第 1 步：用户自学习规则（TASK-084：归一化「核心词」匹配，跨写法/跨门店也能对上）。
         val counterparty = row.counterparty?.trim().orEmpty()
         if (counterparty.isNotEmpty()) {
             val rule = rules.asSequence()
-                .filter { it.source == source && counterparty.contains(it.keyword) }
-                // 多条 keyword 命中：优先取 keyword 最长者（更具体）；等长按 updatedAt 最新（ISO 字典序==时间序）。
-                .sortedWith(compareByDescending<UserCategoryRule> { it.keyword.length }.thenByDescending { it.updatedAt })
+                .filter { it.source == source }
+                .map { it to CategoryRuleNormalizer.matchStrength(it.keyword, counterparty) }
+                .filter { (_, strength) ->
+                    strength == CategoryRuleNormalizer.MatchStrength.STRONG ||
+                        (allowWeakRuleMatch && strength == CategoryRuleNormalizer.MatchStrength.WEAK)
+                }
+                // 多条命中：强匹配优先、再取核心词最长者（更具体）、等长按 updatedAt 最新（ISO 字典序==时间序）。
+                .sortedWith(
+                    compareByDescending<Pair<UserCategoryRule, CategoryRuleNormalizer.MatchStrength>> {
+                        it.second == CategoryRuleNormalizer.MatchStrength.STRONG
+                    }
+                        .thenByDescending { CategoryRuleNormalizer.coreLength(it.first.keyword) }
+                        .thenByDescending { it.first.updatedAt },
+                )
+                .map { it.first }
                 .firstOrNull()
             if (rule != null && rule.categoryId in validCategoryIds) {
                 return rule.categoryId
+            }
+        }
+
+        // 第 1.5 步：内置商户词典（docs/15 第 7 条；2026-10-13 用户定案）——
+        // 只作**手动导入预览**的建议（与弱匹配规则同一路径），L2 到达即记账不查词典。
+        // 命中分类名须存在于本账本（内置分类一般都在），否则继续下探。
+        if (allowWeakRuleMatch && counterparty.isNotEmpty()) {
+            merchantDictionary.suggest(counterparty)?.let { suggested ->
+                byTypeAndName[type to suggested]?.let { return it }
             }
         }
 

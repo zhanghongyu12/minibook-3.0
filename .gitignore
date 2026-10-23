@@ -18,6 +18,14 @@ out/
 .env.local
 .env.*.local
 
+# 服务端配置：真实值一律不进库，只提交 *.example 模板
+server/.env
+server/.env.*
+!server/.env.*.example
+
+# 远程入口地址（App 内置地址 / 明文放行 host）：本机专用，模板见 sync.properties.example
+sync.properties
+
 # Editor
 .vscode/
 .idea/
@@ -65,6 +73,11 @@ cxx/
 # 导入/导出临时数据（用户数据，不进版本库）
 export.txt
 debt_import.json
+# 手机导出的真实备份（含真实账目，严禁提交）与临时校验截图
+minibook_backup_*.json
+build-verify-*.png
+build-verify-*.xml
+build-verify-*.txt
 
 # 邮箱验证凭据与本地临时文件（含授权码，严禁提交）
 cred.txt
@@ -81,3 +94,6 @@ eg/
 *.sqlite3
 server/*.db
 server/.env.local
+
+# 联调常驻测试账号凭据（本地专用，严禁提交；见 test-account.txt 头部说明）
+test-account.txt

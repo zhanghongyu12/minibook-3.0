@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  明文 HTTP 策略（2026-10-23，DEC-053 修订）：线上入口走明文 HTTP，本轮不加证书。
+
+  为什么这里**不写死具体 host**：远程服务器地址属于「本机/服务器专用配置」，**不进版本库**
+  （见仓库根 sync.properties.example 与 tools/check-secrets.ps1 的提交前体检）。
+  平台层因此不做 host 级固定，改为在**应用层收窄**：`SyncUrlValidator` 只放行内置入口那个 host
+  （地址同样来自 sync.properties 注入的 `BuildConfig.SYNC_BASE_URL`），
+  其余明文地址在发请求前就被拒，并给出可读提示而不是等网络层报错。
+
+  若某天需要恢复平台层 host 级固定：可把本文件按变体拆到
+  src/release/res/xml 与 src/debug/res/xml 各自维护（release 那份需要由本机配置生成）。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

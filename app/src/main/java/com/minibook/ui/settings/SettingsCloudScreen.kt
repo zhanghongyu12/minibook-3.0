@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +54,7 @@ import com.minibook.ui.components.TrailingValue
 @Composable
 fun SettingsCloudScreen(
     onBack: () -> Unit,
+    onOpenAccount: () -> Unit,
     viewModel: SettingsCloudViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -83,8 +85,14 @@ fun SettingsCloudScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                AccountSection(ui = ui, viewModel = viewModel)
-                SyncSection(ui = ui, viewModel = viewModel)
+                // 账号相关（登录 / 注册 / 改资料 / 退出 / 注销）已挪到「账号」页（2026-10-12 用户要求）：
+                // 本页只管「数据怎么同步」，未登录时给一条直达「账号」的路。
+                if (ui.loggedIn) {
+                    AutoSyncSection(ui = ui, viewModel = viewModel)
+                    SyncSection(ui = ui, viewModel = viewModel)
+                } else {
+                    LoginPromptRow(onOpenAccount = onOpenAccount)
+                }
                 StatusSection(ui = ui, viewModel = viewModel)
 
                 Text(
@@ -181,69 +189,51 @@ fun SettingsCloudScreen(
     }
 }
 
-/** 账号区：未登录给表单（服务器地址 / 用户名 / 口令），已登录给账号行 + 退出。 */
+/** 未登录提示行（2026-10-12）：同步入口藏在「数据」里，这里必须给一条直达「账号」的路。 */
 @Composable
-private fun AccountSection(
-    ui: SettingsCloudViewModel.UiState,
-    viewModel: SettingsCloudViewModel,
-) {
-    if (ui.loggedIn) {
-        SettingSection(
-            title = "云端账号",
-            content = {
-                SettingRow(
-                    title = ui.accountName.ifEmpty { "已登录" },
-                    subtitle = ui.baseUrl,
-                    trailing = {
-                        TextButton(onClick = { viewModel.logout() }) { Text("退出登录") }
-                    },
-                )
-            },
-        )
-        return
-    }
-
+private fun LoginPromptRow(onOpenAccount: () -> Unit) {
     SettingSection(
         title = "云端账号",
         content = {
-            Column(Modifier.padding(16.dp)) {
-                OutlinedTextField(
-                    value = ui.baseUrl,
-                    onValueChange = viewModel::onBaseUrlChange,
-                    label = { Text("服务器地址") },
-                    supportingText = { Text(SyncPresenter.URL_HINT) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = ui.username,
-                    onValueChange = viewModel::onUsernameChange,
-                    label = { Text("用户名") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = ui.password,
-                    onValueChange = viewModel::onPasswordChange,
-                    label = { Text("口令") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = { viewModel.login() },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("登录") }
-                    OutlinedButton(
-                        onClick = { viewModel.register() },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("注册") }
-                }
-            }
+            SettingRow(
+                title = "未登录",
+                subtitle = "先在「账号」里登录，才能自动或手动同步",
+                trailing = { TrailingChevron() },
+                onClick = onOpenAccount,
+            )
+        },
+    )
+}
+
+/**
+ * 自动同步区（DEC-038）：**打开 / 回到 App 时静默双向同步一次**（间隔 ≥5 分钟）。
+ *
+ * 明确写清「失败不打扰」与「会删本地/有冲突的计划不自动跑」——这两条是用户敢把开关留在
+ * 打开状态的前提（静默删账目比不自动同步糟得多）。
+ */
+@Composable
+private fun AutoSyncSection(
+    ui: SettingsCloudViewModel.UiState,
+    viewModel: SettingsCloudViewModel,
+) {
+    SettingSection(
+        title = "自动同步",
+        content = {
+            SettingRow(
+                title = "打开 App 时自动同步",
+                subtitle = when {
+                    !ui.loggedIn -> "登录后生效：打开 / 回到 App 时静默双向同步一次"
+                    ui.autoSync -> "已开启：打开 / 回到 App 时静默同步（≥5 分钟一次，失败不打扰）"
+                    else -> "已关闭：只走下面的手动同步"
+                },
+                trailing = {
+                    Switch(
+                        checked = ui.autoSync,
+                        onCheckedChange = { viewModel.setAutoSync(it) },
+                        enabled = ui.loggedIn && !ui.busy,
+                    )
+                },
+            )
         },
     )
 }

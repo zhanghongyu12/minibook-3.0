@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,19 +29,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Ledger
+import com.minibook.ui.components.LedgerGlyph
+import com.minibook.ui.components.LedgerIcons
 import com.minibook.ui.components.SheetFormScaffold
 
 /**
  * 账本编辑弹层（TASK-029，UI §2 P-11 / C-17 表单骨架）。
  *
- * 编辑态（[ledger] 非空）回填 name/icon/color；新建态（[ledger] 为 null）为空表单。
- * 三个字段 **均必填**（名称 / 图标 emoji / 颜色 `#RRGGBB`），任一为空时确认按钮置灰。
+ * 编辑态（[ledger] 非空）回填 name/icon/color；新建态（[ledger] 为 null）为空表单，图标预选
+ * [LedgerIcons.BOOK]。三个字段 **均必填**（名称 / 图标 key / 颜色 `#RRGGBB`），任一为空时确认按钮置灰。
  *
- * 图标字段为 **emoji 选择器**：预设账本常用 emoji（[EmojiPresetRow] 横向点选，选中高亮）
- * + 自定义输入框兜底（手输其他 emoji），与颜色字段「预设色行 + 手输兜底」同交互口径。
- * 项目未引入 material-icons（禁改依赖），全项目图标方案为 ImageVector 手绘 + emoji 字符。
+ * 图标字段为 **矢量图标网格**（[LedgerIconPickerGrid]，6 列 16 个，2026-10-13 起取代 emoji 行 +
+ * 自定义 emoji 输入框）；与颜色字段「预设色行 + 手输兜底」同交互口径。
+ * `Ledger.icon` 仍是 String：新选值为 [LedgerIcons] 的稳定 key，老数据里的 emoji 由
+ * [LedgerGlyph] 的 `LEGACY_EMOJI` 兜底渲染，不点选就不改写。
  *
  * 确认回调 [onConfirm] 只回传三个可编辑字段，由调用方路由到 VM create/update
  * （新建走 [CreateLedgerUseCase]，编辑走 [LedgerRepository.update]，TASK-029 决定）。
@@ -58,7 +61,9 @@ fun LedgerEditorSheet(
 ) {
     val isEdit = ledger != null
     var name by remember(ledger) { mutableStateOf(ledger?.name.orEmpty()) }
-    var icon by remember(ledger) { mutableStateOf(ledger?.icon.orEmpty()) }
+    var icon by remember(ledger) {
+        mutableStateOf(ledger?.icon?.takeIf { it.isNotBlank() } ?: LedgerIcons.BOOK)
+    }
     var color by remember(ledger) { mutableStateOf(ledger?.color.orEmpty()) }
 
     // 三字段均必填（TASK-029 规格），任一为空禁用确认。
@@ -81,15 +86,7 @@ fun LedgerEditorSheet(
         Spacer(Modifier.height(12.dp))
         Text("图标", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
-        EmojiPresetRow(selected = icon, onSelect = { icon = it })
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = icon,
-            onValueChange = { icon = it.take(4) },
-            label = { Text("自定义图标（Emoji）") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        LedgerIconPickerGrid(selected = icon, onSelect = { icon = it })
         Spacer(Modifier.height(16.dp))
         Text("颜色", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
@@ -106,58 +103,85 @@ fun LedgerEditorSheet(
 }
 
 /**
- * 预设账本图标 emoji 快捷选择行：可横向滚动的 emoji 圆格，点击即选；当前选中项以主题
- * primary 描边 + `primaryContainer` 底色高亮（与 [ColorPresetRow] 同交互口径）。
+ * 账本图标选择网格（2026-10-13，用户原话：「账本的图标也换一下」）。
  *
- * 项目未引入 material-icons（禁改依赖），全项目图标方案为 ImageVector 手绘 + emoji 字符
- * （TASK-020 偏差同口径）；账本图标以 emoji 表达，预设覆盖账本常用图标，另有表单内
- * 「自定义图标（Emoji）」输入框兜底（手输其他 emoji）。
+ * 取代原来的 emoji 快捷行 + 「自定义图标（Emoji）」输入框：6 列圆钮铺满
+ * [LedgerIcons.pickerKeys] 的 16 个矢量图标，点选即定；当前选中项以主题 primary 描边 +
+ * `primaryContainer` 底色高亮（与 [ColorPresetRow] 同交互口径）。
  *
- * @param selected 当前选中 emoji（空串表示未选）。
+ * 老账本的 emoji 仍在 DB 里原样保留、由 [LedgerGlyph] 兜底渲染；只要用户不重新点选，
+ * 就不会被改写（与分类编辑器同一口径）。
+ *
+ * @param selected 当前选中 key（空串表示未选）。
  * @param onSelect 选中回调。
  */
 @Composable
-private fun EmojiPresetRow(
+private fun LedgerIconPickerGrid(
     selected: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    columns: Int = 6,
 ) {
-    val presets = listOf(
-        "📒", "📓", "📔", "📕", "📗", "📘", "📙", "📚",
-        "💼", "💰", "🏦", "💳", "📊", "🛒", "🏠", "🚗",
-    )
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        presets.forEach { emoji ->
-            val isSelected = selected == emoji
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                    )
-                    .then(
-                        if (isSelected) {
-                            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                        } else {
-                            Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                        },
-                    )
-                    .clickable { onSelect(emoji) },
-                contentAlignment = Alignment.Center,
+        LedgerIcons.pickerKeys.chunked(columns).forEach { rowKeys ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(emoji, fontSize = 22.sp)
+                rowKeys.forEach { key ->
+                    LedgerIconChoice(
+                        key = key,
+                        selected = selected == key,
+                        onClick = { onSelect(key) },
+                    )
+                }
+                // 末行不足一行时用等宽占位撑住左对齐（与分类图标网格同做法）。
+                repeat(columns - rowKeys.size) { Spacer(Modifier.size(44.dp)) }
             }
         }
+    }
+}
+
+/** 网格里的单个账本图标钮。 */
+@Composable
+private fun LedgerIconChoice(
+    key: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+            )
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        LedgerGlyph(
+            icon = key,
+            tint = if (selected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            size = 24.dp,
+        )
     }
 }
 

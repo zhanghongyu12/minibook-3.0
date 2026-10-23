@@ -231,6 +231,19 @@ class ImportViewModel @Inject constructor(
         _uiState.value = ImportUiState.Idle
     }
 
+    /**
+     * 「导入来源」勾选（docs/15 第 2 条，2026-10-13）：落库后**立即按原模式重扫**，
+     * 让用户当场看到效果（被关掉的来源：短信从「可导入」变成「非账单·来源未勾选」）。
+     *
+     * 只改开关、不删短信、不删已入账交易；失败（存储异常）静默保留原状，不打断页面。
+     */
+    fun onSenderImportEnabled(sender: String, enabled: Boolean, mode: SmsScanMode) {
+        viewModelScope.launch {
+            runCatching { smsBillImport.setSenderImportEnabled(sender, enabled) }
+            onReadSmsBills(readSmsGranted = true, mode = mode)
+        }
+    }
+
     /** 关闭/离开复位（防御，Result 不持久，一次性反馈仅存于当前返回栈实例）。 */
     fun dismiss() {
         _uiState.value = ImportUiState.Idle

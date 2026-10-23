@@ -63,7 +63,11 @@ fun LogoLockScreen(
             modifier = Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
-            Text("📒", fontSize = 44.sp)
+            LedgerGlyph(
+                icon = LedgerIcons.BOOK,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                size = 44.dp,
+            )
         }
         Spacer(Modifier.height(16.dp))
         Text(brandName, style = MaterialTheme.typography.headlineMedium)

@@ -30,6 +30,32 @@ class SyncUrlValidatorTest {
     }
 
     @Test
+    fun `正式包只放行内置明文入口的 host（DEC-053）`() {
+        // 用文档保留段地址（TEST-NET-3）做样本：真实入口地址不入库（见 sync.properties.example）
+        val builtIn = "http://203.0.113.7:8080"
+        // 内置入口本身放行
+        assertEquals(builtIn, SyncUrlValidator.normalize(builtIn, debuggable = false, builtIn = builtIn))
+        // 同一 host、不同端口也放行（平台侧明文放行不区分端口）
+        assertEquals(
+            "http://203.0.113.7:9999",
+            SyncUrlValidator.normalize("http://203.0.113.7:9999", debuggable = false, builtIn = builtIn),
+        )
+        // 别的 host 仍是明文必拒
+        listOf("http://203.0.113.8:8080", "http://evil.example.com", "http://192.168.1.5:8000")
+            .forEach { raw ->
+                val error = runCatching {
+                    SyncUrlValidator.normalize(raw, debuggable = false, builtIn = builtIn)
+                }.exceptionOrNull() as SyncApiException
+                assertEquals("$raw 应被拒", SyncErrorCode.INVALID_BASE_URL, error.code)
+            }
+        // 内置地址是 https 时，明文白名单为空 → 一切明文都拒
+        val error = runCatching {
+            SyncUrlValidator.normalize("http://203.0.113.7:8080", debuggable = false, builtIn = "https://api.example.com")
+        }.exceptionOrNull() as SyncApiException
+        assertEquals(SyncErrorCode.INVALID_BASE_URL, error.code)
+    }
+
+    @Test
     fun `允许反向代理的路径前缀`() {
         assertEquals(
             "https://example.com/minibook",

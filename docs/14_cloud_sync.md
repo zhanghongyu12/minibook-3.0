@@ -77,7 +77,8 @@
 server/
   README.md                 # 起服务/迁移/测试三步命令
   requirements.txt          # 固定版本
-  .env.example              # DATABASE_URL / JWT_SECRET / TOKEN_TTL / PULL_LIMIT
+  .env.local.example        # 本地开发：DATABASE_URL=sqlite / JWT_SECRET / TOKEN_TTL / PULL_LIMIT / ENABLE_DOCS
+  .env.remote.example       # 远程（服务器）：DATABASE_URL=mysql / 全部占位符，真实值只落服务器 .env
   alembic.ini
   alembic/versions/0001_init.py
   app/
@@ -265,6 +266,44 @@ server/
 4. **幂等 + 失败不推进游标**：断网/中断后重试不产生重复、不跳过变更。
 5. **dry-run 预览**：点同步先算「将上传 N 条 / 将下载 M 条 / 冲突 K 条 / 将删除 D 条」，用户确认后才执行（D>0 时二次确认）。
 
+### 4.8 自动同步（前台触发，DEC-038）
+
+用户口径（2026-10-12）：「**app 能登录，在设置里可以自动云同步或者手动同步**」。故自动同步定为
+**「打开 / 回到 App 时静默跑一次」**，不是后台定时（WorkManager 周期任务最短 15 分钟且需常驻 worker，
+无明确需求不做）。
+
+| 项 | 口径 |
+|---|---|
+| 触发点 | `MainActivity.onStart()`（冷启动与从后台切回都算「回到 App」） |
+| 节流 | 距上次同步 ≥ **5 分钟**才跑（`AutoSyncManager.MIN_INTERVAL_MS`） |
+| 前置 | 已登录 + 自动同步开关打开（默认**开**，可在页面关闭） |
+| 模式 | 固定**双向**（BOTH）；手动三模式不受影响、全部保留 |
+| 危险计划 | `SyncPlan.needsConfirm`（会删本地 / 有冲突）⇒ **不自动执行**，交给用户手动确认 |
+| 失败 | **不打扰**：不弹窗不提示；游标语义与手动同步一致（失败不推进，下次幂等续上） |
+| 互斥 | `Mutex.tryLock()`：同一时刻只有一轮自动同步 |
+
+「不自动删数据」是本节最硬的一条——静默删掉用户的账目，比「少同步一次」糟糕得多。
+自动同步与手动同步的二次确认**共用 `SyncPlan.needsConfirm` 一处判定**，避免两处口径漂移。
+
+### 4.9 账号页（DEC-039 / TASK-073，2026-10-12）
+
+设置首页「账号」行 → `settings-account`：**二级页标题与入口同名（账号）**，页面只装账号能力。
+
+| 区 | 内容 |
+|---|---|
+| 未登录 | 用户名 + 口令 + 登录 / 注册（注册成功顺带登录）；**地址输入框仅 debug 版可见** |
+| 用户信息 | 显示名（昵称优先，否则回退用户名）/ 用户名 / 注册时间（`GET /api/v1/me`） |
+| 修改资料 | 改显示名；**留空 = 清除**（界面回退显示用户名） |
+| 修改口令 | 原口令 + 新口令（≥8 位）；成功后服务端撤销**全部**旧刷新令牌并换发新令牌对，客户端立即覆盖本地 |
+| 云同步 | 直达 `settings-cloud`（免得再回「数据」里找） |
+| 会话 | 退出登录 / 注销账号（口令二次确认） |
+
+- **服务地址不暴露**：`BuildConfig.SYNC_BASE_URL` 按构建类型注入；release 界面既无输入也无展示，
+  仅 debug 保留输入框。解析优先级 = debug 输入框 > 已保存地址 > 内置地址；三者皆空 ⇒ 明确提示，不静默失败。
+- 接口：`PATCH /api/v1/me`（改昵称 / 改口令；空 body ⇒ 400 `nothing_to_update`）、
+  `POST /api/v1/auth/delete-account`（口令确认；删云端 6 张业务表 + `sync_log` + 刷新令牌 + 设备 + 用户行）。
+- **注销与退出都只动云端账号，本地数据一条不删**（界面上写明，否则用户不敢点）。
+
 ## 5. Android 端设计
 
 ### 5.1 新增依赖（唯一新增：网络栈）
@@ -284,7 +323,8 @@ domain/usecase/sync/
   SyncPlan.kt           # 纯函数：本地 diff → 待上行/待下行/冲突（可 JVM 单测）
   SyncUseCase.kt        # 三模式编排 + 快照 + 墓碑 + 冲突留档 + 结果汇总
 ui/settings/
-  SettingsCloudScreen.kt# 设置 → 数据 → 云同步（账号/服务器地址/三按钮/状态/冲突）
+  SettingsAccountScreen.kt # 设置 → 账号（登录/注册/用户信息/改资料/改口令/退出/注销，DEC-039）
+  SettingsCloudScreen.kt# 设置 → 数据 → 云同步（自动同步开关/三按钮/状态/冲突；无账号表单）
   SyncPresenter.kt      # 文案与计数（纯函数，可单测）
 ```
 
@@ -353,15 +393,18 @@ ui/settings/
 
 | 阶段 | 做法 |
 |---|---|
-| **本轮（本机）** | `python -m venv .venv` → 装 `requirements.txt` → `alembic upgrade head` → `uvicorn app.main:app --host 0.0.0.0 --port 8000`；真机同 Wi-Fi 用 `http://<PC 内网 IP>:8000` |
-| 内网（`192.168.190.130`） | Docker compose：**`mysql:8`**（`--character-set-server=utf8mb4 --default-time-zone=+00:00`，数据卷独立）+ api 容器（独立目录/端口/网络，**不动现存的 Nexus 与 `/opt/dt-mw`**）+ systemd 或 compose restart |
-| 公网 | 域名 + Nginx 反代 + Let's Encrypt HTTPS；服务端加固（数据库不裸露公网、备份加密、日志脱敏） |
+| 本机开发 | `python -m venv .venv` → 装 `requirements.txt` → `alembic upgrade head` → `uvicorn app.main:app --host 0.0.0.0 --port 8000`；真机同 Wi-Fi 用 `http://<PC 内网 IP>:8000` |
+| 内网（`<内网主机IP>`，代号 host） | Docker：**`mysql:8`**（`/opt/docker/mysql/`，发布 `127.0.0.1:49779`，`utf8mb4_unicode_ci` + `+08:00`）。**该机只跑库、API 未容器化** —— 服务端代码一直是在本机 venv 里跑、连它的 49779 |
+| **腾讯云（`<远程公网IP>:3228`）＝ 现线上** | **在服务器上打镜像 + `docker compose` 部署**（2026-10-21 起）：`/opt/docker/minibook-api/` 放源码 + `Dockerfile` + `docker-compose.yml`，`docker compose build` 在服务器本机构建 `minibook-api:latest`（`python:3.12-slim`、非 root、根文件系统只读、`mem_limit 448m` / `cpus 1.0`）；容器加入 MySQL 容器所在的 `mysql_default` 网络，用容器名 `mysql` 直连 49779，**只发布 `127.0.0.1:8000`**；同机 `mysql:8`（`/opt/docker/mysql/`，同样只绑 `127.0.0.1:49779`）。详见 §14 |
+| 公网 | 域名 + Nginx 反代 + Let's Encrypt HTTPS；服务端加固（数据库不裸露公网、备份加密、日志脱敏）。**当前状态**：安全组只放行 3228(SSH)，`80/443/8000` 均未放行 ⇒ 外网只能经 SSH 隧道联调（见 §14.6） |
 
 ## 10. 风险与未决
 
 | 项 | 说明 / 处置 |
 |---|---|
-| **MySQL 环境未就绪（唯一阻塞项）** | 本机无 MySQL（无服务/无客户端/3306 未监听）。三条路：**① 你给 MySQL DSN（推荐，直接用你正在部署的库）② 你允许我在本机装 MySQL 8 ③ 允许我在 `192.168.190.130` 的 Docker 上起一个 `mysql:8` 仅作测试库**。未定之前：代码与 SQLite 测试照常推进 |
+| ~~**MySQL 环境未就绪（唯一阻塞项）**~~ → **已解决（2026-10-21）** | 生产库已迁到腾讯云那台的自建 `mysql:8`（库 `minibook`），同一套 `pytest` 在**线上那台**跑通 **73 例 / 0 失败**（§14.4）；本机仍不装 MySQL，开发与单测继续走 SQLite |
+| **外网入口未开放** | 安全组只放行 3228(SSH)，`80/443/8000` 外网不可达 ⇒ 目前只能 SSH 隧道联调；正式对外前须放行端口 + Nginx/HTTPS，并把 `app/build.gradle.kts` 里 release 的 `SYNC_BASE_URL` 从空串改成正式域名（§14.6） |
+| **同设备换账号注册被误报「用户名已被占用」**（2026-10-21 联调查出；**2026-10-22 已修**，见 §15.0） | `_touch_device()`（`server/app/routers/auth.py:76-104`）在「设备行已存在但 `user_id` 属他人」时不是改归属，而是又 `db.add(Device(id=device_id, …))`；`devices.id` 是主键 ⇒ `IntegrityError` 被 `register()` 在 `:165-167` 统一译成 `username_taken`，提示指向用户名而库中并无该用户名。模拟器实测撞上（App 存储里明文 `device_id=aeafb982…` 属 2026-10-12 建的 `emu1012a`；`pm clear` 换成新 device_id 后同一操作即 201，A/B 对照确定）。**修法（2026-10-22 落地）**：设备行已存在即**改归新用户**（改 `user_id` + 刷新 `last_seen_at`），不再重复 INSERT；`register()` 里 `IntegrityError → username_taken` 只留给真正的「并发注册同名」。回归测试两条（注册 / 登录）在缺陷版代码上均失败、修复后通过（§15.0） |
 | 引擎差异（SQLite ↔ MySQL） | 大小写敏感、DATETIME 精度、索引长度、JSON 类型、DDL 语义都不同 ⇒ §3.4 已列口径，且 **MySQL 必跑同套测试**才算交付 |
 | 客户端时钟偏移影响 LWW | 冲突留档兜底 + 文档明示；二期可加服务端时间仲裁 |
 | 交易备注上云（隐私） | 默认上云（账目完整性优先），同步页明示；如需排除备注，二期加开关 |
@@ -386,7 +429,7 @@ ui/settings/
 | 同步接口（push / pull / status、墓碑、幂等、冲突、整批回滚） | ✅ | `test_sync_push.py`(10) + `test_sync_pull.py`(5) + `test_idempotency.py`(3) + `test_conflict.py`(4) |
 | 账号隔离（只认 Bearer；伪造头无效） | ✅ | `test_isolation.py`（4 例） |
 | 6 类实体字段白名单校验 | ✅ | `server/app/entity_spec.py` + `test_sync_push.py` |
-| Alembic 建表（**MySQL 8 真连库**） | ✅ | 2026-10-10 于 `192.168.190.130:49779/minibook` 建 5 表：InnoDB + **utf8mb4_unicode_ci** + `DATETIME(6)` + `JSON`；`downgrade base ⇄ upgrade head` 双向真跑通过；`test_migration.py`（5 例） |
+| Alembic 建表（**MySQL 8 真连库**） | ✅ | 2026-10-10 于 `<内网主机IP>:49779/minibook` 建 5 表：InnoDB + **utf8mb4_unicode_ci** + `DATETIME(6)` + `JSON`；`downgrade base ⇄ upgrade head` 双向真跑通过；`test_migration.py`（5 例） |
 | 时间解析（Android 纳秒 ISO） | ✅ | `test_timeutil.py`（5 例） |
 | 中文经 `HTTP API → MySQL → 拉回`逐字一致 | ✅ | 冒烟脚本（临时，已删）：`name` 23 字符 / 44 UTF-8 字节，`equal=True`；另有直连 SQL 探针（9 字符中文 + `DATETIME(6)` 微秒 `123456` + JSON 列） |
 | Android 云端网络栈（TASK-065：OkHttp + DTO + 令牌 Keystore 包裹 + 401→刷新一次→重试） | ✅ | `app/src/test/java/com/minibook/data/remote/`：**30 例 / 0 失败**（DTO 口径 7 + 错误码 5 + 地址校验 6 + AuthStore 6 + 令牌编排 6） |
@@ -499,3 +542,245 @@ ui/settings/
    否则渲染 DDL 直接 `AttributeError: 'NoneType' has no attribute 'mappings'`。
 4. **DDL 里查 JSON 列要分步**：`sync_records`（含 JSON 列）是 0001 建的、0002 才删 ⇒ 整链 DDL 里必然出现 `JSON`，
    断言只能渲染 `0001_init:0002_typed_entities` 这一段。
+
+## 4.10 账号资料与时间口径（DEC-040 / TASK-074，2026-10-12 第二轮）
+
+- **时间契约**：`UserOut.created_at` / `last_login_at` 一律输出**带 `Z` 的 UTC** ISO 串（`@field_serializer`）。
+  背景：`UTCDateTime` 读出来是 **naive UTC**，不带时区直接序列化会让客户端 `Instant.parse` 解析失败，
+  真机上「注册时间」原样显示 UTC（差 8 小时）。客户端 `SyncPresenter.humanTime` 另做一层兜底
+  （缺时区按 UTC 解释），`fullTime` 输出本地 `yyyy-MM-dd HH:mm`。
+- **资料字段**：`users.email`(254) / `bio`(80) / `region`(32)，迁移 `0004_user_profile_fields`。
+  `PATCH /api/v1/me` 用 `model_fields_set` 判定「传了哪个字段」：**空串 = 清除**（归一为 NULL），
+  未传 = 不改；客户端 `explicitNulls=false` ⇒ null 字段不上线，两者配合实现「只改一项不动其它」。
+- **`last_login_at`**：取该用户最近一条**首发**刷新令牌（`refresh_tokens.rotated_from IS NULL`）的 `issued_at`；
+  令牌轮换不算新登录（否则这个数字每次都变，失去意义）。仅 `GET /api/v1/me` 返回。
+- **账号页展示 8 项**：显示名 / 用户名 / 邮箱 / 个性签名 / 地区（可改，空 = 未填写）/ 注册时间 /
+  上次登录（只读）/ 账号 ID（只读，报障用）。
+- **登录 / 注册独立成页**（`settings-login` / `settings-register`）：`AuthViewModel` 只管认证（注册成功即登录），
+  账号页只管资料与会话。服务器地址仍只在调试版登录页可改（正式版界面不出现地址）。
+- **云同步入口只留一处**：设置 → 数据 → 云同步（账号页不再重复放）。
+
+## 14. 上云实录：库迁移 + 容器化部署 + 模拟器联调（2026-10-21）
+
+起因（用户三点要求）：① 把数据库迁到腾讯云那台；② 后台服务部署到那台，**且明确要求「在服务器打镜像，用 Docker 部署」，不许在服务器上直接装 venv 跑 uvicorn**；③ 用模拟器连线上服务器测试。
+
+### 14.1 两台机器的既有事实（迁移前现查，非推演）
+
+| | host（`<内网主机IP>`，`zhy`） | 腾讯云（`<远程公网IP>:3228`，`VM-0-4-ubuntu`） |
+|---|---|---|
+| OS / 资源 | Ubuntu 5.15 内核，97G 盘（41G 可用） | Ubuntu 20.04，**2C2G**，40G 盘（30G 可用） |
+| MySQL | `mysql:8.0` 容器，发布 `0.0.0.0:49779`（对局域网开放） | `mysql:8.0` 容器，**只绑 `127.0.0.1:49779`**；`/opt/docker/mysql/`（compose + `conf.d/my.cnf` 全套 2G 机型内存上限） |
+| 版本 / 口径 | 8.0.46 / utf8mb4 / **utf8mb4_unicode_ci** / `+08:00` | 8.0.46 / utf8mb4 / **utf8mb4_unicode_ci** / `+08:00`（与 host 完全一致） |
+| API | **未部署**（该机只跑库） | 迁移前无 |
+| 迁移前库 | `minibook`：10 账号 / 2215 交易 / 78 分类 / 2329 日志；head = `0004_user_profile_fields` | `minibook` **空库**（0 张表），`minibook_test` 不存在 |
+
+> 「口径完全一致」是这次迁移最省事的地方：版本、字符集、排序规则、时区全同，且 12 张表**没有任何 `TIMESTAMP` 列**
+> （业务时间一律是 `DATETIME(6)` + 客户端原始 ISO 串）⇒ 不存在「迁移后时间整体偏 8 小时」那类经典事故。
+
+### 14.2 库迁移与验证（结论：真实账号数据逐字节一致）
+
+做法：host 上 `mysqldump --single-transaction`（完整 dump 用于导入；另出一份 `--order-by-primary --skip-extended-insert --skip-comments --compact` 的**规范化 dump** 供逐字节比对）→ 经本机中转 → 导入腾讯云的空 `minibook`。
+
+| 校验项 | 结果 |
+|---|---|
+| 11 张表逐表行数 | 两侧完全一致（10 / 7 / 78 / 2215 / 16 / 1 / 0 / 2329 / 10 / 18 + `alembic_version`） |
+| 规范化 dump 逐字节 diff | **哈希相同**（只需归一化两处**渲染差异**：目标侧 mysqldump 多打 `CHARACTER SET utf8mb4`，以及 `AUTO_INCREMENT=` 计数器） |
+| `information_schema.columns` 物理元数据（120 列 × 类型/可空/字符集/排序规则/默认值/extra） | **两侧哈希完全相同**（`c36ee8a4…`） |
+| `information_schema.tables`（12 表 × 引擎 / 排序规则） | **哈希相同**（`e55ba085…`；`table_rows` 是引擎估算值，已从比对中排除） |
+| 逐账号行数（用户名 + `user_id` + 6 张表计数） | 6 个非测试账号**哈希相同**（`326161b5…`）：`demo_user` 若干交易、`demo_user_b` 若干交易、`emu1012a` 1 交易 / 24 分类，其余为 0 |
+
+**测试账号清理（必须知情的一处删除）**：源库 10 个账号里有 **4 个是历次设备端 E2E 留下的 `dev_*`**
+（每个 3 交易 + 1 分类 + 1 账本 + 7 日志；用测试硬编码口令 `E2e!Passw0rd` 能登入 —— 这是铁证），
+外加本轮冒烟脚本第一版残留的 1 个 `smoke_*`。收口时按项目原有约定（`SyncDeviceE2ETest` 类注释「收口时用 SQL 清理」）
+把这 5 个测试账号连同其业务行一起删除 ⇒ 现库 **6 账号 / 2203 交易 / 74 分类 / 2301 日志**。
+**真实账号分毫未动**（上表逐账号哈希即证据）；如需找回测试账号，重导 `minibook-full.sql` 即可（host 与腾讯云各留一份）。
+
+### 14.3 容器化部署（在服务器上构建镜像）
+
+- 新增 `server/Dockerfile`、`server/docker-compose.yml`、`server/.dockerignore`（三者**进仓库**；`.env` 三重排除：`.gitignore` + `.dockerignore` + 只落服务器）。
+- 关键取舍：**单进程 uvicorn**（登录限流是进程内内存实现，加 `--workers` 会让限流按进程分裂）；容器**非 root**（uid 10001）且**根文件系统只读**（应用不写盘，日志走 stdout 交 docker `json-file` 轮转 20m×3）；`mem_limit 448m`（MySQL 已占 640m）；端口**只发布 `127.0.0.1:8000`**。
+- 迁移不进启动命令：需要时显式跑 `docker compose run --rm api python -m alembic upgrade head`（本轮导入的库已带 `0004` head，无需执行）。
+- 依赖补丁（**这是真 bug，不是顺手改**）：`requirements.txt` 增加 `cryptography==50.0.2`。
+  MySQL 8 默认 `caching_sha2_password`，在**非 TLS 的 TCP** 上首次认证需要用服务端 RSA 公钥加密口令，PyMySQL 缺它会直接抛异常。
+  开发机一直没暴露，是因为服务端口令缓存已热、走的是 fast-auth；**全新服务器 / 换过口令之后第一次连接必走 full-auth**。
+- 构建踩坑：容器默认走公网 PyPI，2C2G 机器 15 分钟只下到十几个包（跨境网络，CPU 几乎不动）。已把 pip 源做成**可选构建参数**
+  （`ARG PIP_INDEX_URL` / `PIP_TRUSTED_HOST`，默认退回官方 PyPI，仓库保持环境中立），服务器上一条命令即可切内网镜像重建。
+
+### 14.4 线上验证（全部真跑）
+
+| 项 | 命令 / 方式 | 结果 |
+|---|---|---|
+| 容器健康 | `docker ps` + `/healthz` | `Up (healthy)`，`{"status":"ok","db":"mysql",…}`，启动日志无异常 |
+| 双 DSN 同套测试 | 容器内 `pytest`，`TEST_DATABASE_URL` 指腾讯云 `minibook_test` | **73 例 / 0 失败**（SQLite 侧同为 73 例 / 0 失败） |
+| 线上 API 冒烟 | 容器内 httpx 打 `127.0.0.1:8000`：注册 → 登录 → me → push → pull → status → refresh → 幂等 → 注销 | 全绿：**令牌轮换**（旧 refresh 复用 401）、**幂等重推 no-op**（`server_seq` 不推进 2842→2842）、注销后登录 401；脚本末尾用 `delete-account` **自清理**，不给生产库留垃圾 |
+| 模拟器端到端 | `emulator-5554` 跑 `SyncDeviceE2ETest`，`10.0.2.2:8000` 经隧道打到**线上** | 见 §14.6 与 `09_test_report.md` |
+
+### 14.5 运行环境与口令口径
+
+- 服务器侧配置只存在于 `/opt/docker/minibook-api/.env`（`chmod 600`，被 `.gitignore` 与 `.dockerignore` 双重排除）：
+  `DATABASE_URL` 用容器名直连（`mysql:49779`）；`JWT_SECRET` **与迁移前 host 完全一致** ⇒ 老设备手里的令牌不因换服务器而失效（迁移过来的 18 条 `refresh_tokens` 仍然有效）。
+- 腾讯云 `minibook` 库用户口令已重置为 24 位随机串（**只存该 `.env`**），认证插件保持 `caching_sha2_password`（**不退回**已废弃的 `mysql_native_password`）；另建 `minibook_test` 并授权给同一用户（库名含 `test`，满足 `conftest.py` 的 `drop_all` 护栏）。
+- 本机不装 MySQL 这条口径保持不变。
+
+### 14.6 外网可达性（**当前未开放，需用户决定**）
+
+腾讯云安全组**只放行 3228(SSH)**：`80 / 443 / 8000` 从外网实测均不可达（`TcpTestSucceeded=False`）。
+故本轮模拟器联调走 **SSH 隧道**（`127.0.0.1:8000 → 服务器 127.0.0.1:8000`），模拟器经 `10.0.2.2:8000`
+（= 宿主机回环）打上去 —— 走的是**同一个线上进程与同一个线上库**，只是入口不经公网。
+
+要让手机在任意网络下直连，需要在腾讯云控制台放行端口，并建议同时上 Nginx + Let's Encrypt HTTPS：
+release 包**禁止明文 HTTP**，且 `app/build.gradle.kts` 里 release 的 `SYNC_BASE_URL` 目前是空串，
+必须改成正式域名并重出一版正式包验证。
+
+### 14.7 模拟器联调线上服务器（TASK-088 第 3 条，2026-10-21）
+
+**通道（本轮实际走的路径）**：模拟器内 App 调试版默认 `SYNC_BASE_URL=http://127.0.0.1:8000`
+→ `adb reverse tcp:8000 tcp:18000` → 本机 `127.0.0.1:18000` → SSH 隧道 → 服务器 `127.0.0.1:8000`。
+（§14.6 记的 `10.0.2.2:8000` 是插桩测试用的另一条等价路径 —— `10.0.2.2` 即宿主机回环；两条最终都落到**同一个线上进程与同一个线上库**。）
+这条通道的好处：**不用改 App 里的地址、不用开公网端口**，模拟器上「服务器地址（仅调试版可见）」框里就是回环地址。
+
+**UI 路径（结论：闭环成立）**
+1. 设置 → 账号 → 注册新账号 → 填 `emu1022a` / 口令 / 地址 → 勾选协议 → 注册并登录 ⇒ 直接进「用户信息」页（该页数据来自线上 `GET /me`）。
+2. 服务端同一连接（`172.18.0.1:60096`，即经隧道进来的宿主侧地址）三条日志：`POST /api/v1/auth/register 201` → `POST /api/v1/auth/login 200` → `GET /api/v1/me 200`；库内 `emu1022a` + 1 设备 + 1 refresh_token。
+3. 记一笔（餐饮 ¥12.34）→ 设置 → 数据 → 云同步 → 双向同步：预览「上行 26 条 · 下行 0 条」→ 执行 → 结果「上传 26 条 · 云端删除 0 条 · 下载 0 条 · 删除本地 0 条 · 冲突 0 条」+ 自动留备份 `minibook_backup_20261021_081811.json`。
+4. 服务端 `GET /api/v1/sync/pull?since_seq=0&limit=200 → 200` + `POST /api/v1/sync/push → 200`；库内 `categories 24 / ledgers 1 / transactions 1 / sync_log 26`（`server_seq` 2843–2868，**承接迁移前的 2842 继续递增**），交易 `amount=1234 / date=2026-10-21 / server_seq=2868` ⇒ 上传条目数与库内落地条目数逐一对上。
+
+**插桩 E2E 仍未通过（诚实挂账）**：`SyncDeviceE2ETest` 确实打到了线上（服务端 07:41:03 UTC 建了 `dev_4b7b695cf7` + 1 设备 + 1 令牌），但用例随即卡死：`files/sync_backup/` 无新增（`exportAll` 未执行）、没有第三个 socket、服务端 15 分钟只收到容器健康检查、该账号业务行数恒为 0。已排除 `DatabaseProvider` 门控（其 `openState` 默认实现是 `flowOf(database)`）；栈取不到（AVD `ro.debuggable=0` / `ro.build.type=user`，`/data/anr` 不可读，`kill -3` 的 trace 进 tombstoned）。卡点收窄到 `preview()` 的本地阶段，**未定位到具体行**。
+
+**联调中查出的服务端缺陷（2026-10-22 已修并部署，见 §15.0）**：同设备换账号注册被误报「该用户名已被占用」，根因见 §10 风险行与 `06_tasks.md` TASK-088 第 ④ 节（`_touch_device()` 对「设备属于别人」重复 INSERT 主键）。
+
+---
+
+## 15. 公网安全接入方案（2026-10-22 出稿；**2026-10-23 被用户否决**：443 不批准、暂不加证书 → 实际执行见 §16）
+
+用户要求：手机在**任意网络**下都能连上线上服务、**用最少的端口**、开放端口由用户在腾讯云控制台操作。
+**本节只出方案，未动手**；审批后按 §15.3 执行。
+
+### 15.0 同日已完成的前置修复：`_touch_device` 设备归属（TASK-089）
+
+- **根因**：`devices.id` 就是客户端上报的 `device_id`（**主键**，同一时刻只属于一个账号），但旧实现在「设备行已存在、`user_id` 属他人」时**又 `db.add(Device(id=device_id, …))`** ⇒ 撞主键 `IntegrityError` ⇒ `register()` 在 `auth.py:165-167` 把它一并译成 `username_taken`（提示「该用户名已被占用」，而该用户名在库里并不存在）；`login()` 走同一个 `_touch_device()` 且**没有异常兜底** ⇒ 「同一台设备换账号登录」直接 **500**（2026-10-22 读码补证的第二个面）。
+- **修法**：`_touch_device()` 遇已存在的设备行**改归属**（`user_id = user.id` + 刷新 `last_seen_at`/`name`/`platform`/`app_version`），不再重复 INSERT；`register()` 里 `IntegrityError → username_taken` 保留给真正的「并发注册同名」。**未加**新错误码、**未改**客户端（最小改动，客户端 `SyncErrorCode.UNKNOWN` 本就前向兼容）。
+- **证据链**：① 新增 2 条回归测试（注册 / 登录各一）；② 把函数临时还原成缺陷版 → 两条**均失败**（`UNIQUE constraint failed: devices.id`）→ 恢复修复版 → **75 passed**（本地 SQLite，32.56 s）；③ 容器内对腾讯云 MySQL **75 passed**（73.19 s）；④ 新镜像 `minibook-api:latest` = `6f29b8c354b7`，`docker compose up -d` 后容器 `healthy`、容器内 `app/routers/auth.py:107` 含改归属行；⑤ **线上实测**：用属于 `emu1012a` 的 `device_id=aeafb982…` 登录 `minibook_test` → **200**（旧版该路径 500），且 `devices` 表该行 `user_id` 由 `emu1012a` 改为 `minibook_test`。
+- **回滚**：旧镜像保留为 `minibook-api:pre-fix-20261021`（`7c3e39166f84`），回滚 = 改 compose 的 `image:` 为该标签 + `docker compose up -d`。
+
+### 15.1 结论：只开 **443/tcp** 一个端口
+
+| 端口 | 用途 | 处置 |
+|---|---|---|
+| **443/tcp** | HTTPS 入口（反向代理 → 容器 `8000`） | **唯一需要新增放行的端口** |
+| 3228/tcp | SSH 管理 | 保持现状（建议再加：只允许你的常用出口 IP + 禁口令登录） |
+| 8000 / 49779 | API / MySQL | **继续只绑 `127.0.0.1`，永不对外**（现状即如此，本次不改） |
+| 80/tcp | HTTP-01 证书挑战 / 301 跳转 | **不开**：反代用 **Caddy + TLS-ALPN-01**，ACME 挑战直接在 443 上完成 |
+
+选型理由：**Caddy** 自动申请/续期证书、默认只开 TLS1.2+ 与 HSTS、且支持 TLS-ALPN-01 —— 相比「Nginx + certbot(HTTP-01)」**少开一个 80 端口**，正好满足「最少端口」。资源开销 ~30–60 MB 内存（本机现有 mysql 640m + api 448m ≈ 1.1 G / 1.97 G，余量够）。
+
+### 15.2 前置条件（需你先定）
+
+1. **域名**（硬前提）：例如 `api.example.com`，A 记录指向 `<远程公网IP>`。**Let's Encrypt 不给裸 IP 签证书**。
+   没有域名时的备选：**(a)** 自签证书 + App 内置信任（要改 App 的 `network_security_config`，且 release 包默认禁明文 HTTP）；**(b)** 暂不开放，继续走 SSH 隧道联调（现状）。
+2. 是否同意把 `app/build.gradle.kts` 里 release 的 `SYNC_BASE_URL`（**现为空串**）改成 `https://<域名>`，并**重出一版正式包**（真机安装需你当次授权）。
+3. 是否把 3228 也限制来源 IP（更安全，但换网络时要记得改）。
+
+### 15.3 变更步骤（审批后执行，含回滚点）
+
+1. **备份**：`mysqldump` 全库 + `/opt/docker/minibook-api`、`/opt/docker/mysql` 配置副本（当前**无自动备份**，这步必须有）。
+2. **你侧**：域名 A 记录 → `<远程公网IP>`；腾讯云安全组放行 **443/tcp**（其余不动）。
+3. **服务器侧**：新增 `/opt/docker/caddy/`（compose + Caddyfile），Caddy 容器加入 `mysql_default` 网络，反代到 `minibook-api:8000`；**只发布 `443`**，API 容器保持只绑回环。
+4. **Caddyfile 收敛**：只放行 `/api/v1/*` 与 `/healthz`（其余 404）；请求体上限 2 MB；隐藏 `Server` 头；启用访问日志轮转；TLS 参数用 Caddy 默认（TLS1.2/1.3 + HSTS）。
+5. **真实 IP 与限流（最容易漏的坑）**：应用内登录限流按 `request.client.host` 计数，经反代后**所有请求都变成网关 IP** ⇒ 限流会「一个人限住所有人」。必须先让应用只信任反代来源的 `X-Forwarded-For`（uvicorn `--proxy-headers --forwarded-allow-ips=…` 或等价配置），再加一条「同一 IP 打 11 次登录应得 429」的验证。
+6. **证书与 TLS 校验**：`openssl s_client -connect <域名>:443` 看证书链/协议版本；确认无自签告警。
+7. **外网实测（我在 Windows 侧做）**：`curl https://<域名>/healthz` 200（**不加 `-k`**）；`Test-NetConnection` 确认只有 443（+3228）可达、8000/49779 不可达。
+8. **端到端**：用常驻测试账号 `minibook_test`（见 `test-account.txt`，已 gitignore）从**外网**跑登录 + push/pull。
+9. **App 侧**：改 `SYNC_BASE_URL` → 出包 → 真机验证（需当次授权）。
+10. **回滚**：停 Caddy 容器 + 关安全组 443 ⇒ API 仍只绑回环，线上不受影响（与现在等价）。
+
+### 15.4 验收标准
+
+- 外网 `https://<域名>/healthz` → 200 且证书有效（无 `-k`）。
+- 端口面：对外仅 443（+ 3228 SSH）；8000 / 49779 外网不可达。
+- 手机**切到 4G**（不用隧道）用测试账号完成登录 + 双向同步。
+- 限流按**真实客户端 IP** 生效（同 IP 连续 11 次登录 → 429）。
+- 服务端测试仍 **75 passed**（MySQL）+ 冒烟全绿。
+
+### 15.5 风险与「本轮不做」的事
+
+- **域名与证书是你侧动作**，我无法代办；没有域名就只剩自签方案（要改 App）。
+- 公开后会被全网扫描（暴力登录尝试）：已有 argon2id + 登录限流；可再加失败退避/封禁（可选，二期）。
+- **仍然单 worker**：限流是进程内内存实现，开放公网后**不要**加 `--workers`（见 DEC-033 未决项）。
+- 本轮不做：CDN/WAF、多实例、异地备份、OAuth 第三方登录。
+
+---
+
+## 16. 公网入口上线实录（2026-10-23 执行）
+
+### 16.1 用户当天定的三条边界
+
+1. **暂时不加证书**（用的人少）；
+2. **443 不批准**，改用「另外的无关端口」转发；
+3. 生产**关掉** `/docs`、`/redoc`、`/openapi.json`。
+
+⇒ §15 的「443 + Caddy(TLS-ALPN)」方案作废，改为**明文 HTTP + Docker 端口映射 + 38080**。
+
+### 16.2 最终形态（就一个端口）
+
+| 端口 | 用途 | 对外 |
+|---|---|---|
+| **38080/tcp** | API 公网入口（Docker 映射 → 容器 8000，**明文 HTTP**） | **唯一放行**（腾讯云安全组） |
+| 3228/tcp | SSH 管理 | 维持现状 |
+| 8000 / 49779 | API / MySQL | 仍只绑 `127.0.0.1`，**不对外** |
+
+**刻意不用反代**：socat/nginx 转发会让容器只看到网关 IP，而登录限流按 `request.client.host` 计数；实测 Docker 映射把**真实公网 IP** 带进了容器（日志记为 `<本机公网IP>`），限流因此有效 —— 这是选「端口映射」而不是「反代」的实质原因（DEC-053）。
+
+### 16.3 改动清单
+
+- `server/docker-compose.yml`：`ports` 增加 `"38080:8000"`（保留 `127.0.0.1:8000:8000` 给隧道）。
+- `server/app/config.py`：新增 `enable_docs: bool = True`；`server/app/main.py` 按该开关把 `docs_url` / `redoc_url` / `openapi_url` 置 `None`。
+- `server/.env`（服务器文件，不入库）：`ENABLE_DOCS=false`；配置模板已拆成两份——`server/.env.local.example`（本地开发）与 `server/.env.remote.example`（远程/线上），后者只含占位符。
+- `server/tests/test_health.py`：新增「关掉时三处文档路由 404、探针仍 200」的测试（本地 **76 passed**）。
+- App：`app/build.gradle.kts` 正式包 `SYNC_BASE_URL` 由本机 `sync.properties` 注入（**仓库里不落地址**，见 §17）；`app/src/main/res/xml/network_security_config.xml` 只保留默认策略、不再写死 host；`AndroidManifest.xml` 挂 `android:networkSecurityConfig`；`SyncUrlValidator` 的明文放行 = 「正式包只放行内置入口的 host」，其余地址仍必须 `https://`。（2026-10-23 修订：原先 main/debug 两份资源里写死了真实 host，已按 DEC-054 拆掉 —— 代价是平台层不再固定 host，改由应用层校验。）
+
+### 16.4 验收记录（外网侧，2026-10-23）
+
+- 外网 `http://<远程公网IP>:38080/healthz` → **200**（`db:mysql`）；`/docs`、`/redoc`、`/openapi.json` → **404**（回环与公网两口一致）。
+- `minibook_test` 明文登录 **200** → `/me` 200 → push#1 `applied:2, skipped:0, server_seq:2870` → 重推 `applied:0, skipped:2, server_seq:2870`（幂等、seq 不推进）→ pull 2 条全在。
+- 服务端日志来源 IP = **真实公网 IP**（非网关 `172.18.0.1`）⇒ 限流口径正确。
+- 本地服务端套件 **76 passed**；App 侧 JVM 单测见 `docs/09_test_report.md`。
+
+### 16.5 已知代价与回滚
+
+- **明文传输**：口令与 bearer 令牌可被链路中间人看到，只剩 argon2id + 限流兜底（用户知情接受）。
+- 端口对全网可见、会被扫描探测；`/docs` 已关，减少信息暴露。
+- **回滚**：compose 去掉 `"38080:8000"` 一行 + `up -d`（公网立即断，回环与隧道不受影响）；`.env` 去掉 `ENABLE_DOCS=false` 可恢复文档；App 把 `SYNC_BASE_URL` 改回 `https://…` 或留空。
+- 后续给他人用的正式版仍应回到域名 + HTTPS（Let's Encrypt 不给裸 IP 签证书）。
+
+## 17 配置怎么放：本地/远程两份模板 + 地址不入库 + 提交前体检（2026-10-23，DEC-054）
+
+### 17.1 三条边界
+
+- **App 入口地址（远程服务器地址）只从仓库根 `sync.properties` 读**。该文件**已 gitignore**，模板是 `sync.properties.example`：
+  - `sync.baseUrl` → release 的 `BuildConfig.SYNC_BASE_URL`，并同时决定 release 的明文放行口径（应用层 `SyncUrlValidator` 只放行它的 host）；缺省空串 = 未配置，App 明确提示而不是静默连错。
+  - `sync.debugBaseUrl` → debug 的内置地址；缺省回落 `http://127.0.0.1:8000`（配 `adb reverse tcp:8000 tcp:8000` 联调）。
+- **服务端配置模板拆两份**（用户要求「一份本地开发、一份远程开发的」）：
+
+  | 文件 | 用途 | 关键内容 |
+  |---|---|---|
+  | `server/.env.local.example` | 本地开发（本机跑 API / pytest / 模拟器联调） | `DATABASE_URL=sqlite:///./dev.db`、开发用 `JWT_SECRET`、`ENABLE_DOCS=true` |
+  | `server/.env.remote.example` | 远程 / 线上（云服务器上的 API + MySQL） | MySQL DSN（口令写 `CHANGE_ME`）、`JWT_SECRET=CHANGE_ME_…`、`ENABLE_DOCS=false` |
+
+  真实值只落 `server/.env`（本机）或服务器 `/opt/docker/minibook-api/.env`（`chmod 600`），两者都不入库；两份模板在服务器上也各放一份（旧 `.env.example` 已废弃）。
+- **提交前体检**：`tools/check-secrets.ps1`（默认只查暂存区；收口用 `-All`）。
+
+### 17.2 体检脚本查什么
+
+- **禁提交文件**：`sync.properties`、`keystore.properties`、`local.properties`、`test-account.txt`、`cred.txt`、`*.jks` / `*.keystore`、`.env` 及其变体（`*.example` 放行）、`minibook_backup_*.json`、`minibook-migrate/`。
+- **内容规则**：公网 IPv4 端点（私有段 / 回环 / 链路本地 / TEST-NET / `0.0.0.0` 不算；只在 `@`、`//` 之后，或 `:端口` 之前，或配置行赋值位出现才算 —— 因此 User-Agent 里的 `Chrome/126.0.0.0`、SVG path 里的 `2.28.46.46` 不误报）；DSN 里的真实口令；`JWT_SECRET` 真实值；`-----BEGIN … PRIVATE KEY-----`；测试源码（`tests/`、`androidTest/`）里的口令赋值豁免（用的是丢弃型夹具）。
+- 命中即打印 `文件(行) 原因: 片段` 并退出码 1；全绿退出 0。本轮收口实测：**518 个文件 0 命中**。
+- **两个已经踩过的坑（写进脚本注释，别改回去）**：① Windows PowerShell 5.1 读**无 BOM 的 UTF-8** 文件会按 ANSI 解 —— `Get-Content` 必须带 `-Encoding UTF8`，否则乱码可能解出**假 IP**（本轮实测出现 2 处假命中）；② 正因如此，脚本本身**刻意只写 ASCII**（含脚本内的中文提示都会让 PS 5.1 解析失败，实测），中文说明只放在本节。
+- docs 同步去敏：`docs/*.md` 里真实公网 / 内网 IP 已全部替换为 `<远程公网IP>` / `<本机公网IP>` / `<内网主机IP>`；要真实值时看服务器 `.env` 与本机 `sync.properties`。
+
+### 17.3 换机器 / 新环境的三步
+
+1. `cp sync.properties.example sync.properties`，填 `sync.baseUrl`（远程入口）与 `sync.debugBaseUrl`（可选）。
+2. 服务端：本地开发 `cp server/.env.local.example server/.env`；服务器上按 `.env.remote.example` 填真实口令与 `JWT_SECRET`。
+3. 改完先跑 `powershell -NoProfile -File tools/check-secrets.ps1 -All`，绿了再 `git add` / `git commit`。
+

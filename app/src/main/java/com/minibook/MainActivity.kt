@@ -5,9 +5,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.Surface
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import com.minibook.ui.navigation.MiniBookNavHost
 import com.minibook.ui.theme.MiniBookTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 
 /**
  * 单 Activity + Compose 壳（ARCHITECTURE §12、TASK-018）。
@@ -39,5 +41,19 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * 「回到前台」触发自动同步（DEC-038）。
+     *
+     * 这里**不注入** `AutoSyncManager`：它依赖 `SyncUseCase` ⇒ `SyncStateDao`，而数据库只经
+     * `DatabaseGate`（真解密门）暴露 —— 字段注入会在**解锁前**构造它，实测直接启动崩溃
+     * （`DatabaseGate 未解锁/未打开，无法提供 SyncStateDao`）。故改为按需解析
+     * （[com.minibook.di.AutoSyncEntryPoint]）+ 未就绪即当作「这次不同步」；
+     * 冷启动解锁后的那一次由 [com.minibook.AutoSyncEffect] 在主界面组合时补上。
+     */
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch { runAutoSyncOnForeground(applicationContext) }
     }
 }

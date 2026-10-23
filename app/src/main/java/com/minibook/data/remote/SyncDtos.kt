@@ -44,7 +44,45 @@ data class SyncLogoutRequest(
 data class SyncUserDto(
     @SerialName("user_id") val userId: String,
     val username: String,
+    /** 显示名（可改；null ⇒ UI 回退显示 [username]）。2026-10-12 随「账号」页加入。 */
+    val nickname: String? = null,
+    /** 邮箱 / 个性签名 / 地区（均可空 = 未填写）。2026-10-12 第二轮随「资料」扩充加入。 */
+    val email: String? = null,
+    val bio: String? = null,
+    val region: String? = null,
+    /** 注册时间（**带 Z 的 UTC ISO 串**；展示前必须转本地时区，见 [com.minibook.ui.settings.SyncPresenter.humanTime]）。 */
+    @SerialName("created_at") val createdAt: String? = null,
+    /** 最近一次登录时间（同上；仅 `GET /me` 返回）。 */
+    @SerialName("last_login_at") val lastLoginAt: String? = null,
 )
+
+/**
+ * 改资料（2026-10-12）。**哪个字段为 null 就是「不改哪项」**：
+ * 客户端 `Json` 配置 `explicitNulls = false` ⇒ null 字段不上线，服务端按「字段是否出现」判定，
+ * 所以「只改昵称」不会被误判成「顺带清空口令」。
+ *
+ * 清空显示名传**空串**（不是 null）：空串会被服务端归一为「清除昵称」。
+ */
+@Serializable
+data class SyncProfileUpdateRequest(
+    val nickname: String? = null,
+    val email: String? = null,
+    val bio: String? = null,
+    val region: String? = null,
+    @SerialName("old_password") val oldPassword: String? = null,
+    @SerialName("new_password") val newPassword: String? = null,
+)
+
+@Serializable
+data class SyncProfileUpdateResponse(
+    val user: SyncUserDto,
+    /** 仅当本次改了口令时非空：旧刷新令牌已全部撤销，必须用它覆盖本地会话。 */
+    val tokens: SyncTokenPairDto? = null,
+)
+
+/** 注销账号（不可撤销）：口令二次确认。 */
+@Serializable
+data class SyncDeleteAccountRequest(val password: String)
 
 @Serializable
 data class SyncTokenPairDto(

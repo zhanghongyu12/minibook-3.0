@@ -1,0 +1,12 @@
+# 构建上下文排除项。
+# 重点：.env 绝不进镜像 —— 里面的 DATABASE_URL 口令与 JWT_SECRET 只应存在于
+# 服务器上的文件（compose 的 env_file）与本机开发环境，不进镜像层、不进仓库。
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+*.db
+*.sqlite3
+tests/
+*.md

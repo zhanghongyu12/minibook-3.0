@@ -73,8 +73,26 @@ sealed class Destination(val route: String) {
     /** 设置 · 短信账单（F-14：开关矩阵 + 白名单 + 权限状态）。 */
     data object SettingsSms : Destination("settings-sms")
 
-    /** 设置 · 云同步（F-15：账号 + 三模式手动同步 + 预览 / 结果 / 冲突留档）。 */
+    /** 设置 · 云同步（F-15：自动同步开关 + 三模式手动同步 + 预览 / 结果 / 冲突留档）。 */
     data object SettingsCloud : Destination("settings-cloud")
+
+    /** 设置 · 账号（2026-10-12：用户信息 / 编辑资料 / 改口令 / 退出 / 注销；登录注册各自独立页）。 */
+    data object SettingsAccount : Destination("settings-account")
+
+    /** 设置 · 登录（2026-10-12 第二轮：独立整页，像 App 的登录页）。 */
+    data object SettingsLogin : Destination("settings-login")
+
+    /** 设置 · 注册（2026-10-12 第二轮：独立整页，注册成功即登录）。 */
+    data object SettingsRegister : Destination("settings-register")
+
+    /** 设置 · 编辑资料（2026-10-12 第二轮：显示名 / 邮箱 / 个性签名 / 地区）。 */
+    data object SettingsProfileEdit : Destination("settings-profile-edit")
+
+    /** 设置 · 隐私政策（TASK-076：`res/raw/privacy_policy.txt` 只读展示）。 */
+    data object SettingsPrivacyPolicy : Destination("settings-privacy-policy")
+
+    /** 设置 · 用户协议（TASK-076：`res/raw/terms_of_service.txt` 只读展示）。 */
+    data object SettingsTerms : Destination("settings-terms")
 
     // —— 交易详情（P-07） ——
 

@@ -144,6 +144,15 @@ data class SyncPlan(
 
     val deleteCount: Int get() = localDeletes.size
 
+    /**
+     * 是否必须由用户**明确确认**才允许执行（会删本地数据，或存在需要人看懂的冲突）。
+     *
+     * 单一出处：手动同步的二次确认（`SyncPresenter.needsDangerConfirm`）与自动同步
+     * （[AutoSyncManager] 拒绝静默执行）共用这一条，避免两处各写一份而漂移。
+     * 自动同步宁可「这次不同步」，也不静默删用户的账目。
+     */
+    val needsConfirm: Boolean get() = deleteCount > 0 || conflictCount > 0
+
     /** 无任何待办：UI 可提示「已是最新」而不是弹确认卡。 */
     val isEmpty: Boolean
         get() = uploadCount == 0 && downloadCount == 0 && conflictCount == 0 && deleteCount == 0

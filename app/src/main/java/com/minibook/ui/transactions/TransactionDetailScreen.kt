@@ -48,6 +48,7 @@ import com.minibook.domain.model.Category
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionSource
 import com.minibook.domain.model.TransactionType
+import com.minibook.ui.components.CategoryGlyph
 import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.DatePickerField
@@ -277,7 +278,12 @@ private fun ColumnScope.TransactionFormContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (formCategory != null) {
-                Text(formCategory.icon, fontSize = 20.sp)
+                CategoryGlyph(
+                    icon = formCategory.icon,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    size = 20.dp,
+                    name = formCategory.name,
+                )
                 Spacer(Modifier.width(12.dp))
                 Text(
                     formCategory.name,
@@ -343,7 +349,12 @@ private fun TransactionViewContent(
         }
         DetailRow(label = "分类") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(category?.icon ?: "❔", fontSize = 18.sp, color = iconColor)
+                CategoryGlyph(
+                    icon = category?.icon.orEmpty(),
+                    tint = iconColor,
+                    size = 18.dp,
+                    name = category?.name,
+                )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     category?.name ?: "未分类",

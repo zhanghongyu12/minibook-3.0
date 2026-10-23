@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -29,10 +30,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
 
@@ -135,7 +137,7 @@ fun CategoryIconTile(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text = category.icon, fontSize = 24.sp, color = circleColor)
+            CategoryGlyph(icon = category.icon, tint = circleColor, size = 26.dp, name = category.name)
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -157,3 +159,47 @@ private fun parseCategoryHex(colorHex: String?, fallback: Color): Color =
     } else {
         runCatching { Color(AndroidColor.parseColor(colorHex)) }.getOrDefault(fallback)
     }
+
+/**
+ * 分类图标渲染入口（2026-10-12，用户：「内置分类这套图标感觉太旧了」）。
+ *
+ * `Category.icon` 里有三种可能的值，都要能画出来：
+ * 1. [CategoryIcons] 的稳定 key（`"food"` …）→ 矢量图标，用分类色 `tint` 着色；
+ * 2. 2026-10-12 之前内置分类存的 emoji（`"🍜"` …）→ 同一批矢量图标（`LEGACY_EMOJI` 映射），
+ *    因此**老账本升级后自动换成新图标，不需要数据迁移**；
+ * 3. 用户自己输入的 emoji 或任何未知字符串 → 原样渲染成文本（emoji 自带颜色），
+ *    绝不显示空白。
+ *
+ * @param icon DB 里的图标字段。
+ * @param name 分类名（可空）。用于消解「同名图形碰撞」：名为「礼金」的分类恒用 [CategoryIcons.GIFT_MONEY]，
+ *   不再与用户自建的「红包」分类共用红信封（2026-10-13 用户反馈「礼金和红包的图标重复了」）。
+ * @param tint 着色（一般传分类色；emoji 兜底路径不受影响）。
+ * @param size 图标边长；emoji 兜底按此换算字号。
+ * @param contentDescription 无障碍描述；旁边已有分类名时传 null 避免读屏重复。
+ */
+@Composable
+fun CategoryGlyph(
+    icon: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 24.dp,
+    name: String? = null,
+    contentDescription: String? = null,
+) {
+    val vector = remember(icon, name) { CategoryIcons.resolve(icon, name) }
+    if (vector != null) {
+        Icon(
+            imageVector = vector,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = modifier.size(size),
+        )
+    } else {
+        Text(
+            text = icon.ifBlank { "❔" },
+            modifier = modifier,
+            fontSize = with(LocalDensity.current) { size.toSp() * 0.9f },
+            maxLines = 1,
+        )
+    }
+}

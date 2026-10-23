@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -35,12 +36,13 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.minibook.domain.model.Ledger
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.EmptyState
+import com.minibook.ui.components.LedgerGlyph
+import com.minibook.ui.components.MiniBookIcons
 import com.minibook.ui.components.MiniBookSnackbarHost
 import com.minibook.ui.components.PrimaryFAB
 
@@ -184,8 +186,8 @@ fun LedgerManageScreen(
 /**
  * 账本管理顶栏：标题「账本管理」+ 返回按钮。
  *
- * material-icons 缺失（TASK-020 偏差），返回图标用 `Text("←")` 占位；[TopAppBar] 自行处理
- * 状态栏 inset。
+ * 2026-10-12（TASK-079）：返回图标改用自带矢量 [MiniBookIcons.ArrowBack]（此前为 `Text("←")`
+ * 占位，emoji/文字图标无法随主题着色，是「样式显老」的直观来源之一）。
  *
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  */
@@ -195,7 +197,9 @@ private fun LedgerManageTopBar(onBack: () -> Unit) {
     TopAppBar(
         title = { Text("账本管理") },
         navigationIcon = {
-            IconButton(onClick = onBack) { Text("←") }
+            IconButton(onClick = onBack) {
+                Icon(imageVector = MiniBookIcons.ArrowBack, contentDescription = "返回")
+            }
         },
     )
 }
@@ -203,8 +207,9 @@ private fun LedgerManageTopBar(onBack: () -> Unit) {
 /**
  * 账本行：图标 + 名称 + 徽标（当前/默认）+ 编辑/删除按钮。
  *
- * 当前账本行以 `primaryContainer` 底色高亮；整行可点（切换账本）。行尾「✏️」「🗑」用
- * [IconButton] + emoji 文本占位（工程未引入 material-icons，TASK-020 偏差同口径）；
+ * 当前账本行以 `primaryContainer` 底色高亮，其余行用分层表面色 `surfaceContainerLow`
+ * （TASK-078：不再用纯 `surface`，避免与页面底同色导致「平铺无层级」）；整行可点（切换账本）。
+ * 行尾「编辑」「删除」用自带矢量图标 + 无障碍文案（TASK-079，此前是 emoji 文本占位）。
  * 内层按钮点击不触发外层行点击（Compose 嵌套 clickable 由内层消费）。
  *
  * @param ledger 账本。
@@ -228,7 +233,7 @@ private fun LedgerRow(
             containerColor = if (isCurrent) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surface
+                MaterialTheme.colorScheme.surfaceContainerLow
             },
         ),
     ) {
@@ -240,7 +245,15 @@ private fun LedgerRow(
                 modifier = Modifier.size(40.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(ledger.icon, fontSize = 28.sp)
+                LedgerGlyph(
+                    icon = ledger.icon,
+                    tint = if (isCurrent) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    size = 26.dp,
+                )
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -253,9 +266,13 @@ private fun LedgerRow(
                     )
                 }
             }
-            IconButton(onClick = onEdit) { Text("✏️", fontSize = 18.sp) }
+            IconButton(onClick = onEdit) {
+                Icon(imageVector = MiniBookIcons.Edit, contentDescription = "编辑账本")
+            }
             if (onDelete != null) {
-                IconButton(onClick = onDelete) { Text("🗑", fontSize = 18.sp) }
+                IconButton(onClick = onDelete) {
+                    Icon(imageVector = MiniBookIcons.Delete, contentDescription = "删除账本")
+                }
             }
         }
     }

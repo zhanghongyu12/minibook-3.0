@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -34,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import com.minibook.domain.model.BuiltInCategories
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
+import com.minibook.ui.components.CategoryGlyph
+import com.minibook.ui.components.CategoryIcons
 import com.minibook.ui.components.SheetFormScaffold
 
 /**
@@ -104,13 +108,9 @@ fun CategoryEditorSheet(
             )
         }
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = icon,
-            onValueChange = { icon = it.take(4) },
-            label = { Text("图标（Emoji）") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Text("图标", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        CategoryIconPickerGrid(selected = icon, onSelect = { icon = it })
         Spacer(Modifier.height(16.dp))
         Text("颜色", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
@@ -165,6 +165,78 @@ fun CategoryEditorSheet(
                 Text("删除分类")
             }
         }
+    }
+}
+
+/**
+ * 分类图标选择网格（2026-10-12，替代原先手输 emoji 的 `OutlinedTextField`）。
+ *
+ * 6 列 × 4 行展示 [CategoryIcons.pickerKeys] 全部 24 个图标，点击即选，选中项以主题 primary 描边
+ * + `primaryContainer` 底色高亮。**不提供手输 emoji 了**：老数据里的 emoji 仍会经
+ * [CategoryGlyph] 原样渲染并保留（不点就不改），只是新建/改图标统一走这套设计好的矢量。
+ * 末行用等宽 `Spacer` 补齐，保证方形网格对齐。
+ *
+ * @param selected 当前选中值（可能是 key，也可能是历史 emoji ⇒ 网格无高亮，属正常）。
+ * @param onSelect 选中回调，回调值是 [CategoryIcons] 的稳定 key。
+ */
+@Composable
+private fun CategoryIconPickerGrid(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    columns: Int = 6,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CategoryIcons.pickerKeys.chunked(columns).forEach { rowKeys ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                rowKeys.forEach { key ->
+                    IconChoice(key = key, selected = key == selected, onClick = { onSelect(key) })
+                }
+                repeat(columns - rowKeys.size) { Spacer(Modifier.size(44.dp)) }
+            }
+        }
+    }
+}
+
+/** 图标网格里的单个圆形选项。 */
+@Composable
+private fun IconChoice(key: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+            )
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        CategoryGlyph(
+            icon = key,
+            tint = if (selected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            size = 24.dp,
+        )
     }
 }
 

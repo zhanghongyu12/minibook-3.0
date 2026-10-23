@@ -36,12 +36,16 @@ def _safe_validation_details(exc: RequestValidationError) -> list[dict[str, obje
 def create_app() -> FastAPI:
     settings = get_settings()
     if settings.uses_dev_jwt_secret and not settings.is_sqlite:
-        logger.warning("JWT_SECRET 仍是开发默认值，生产环境必须更换（见 .env.example）")
+        logger.warning("JWT_SECRET 仍是开发默认值，生产环境必须更换（见 .env.remote.example）")
 
     app = FastAPI(
         title="MiniBook Cloud API",
         version=health.APP_VERSION,
         description="MiniBook 3.0 云端同步服务（F-15）。设计见 docs/14_cloud_sync.md。",
+        # 线上公网入口（明文 HTTP）按 .env 的 ENABLE_DOCS=false 收起文档与 schema
+        docs_url="/docs" if settings.enable_docs else None,
+        redoc_url="/redoc" if settings.enable_docs else None,
+        openapi_url="/openapi.json" if settings.enable_docs else None,
     )
 
     app.include_router(health.router)

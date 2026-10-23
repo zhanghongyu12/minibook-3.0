@@ -58,10 +58,17 @@ fun SettingsSecurityScreen(
     var showTimeoutDialog by remember { mutableStateOf(false) }
     var showLockOffConfirm by remember { mutableStateOf(false) }
     var showDeviceSecureGuidance by remember { mutableStateOf(false) }
+    var showBiometricGuidance by remember { mutableStateOf(false) }
 
     // DEC-003：设备无系统锁屏 → 展示引导卡（跳系统安全设置）。
     LaunchedEffect(Unit) {
         viewModel.needDeviceSecure.collect { showDeviceSecureGuidance = true }
+    }
+
+    // F-16j（2026-10-13）：有系统锁屏但未录入指纹/人脸 → Keystore 无法生成 auth-gated key
+    // （旧实现会直接崩溃），改为引导去系统设置录入生物识别。
+    LaunchedEffect(Unit) {
+        viewModel.needBiometric.collect { showBiometricGuidance = true }
     }
 
     Scaffold(
@@ -123,6 +130,29 @@ fun SettingsSecurityScreen(
                             // 系统安全设置不可达时静默忽略
                         }
                         showDeviceSecureGuidance = false
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp),
+                )
+            }
+            // F-16j 引导卡：已设系统锁屏但未录入生物识别（Keystore 硬要求），跳系统安全设置。
+            if (showBiometricGuidance) {
+                GuidanceCard(
+                    message = "开启应用锁需要系统已录入指纹或人脸（Keystore 加密要求）。" +
+                        "请先在系统设置中录入生物识别，再回来开启应用锁——数据仍保持加密。",
+                    actionLabel = "去设置",
+                    onAction = {
+                        try {
+                            val intent = Intent(Settings.ACTION_SECURITY_SETTINGS)
+                            if (context !is Activity) {
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            // 系统安全设置不可达时静默忽略
+                        }
+                        showBiometricGuidance = false
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)

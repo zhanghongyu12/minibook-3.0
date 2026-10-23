@@ -71,14 +71,14 @@ class KeystoreSecretCipher(
         }
     }
 
-    override fun encrypt(plaintext: String): String {
+    override fun encrypt(plaintext: String): String = wrap("加密") {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(cipher.iv + ciphertext, Base64.NO_WRAP)
+        Base64.encodeToString(cipher.iv + ciphertext, Base64.NO_WRAP)
     }
 
-    override fun decrypt(blob: String): String {
+    override fun decrypt(blob: String): String = wrap("解密") {
         val bytes = Base64.decode(blob, Base64.NO_WRAP)
         require(bytes.size > GCM_IV_LENGTH) { "令牌密文格式非法" }
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -87,6 +87,33 @@ class KeystoreSecretCipher(
             secretKey(),
             GCMParameterSpec(GCM_TAG_LENGTH_BITS, bytes.copyOfRange(0, GCM_IV_LENGTH)),
         )
-        return String(cipher.doFinal(bytes.copyOfRange(GCM_IV_LENGTH, bytes.size)), Charsets.UTF_8)
+        String(cipher.doFinal(bytes.copyOfRange(GCM_IV_LENGTH, bytes.size)), Charsets.UTF_8)
+    }
+
+    /**
+     * 统一兜底：**失败重试一次**，仍失败则抛 [SecretCipherUnavailableException]。
+     *
+     * 为什么必须重试：首次生成该别名密钥时，系统可能要求完成「远程密钥供给」（RKP，需联网）；
+     * 无网/网络受限时会失败，而这类失败通常是**暂时性**的，重试即可成功。
+     *
+     * 为什么必须抛「人话」：登录链路若在这里静默失败，用户看到的就是「点了登录没反应」——
+     * 那正是本函数存在的原因（UI 把这条消息原样显示出来）。
+     */
+    private fun <T> wrap(action: String, block: () -> T): T = try {
+        block()
+    } catch (first: Exception) {
+        try {
+            block()
+        } catch (second: Exception) {
+            throw SecretCipherUnavailableException(
+                "设备密钥不可用，无法$action 云端令牌（${second::class.simpleName}: " +
+                    "${second.message ?: "无详情"}）。请确认网络可用（首次使用需系统完成密钥初始化）后重试。",
+                second,
+            )
+        }
     }
 }
+
+/** Keystore 不可用（密钥生成/取用失败）——登录类操作把它当**可读的失败原因**展示给用户。 */
+class SecretCipherUnavailableException(message: String, cause: Throwable) :
+    IllegalStateException(message, cause)

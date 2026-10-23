@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -19,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
  * 设置页分区（UI §4 C-23）。
@@ -128,19 +128,21 @@ fun TrailingValue(text: String) {
     )
 }
 
-/** 设置行尾部「›」箭头（表达「可进入下级/可点开」）。 */
+/** 设置行尾部「›」箭头（表达「可进入下级/可点开」）：2026-10-12 换自带矢量图标（TASK-079）。 */
 @Composable
 fun TrailingChevron() {
-    Text(
-        text = "›",
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Icon(
+        imageVector = MiniBookIcons.ChevronRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
 /**
- * 设置二级页顶栏（2026-10-10 设置页改版）：标题 + ← 返回（emoji 占位，material-icons 缺失，
- * 与导入页/账单导入页同口径 TASK-020）。
+ * 设置二级页顶栏（2026-10-10 设置页改版）：标题 + 返回。
+ *
+ * 2026-10-12（TASK-079）：返回图标改用自带矢量 [MiniBookIcons.ArrowBack]（此前是 `Text("←")`
+ * 占位，与导入页/账单导入页同口径 TASK-020 偏差；emoji/文字图标无法随主题着色，已逐步替换）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,7 +150,9 @@ fun SettingsSubPageTopBar(title: String, onBack: () -> Unit) {
     TopAppBar(
         title = { Text(title) },
         navigationIcon = {
-            IconButton(onClick = onBack) { Text("←", fontSize = 20.sp) }
+            IconButton(onClick = onBack) {
+                Icon(imageVector = MiniBookIcons.ArrowBack, contentDescription = "返回")
+            }
         },
     )
 }

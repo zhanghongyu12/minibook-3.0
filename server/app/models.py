@@ -75,6 +75,13 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     # 用户名统一小写存储（DEC-031：MySQL 排序规则大小写不敏感、SQLite 敏感，必须两端一致）
     username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    # 显示名（用户可改，可为空 ⇒ 客户端回退显示 username）。2026-10-12 随「账号」页加入。
+    nickname: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 资料补充（2026-10-12 第二轮）：邮箱 / 个性签名 / 地区。三列均可空 = 未填写；
+    # 空串由 schema 归一为 NULL（表示「清除」），库里不留空字符串。
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(32), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=_utc_now)

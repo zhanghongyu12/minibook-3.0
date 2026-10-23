@@ -18,7 +18,7 @@ Python（**FastAPI + SQLAlchemy 2 + Alembic**）实现的云端同步服务：�
 cd server
 python -m venv .venv                      # 用 Python 3.12；不要 3.14（argon2/pydantic-core 轮子未必齐）
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-copy .env.example .env                    # 按需改 DATABASE_URL / JWT_SECRET
+copy .env.local.example .env              # 本地开发模板（SQLite + 开发密钥）；服务器上用 .env.remote.example
 .venv\Scripts\python.exe -m alembic upgrade head
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
@@ -89,5 +89,8 @@ tests/             61 例：认证 / 隔离 / push 契约 / pull 分页 / 幂等
 
 ## 禁止入库
 
-`.env`（DSN 口令与 JWT 密钥）、`*.db`、`.venv/` —— 根 `.gitignore` 已覆盖。
+`.env`（DSN 口令与 JWT 密钥）、`*.db`、`.venv/`、以及 App 侧的 `sync.properties`（远程入口地址）—— 根 `.gitignore` 已覆盖。
+配置模板只提交 `.env.local.example` / `.env.remote.example`，**里面只有占位符与开发默认值**。
+**提交前体检**：`powershell -NoProfile -File ../tools/check-secrets.ps1`（默认只查暂存区，命中公网 IP / 真实口令 / 私钥即退出码 1）。
+该脚本**刻意只写 ASCII**：Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读，中文注释会导致解析失败（已实测），故中文说明放在 `../docs/14_cloud_sync.md §17`。
 服务端日志只记 `user_id`、计数与错误码，**不记 payload 内容**（DEC-034）。

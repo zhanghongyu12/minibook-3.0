@@ -60,6 +60,43 @@ class SmsWhitelistStore @Inject constructor(
         writeAll(all)
     }
 
+    /**
+     * 按发送方开关「允许导入」（docs/15 第 2 条，2026-10-13）。
+     *
+     * 关掉 = 该发送方的短信扫描时不计入账单（进「非账单」计数，理由写明「来源未勾选」）；
+     * **不删短信、不删已入账的交易**。不存在的发送方只在 [enabled] 为 true 时新建条目。
+     */
+    suspend fun setImportEnabled(sender: String, enabled: Boolean) = withContext(ioDispatcher) {
+        if (sender.isEmpty()) return@withContext
+        val all = SmsWhitelistStoreCodec.decode(readRaw()).toMutableList()
+        val idx = all.indexOfFirst { it.sender == sender }
+        when {
+            idx >= 0 -> all[idx] = all[idx].copy(importEnabled = enabled)
+            enabled -> all += SmsWhitelistEntry(
+                sender = sender,
+                autoEnabled = false,
+                confirmedCount = 0,
+                importEnabled = true,
+            )
+        }
+        writeAll(all)
+    }
+
+    /**
+     * 登记本次扫描发现的来源（docs/15 第 2 条）：**只新增、不覆盖**已有条目的开关与计数。
+     *
+     * 新出现的发送方默认「允许导入」= true（防漏：宁可多导入让用户去勾掉，也不静默漏账）。
+     * 号码本身不是隐私（DEC-026 只禁短信原文），且这些号码本来就在系统收件箱里。
+     */
+    suspend fun rememberSenders(senders: Collection<String>) = withContext(ioDispatcher) {
+        val known = SmsWhitelistStoreCodec.decode(readRaw()).toMutableList()
+        val existing = known.mapTo(mutableSetOf()) { it.sender }
+        val added = senders.filter { it.isNotEmpty() && it !in existing }
+            .map { SmsWhitelistEntry(sender = it, autoEnabled = false, confirmedCount = 0) }
+        if (added.isEmpty()) return@withContext
+        writeAll(known + added)
+    }
+
     /** 清空（隐私：设置页「清空短信白名单」）。 */
     suspend fun clear() = withContext(ioDispatcher) {
         context.smsWhitelistDataStore.edit { it.remove(key) }

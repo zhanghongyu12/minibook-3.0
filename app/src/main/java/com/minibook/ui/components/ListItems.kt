@@ -27,7 +27,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtDirection
 import com.minibook.domain.model.DebtKind
@@ -76,7 +75,12 @@ fun TransactionListItem(
             modifier = Modifier.size(44.dp).clip(CircleShape).background(iconColor.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(categoryIcon ?: "❔", fontSize = 22.sp)
+            CategoryGlyph(
+                icon = categoryIcon.orEmpty(),
+                tint = MaterialTheme.colorScheme.onSurface,
+                size = 22.dp,
+                name = categoryName,
+            )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

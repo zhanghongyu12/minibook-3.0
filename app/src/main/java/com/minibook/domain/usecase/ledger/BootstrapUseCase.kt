@@ -68,7 +68,12 @@ class BootstrapUseCase @Inject constructor(
     /** 默认账本内置值（ARCHITECTURE §8.4 指定「内置值」，具体取值本类锁定）。 */
     private companion object {
         const val DEFAULT_NAME: String = "默认账本"
-        const val DEFAULT_ICON: String = "📒"
+
+        /**
+         * 2026-10-13 起为 [com.minibook.ui.components.LedgerIcons.BOOK] 的 key（原为 emoji `📒`）。
+         * 这里写字面量以免 domain 层依赖 ui 层；老数据/老备份里的 emoji 由 `LedgerIcons.LEGACY_EMOJI` 兜底。
+         */
+        const val DEFAULT_ICON: String = "book"
         const val DEFAULT_COLOR: String = "#5D6D7E"
         const val DEFAULT_POSITION: Int = 0
     }

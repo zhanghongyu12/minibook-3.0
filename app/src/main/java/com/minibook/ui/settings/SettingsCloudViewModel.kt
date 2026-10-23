@@ -1,18 +1,10 @@
 package com.minibook.ui.settings
 
-import android.content.Context
-import android.content.pm.ApplicationInfo
-import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.db.dao.SyncConflictDao
 import com.minibook.data.remote.SyncApiException
 import com.minibook.data.remote.SyncAuthStore
-import com.minibook.data.remote.SyncLoginRequest
-import com.minibook.data.remote.SyncLogoutRequest
-import com.minibook.data.remote.SyncRegisterRequest
-import com.minibook.data.remote.SyncRemote
-import com.minibook.data.remote.SyncUrlValidator
 import com.minibook.domain.usecase.sync.CloudStatusLine
 import com.minibook.domain.usecase.sync.SyncEntityType
 import com.minibook.domain.usecase.sync.SyncMode
@@ -30,37 +22,32 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * 云同步页面 ViewModel（F-15 / TASK-067）。
+ * 云同步页面 ViewModel（F-15 / TASK-067；2026-10-12 起**只管同步**）。
+ *
+ * 分工：账号相关（登录 / 注册 / 改资料 / 改口令 / 退出 / 注销）全部在
+ * [AccountViewModel] 与「账号」页；本页只留同步本身（自动同步开关 + 手动三模式 + 状态 + 冲突）。
  *
  * 关键约束（与设计一致，不是实现细节）：
  * - **预览 == 执行**：`preview()` 拿到的 [SyncPlan] 原样交给 `execute()`，中间不给任何"重新算一遍"的机会，
  *   否则用户确认的「删 3 条」和真正执行的可能是两回事；
  * - 预览为**空计划**时不弹确认框，直接提示「已经一致」（不烦人）；
- * - 执行结果**原样展示四个计数**，失败时明说「游标未推进」，不粉饰；
- * - 口令只活在内存里：登录/注册成功后立即清空，绝不落盘（落盘的只有加密令牌）。
+ * - 执行结果**原样展示四个计数**，失败时明说「游标未推进」，不粉饰。
  */
 @HiltViewModel
 class SettingsCloudViewModel @Inject constructor(
     private val store: SyncAuthStore,
-    private val remote: SyncRemote,
     private val sync: SyncUseCase,
     private val conflictDao: SyncConflictDao,
-    @ApplicationContext context: Context,
 ) : ViewModel() {
 
-    /** 调试版允许 http（DEC-034：内网自测）；正式版强制 https。与构建类型无关地按真实 flag 判定。 */
-    private val debuggable: Boolean =
-        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-
     data class UiState(
-        val baseUrl: String = "",
-        val username: String = "",
-        val password: String = "",
         val loggedIn: Boolean = false,
         val accountName: String = "",
         val statusText: String = "",
         val lastSyncAt: String = "",
         val conflictCount: Int = 0,
+        /** 自动同步开关（DEC-038，默认开；只在已登录时有效）。 */
+        val autoSync: Boolean = true,
         val busy: Boolean = false,
         val busyText: String = "处理中…",
         val message: String? = null,
@@ -99,110 +86,17 @@ class SettingsCloudViewModel @Inject constructor(
         viewModelScope.launch { refreshAccount() }
     }
 
-    // ---------- 账号 ----------
-
-    fun onBaseUrlChange(value: String) = _ui.update { it.copy(baseUrl = value) }
-
-    fun onUsernameChange(value: String) = _ui.update { it.copy(username = value) }
-
-    fun onPasswordChange(value: String) = _ui.update { it.copy(password = value) }
-
-    /**
-     * 注册并**顺带登录**（注册接口只回用户信息）：少一步操作，也避免"注册成功但没登上"的困惑。
-     */
-    fun register() = viewModelScope.launch {
-        val state = _ui.value
-        val base = normalizeOrToast(state.baseUrl) ?: return@launch
-        val username = state.username.trim()
-        val password = state.password
-        if (username.isEmpty() || password.isEmpty()) {
-            return@launch toast("请先填写用户名和口令")
-        }
-        runBusy("正在注册…") {
-            val deviceId = store.deviceId()
-            remote.register(
-                base,
-                SyncRegisterRequest(
-                    username = username,
-                    password = password,
-                    deviceId = deviceId,
-                    deviceName = Build.MODEL,
-                ),
-            )
-            val dto = remote.login(
-                base,
-                SyncLoginRequest(
-                    username = username,
-                    password = password,
-                    deviceId = deviceId,
-                    deviceName = Build.MODEL,
-                    platform = "android",
-                ),
-            )
-            store.saveSession(
-                baseUrl = base,
-                userId = dto.user.userId,
-                username = dto.user.username,
-                accessToken = dto.accessToken,
-                refreshToken = dto.refreshToken,
-                expiresInSeconds = dto.expiresIn,
-            )
-            _ui.update { it.copy(password = "") }
-            toast("注册成功，已登录为 ${dto.user.username}")
-        }
-    }
-
-    fun login() = viewModelScope.launch {
-        val state = _ui.value
-        val base = normalizeOrToast(state.baseUrl) ?: return@launch
-        val username = state.username.trim()
-        val password = state.password
-        if (username.isEmpty() || password.isEmpty()) {
-            return@launch toast("请先填写用户名和口令")
-        }
-        runBusy("正在登录…") {
-            val deviceId = store.deviceId()
-            val dto = remote.login(
-                base,
-                SyncLoginRequest(
-                    username = username,
-                    password = password,
-                    deviceId = deviceId,
-                    deviceName = Build.MODEL,
-                    platform = "android",
-                ),
-            )
-            store.saveSession(
-                baseUrl = base,
-                userId = dto.user.userId,
-                username = dto.user.username,
-                accessToken = dto.accessToken,
-                refreshToken = dto.refreshToken,
-                expiresInSeconds = dto.expiresIn,
-            )
-            _ui.update { it.copy(password = "") }
-            toast("登录成功：${dto.user.username}")
-        }
-    }
-
-    /**
-     * 退出登录：**先尽力通知服务端撤销刷新令牌**（失败也照常清本地）。
-     * 清本地会话**不动任何业务数据**——退出登录不是删数据。
-     */
-    fun logout() = viewModelScope.launch {
-        runBusy("正在退出…") {
-            val base = store.baseUrl()
-            val refresh = store.refreshToken()
-            if (base.isNotEmpty() && !refresh.isNullOrEmpty()) {
-                try {
-                    remote.logout(base, SyncLogoutRequest(refresh))
-                } catch (e: Exception) {
-                    // 网络不可达也要能退出：令牌本身留在服务端到过期为止，不影响本地隐私。
-                }
-            }
-            store.clearSession()
-            toast("已退出登录；本地数据未被改动")
-        }
+    // ---------- 同步 ----------
+    fun setAutoSync(enabled: Boolean) = viewModelScope.launch {
+        store.setAutoSyncEnabled(enabled)
+        _ui.update { it.copy(autoSync = enabled) }
+        toast(
+            if (enabled) {
+                "已开启自动同步：打开 / 回到 App 时会静默同步一次"
+            } else {
+                "已关闭自动同步：只走手动同步"
+            },
+        )
     }
 
     // ---------- 同步 ----------
@@ -293,28 +187,13 @@ class SettingsCloudViewModel @Inject constructor(
         )
         _ui.update {
             it.copy(
-                baseUrl = account.baseUrl,
-                username = account.username.ifEmpty { it.username },
                 loggedIn = account.isLoggedIn,
                 accountName = account.username,
                 statusText = SyncPresenter.statusText(line),
                 lastSyncAt = account.lastSyncAt,
                 conflictCount = line.conflictCount,
+                autoSync = store.autoSyncEnabled(),
             )
-        }
-    }
-
-    /** 地址规范化：失败直接提示（不静默改动用户输入）。 */
-    private fun normalizeOrToast(raw: String): String? {
-        if (raw.isBlank()) {
-            toast("请先填写服务器地址")
-            return null
-        }
-        return try {
-            SyncUrlValidator.normalize(raw, debuggable)
-        } catch (e: SyncApiException) {
-            toast("服务器地址无效：${e.userMessage()}")
-            null
         }
     }
 

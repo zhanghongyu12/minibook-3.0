@@ -1,0 +1,65 @@
+# MiniBook Cloud API 运行编排（腾讯云 2C2G 小机器）
+#
+# 位置约定：服务器上 /opt/docker/minibook-api/（与 /opt/docker/mysql/ 平级）
+# 启动：      docker compose build && docker compose up -d
+# 迁移：      docker compose run --rm api python -m alembic upgrade head
+# 单测(MySQL)：docker compose run --rm -v "$PWD:/src" -w /src api python -m pytest -q
+#             （需先 export TEST_DATABASE_URL=…/minibook_test…，库名必须含 test）
+#
+# 与 MySQL 的关系：复用 mysql 容器所在的 mysql_default 网络，**不发布数据库端口**，
+# API 用容器名 `mysql` 直连（口令只出现在本目录的 .env 里，不进仓库、不进镜像）。
+name: minibook-api
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 就近 pip 镜像（可选）：构建前 export PIP_INDEX_URL / PIP_TRUSTED_HOST 即可生效
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    image: minibook-api:latest
+    container_name: minibook-api
+    restart: unless-stopped
+
+    # 口令与密钥只落服务器文件（.env 被 .gitignore 与 .dockerignore 双重排除）
+    env_file:
+      - .env
+
+    # 公网入口（2026-10-23 用户决定）：**本轮不做 HTTPS**（用的人少、暂不加证书），
+    # 直接用一个「无关端口」38080 转发到容器 8000；回环映射保留给本机 / SSH 隧道联调。
+    # 取舍：Docker 端口映射保留**真实客户端 IP** ⇒ 应用内登录限流仍按真实 IP 生效
+    #（换成 socat/nginx 转发会让容器只看到网关 IP，限流就形同虚设）。
+    # 明文 HTTP 的代价：口令与 bearer 令牌在链路上可被中间人看到，只剩 argon2id + 限流兜底。
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "38080:8000"
+
+    networks:
+      - mysql_default
+
+    # ---------- 资源上限（2C2G，MySQL 已占 640m）----------
+    mem_limit: 448m
+    cpus: 1.0
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # 根文件系统只读：应用不需要写盘（日志走 stdout，由下面的轮转托管）
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # ---------- 日志轮转 ----------
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  mysql_default:
+    external: true

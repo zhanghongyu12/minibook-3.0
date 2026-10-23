@@ -58,4 +58,25 @@ class SmsWhitelistStoreCodecTest {
         val decoded = codec.decode(setOf("95526|1|abc|0"))
         assertEquals(0, decoded.first().confirmedCount)
     }
+
+    @Test
+    fun `编解码往返：允许导入开关`() {
+        val entry = SmsWhitelistEntry(sender = "95526", autoEnabled = true, confirmedCount = 2, importEnabled = false)
+        val decoded = codec.decode(setOf(codec.encode(entry)))
+        assertEquals(entry, decoded.first())
+    }
+
+    @Test
+    fun `解码：旧四段格式默认允许导入`() {
+        val decoded = codec.decode(setOf("95526|1|3|1791518400000"))
+        assertEquals(1, decoded.size)
+        assertTrue("旧格式应默认允许导入", decoded.first().importEnabled)
+    }
+
+    @Test
+    fun `解码：第五段 0 表示不允许导入`() {
+        val decoded = codec.decode(setOf("95526|1|3|0|0"))
+        assertEquals(1, decoded.size)
+        assertTrue("第五段 0 应表示不允许导入", !decoded.first().importEnabled)
+    }
 }

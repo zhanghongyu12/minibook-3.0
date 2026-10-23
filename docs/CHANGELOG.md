@@ -6,7 +6,282 @@
 
 ## [Unreleased]
 
+### Changed
+- **公网入口上线：明文 HTTP + 端口 38080（DEC-053，2026-10-23）**：`server/docker-compose.yml` 增加 `"38080:8000"` 端口映射（保留回环映射给隧道联调）；生产关闭 `/docs`、`/redoc`、`/openapi.json`（新增 `ENABLE_DOCS` 开关，默认 `true`，服务器 `.env` 设为 `false`）；App 正式包指向该地址，`SyncUrlValidator` 只放行**内置入口的 host**。
+- 外网实测：`/healthz` 200、文档三处 404、`minibook_test` 登录 + push + pull 全绿（重推幂等）；容器日志记录**真实公网 IP**（登录限流仍按真实 IP 生效）。代价：链路明文，用户知情接受。
+- **同日修订（DEC-054）**：远程服务器地址**不再写进仓库** —— `app/build.gradle.kts` 的 `SYNC_BASE_URL` 改为构建时从本机 `sync.properties`（已 gitignore）注入，未配置时正式包明确提示而非静默失败；`network_security_config` 只保留默认策略、不再写死 host（平台层 host 级固定让位给应用层 `SyncUrlValidator`，见 DEC-054「已知代价」）；`docs/*.md` 里已落地的真实公网 / 内网 IP 全部替换为 `<远程公网IP>` / `<本机公网IP>` / `<内网主机IP>`。
+- **服务端配置拆成两份（用户要求「一份本地开发、一份远程开发」，2026-10-23）**：`server/.env.example` → `server/.env.local.example`（SQLite + 开发密钥 + `ENABLE_DOCS=true`）与 `server/.env.remote.example`（MySQL + **只有占位符** + `ENABLE_DOCS=false`），真实值只落 `server/.env` 或服务器 `/opt/docker/minibook-api/.env`；App 侧新增 `sync.properties.example`；`.gitignore` 加固为「`server/.env*` 只放行 `*.example`」并忽略 `sync.properties`。
+- **提交前体检脚本 `tools/check-secrets.ps1`（2026-10-23）**：默认查暂存区、`-All` 查全量；规则 = 公网 IPv4 端点（私有/回环/链路本地/TEST-NET/`0.0.0.0` 不算；只在 `@`、`//` 之后或 `:端口` 之前或配置行赋值位才算，故 User-Agent 与 SVG path 不误报）、DSN 真实口令、`JWT_SECRET` 真实值、私钥块、禁提交文件（`sync.properties` / `keystore.properties` / `*.jks` / `.env` / 手机备份 JSON 等）。**过程如实记录**：初版在 Windows PowerShell 5.1 下按 ANSI 读 UTF-8，乱码解出 2 处假 IP；改 `-Encoding UTF8` 后全量 **518 文件 0 命中**（脚本本身刻意只写 ASCII —— PS 5.1 会把无 BOM 的 UTF-8 脚本当 ANSI 读而直接解析失败，本轮实测踩过；中文说明留在 `docs/14_cloud_sync.md §17`）。
+- **正式包真机安装（2026-10-23）**：手机装 `app-release.apk`（`CN=Minibook`；手机内 `base.apk` 与本地产物 sha256 一致 `48887B68…B67198`），**界面已无服务器地址栏**（uiautomator 全量文本无「服务器地址」）；手机自带 `curl` 直连 `http://<远程公网IP>:38080/healthz` **200**。因正式包与旧 debug 签名不同、装正式包必须先卸载，故装前先用 App「导出数据」备份 **（备份大小略）**（若干账本 / 若干分类 / **若干交易** / 若干债务；两份在手机 Download + 一份拉到本机），恢复路径 = 登录后「设置 → 数据 → 导入数据」。
+
+### Fixed
+
+- **`_touch_device` 设备归属缺陷修复（2026-10-22，TASK-089）**：`devices.id` 就是客户端上报的 `device_id`（**主键**，同一时刻只属于一个账号），但旧实现在「设备行已存在、`user_id` 属于别人」时**又 `db.add(Device(id=device_id, …))`** ⇒ 撞主键抛 `IntegrityError` ⇒ `register()` 把它一并译成 `username_taken`（App 显示「该用户名已被占用，请换一个」，而该用户名在库里根本不存在），`login()` 走同一个函数且**没有异常兜底**，因此「同一台设备换账号登录」会直接 **500**。修法：`_touch_device()` 遇到已存在的设备行**改归属**（改 `user_id`，并刷新 `last_seen_at` / `name` / `platform` / `app_version`），不再重复 INSERT；register 侧原有的 `IntegrityError → username_taken` 保留给真正的「并发注册同名」。补 2 条回归测试（`test_register_reclaims_device_of_another_user` / `test_login_reclaims_device_of_another_user`），并**先在缺陷版代码上确认两条均失败**（`UNIQUE constraint failed: devices.id`）再确认修复后通过 —— 本地 SQLite 与腾讯云 MySQL 均 **75 passed**。已重打镜像 + `docker compose up -d` 部署，线上用「属于他人账号的 `device_id`」实测登录：旧版 500 → 新版 200 且设备行改归新账号。
+
 ### Added
+
+- **F-15 上云：数据库迁至腾讯云 + 后台服务「服务器打镜像 + Docker 部署」（2026-10-21）**：
+  ① **库迁移**：`<内网主机IP>`（host）的 `minibook` 全量迁到腾讯云 `<远程公网IP>` 上自建 `mysql:8`（两侧同为 8.0.46 / utf8mb4 / `utf8mb4_unicode_ci` / `+08:00`，且业务表**没有任何 TIMESTAMP 列**，不存在「迁完时间偏 8 小时」的风险）。
+  校验做到「逐字节」：规范化 dump 归一化两处渲染差异后**哈希相同**、`information_schema.columns` **120 列**物理元数据哈希相同、**12 张表**引擎/排序规则哈希相同、**逐账号行数哈希相同**（`demo_user` / `demo_user_b` 各 若干笔交易、`emu1012a` 1 笔，其余 0）。
+  源库 10 个账号里的 4 个 `dev_*` 是历次设备端 E2E 留下的合成数据（每个 3 交易 + 1 分类 + 1 账本 + 7 日志，口令即测试硬编码值 —— 能登入即铁证），连同本轮冒烟脚本残留的 1 个 `smoke_*`，按项目原有约定（`SyncDeviceE2ETest` 注释「收口时用 SQL 清理」）一并删除 ⇒ 现库 6 账号 / 2203 交易；**真实账号分毫未动**（逐账号哈希即证据）。
+  ② **容器化部署**：新增 `server/Dockerfile` + `server/docker-compose.yml` + `server/.dockerignore`，在**服务器本机** `docker compose build` 出 `minibook-api:latest`（`python:3.12-slim`、非 root uid 10001、根文件系统只读、`mem_limit 448m` / `cpus 1.0`、日志 `json-file` 20m×3），容器加入 MySQL 容器所在的 `mysql_default` 网络、用容器名 `mysql` 直连 49779，**只发布 `127.0.0.1:8000`**；口令与 `JWT_SECRET` 只落服务器 `.env`（`chmod 600`，`.gitignore` + `.dockerignore` 双重排除）。
+  **`JWT_SECRET` 与迁移前保持同值 ⇒ 老设备手里的 access/refresh 令牌继续有效，不需要全员重新登录。**
+  ③ **依赖修正（真 bug）**：`requirements.txt` 增加 `cryptography==50.0.2` —— MySQL 8 默认 `caching_sha2_password` 在**非 TLS 的 TCP** 上首次 full-auth 需要用服务端 RSA 公钥加密口令，PyMySQL 缺它会直接抛异常；开发机上一直没暴露，是因为服务端口令缓存已热、走的是 fast-auth。
+  ④ **验证（全部真跑）**：线上容器里同一套 `pytest` **73 例 / 0 失败**（SQLite 侧同为 73 例 / 0 失败）；线上 API 冒烟全绿（注册→登录→me→push→pull→status→**令牌轮换**（旧 refresh 复用 401）→**幂等重推 no-op**（`server_seq` 2842→2842 不推进）→注销后登录 401，脚本末尾用 `delete-account` **自清理**）；模拟器 `SyncDeviceE2ETest` 经 SSH 隧道连**线上**服务与线上库跑通。
+  ⑤ **公网未开放（需用户决定）**：安全组只放行 3228(SSH)，`80/443/8000` 外网实测不可达，故联调走隧道（走的是**同一个线上进程与同一个线上库**，只是入口不经公网）；要真公网直连需放行端口 + Nginx/HTTPS，并把 `app/build.gradle.kts` 里 release 的 `SYNC_BASE_URL` 从空串改成正式域名。详见 DEC-051 与 `docs/14_cloud_sync.md §14`。
+- **F-16l 礼金 / 红包图标去重（用户 2026-10-13 反馈「收入的礼金和红包的图标重复了」）**：
+  收入「礼金」此前与「红包」画的是同一张图形——内置模板 `BuiltInCategories.kt` 里礼金 `icon = "redpacket"`，
+  历史数据里的 🧧 也映射到同一矢量；而 `CategoryIcons` 的 `Gift`（人情）与 `RedPacket` 路径都是「盒 + 蝴蝶结」，人眼几乎无法区分。修法：
+  ① `CategoryIcons` 新增 `GIFT_MONEY = "giftmoney"`（Material Symbols `volunteer_activism` 手捧心矢量）与 `val GiftMoney`；
+  ② `resolve(raw, name)` 增加**按名覆盖**：`name == "礼金"` 且旧解析结果是 `RedPacket`（或 `Gift`）时改渲染 `GiftMoney`
+  ——**不动用户既有数据**（旧账本里名为「礼金」的分类自动换图形）；
+  ③ `CategoryGlyph(icon, tint, modifier, size, name, contentDescription)` 新增 `name` 参数，9 个调用点中凡持有 `Category` 对象的都传 `name = category.name`
+  （图标选择器预览**刻意不传**，保持「所见即所选」）；
+  ④ 内置模板礼金 `icon` 改为 `"giftmoney"`；⑤ `pickerKeys` 24 → **25**（礼金位换手捧心，「红包」矢量保留在可选列表末尾）；
+  `CategoryIconsTest` 新增 2 例（礼金与红包解析结果不同 / 名为「礼金」的旧分类换成新矢量且其它分类不受影响）。
+  模拟器实测：分类页收入「礼金」显示手捧心，与「人情」的礼物盒、与可选列表里的红包图形都不再重复。
+- **F-16k 首页账号入口改为「首页」标题旁的小链接（用户 2026-10-13 反馈「首页账号设置不用那么大」）**：
+  撤掉首页 `LazyColumn` 首项的大卡 `HomeAccountRow`（36dp 圆底头像 + 标题 + 副行 + 行尾箭头/「登录」），
+  改为 `HomeTopBar` 里「首页」标题**紧随其后的可点小号文字**：未登录显示「未登录」、已登录显示昵称（昵称缺失回退用户名，均无则「未登录」），
+  `labelLarge` / `primary` 配色、`clip(Shapes.small)` + `clickable(role = Role.Button)` + `defaultMinSize(minHeight = 44.dp)`（满足 48dp 触控目标的可点区域）、
+  行尾 `TextOverflow.Ellipsis`；点击仍进账号设置页。`HomeDashboardContent` 随之不再需要 `accountName` / `onOpenAccount` 参数。
+  证据：模拟器 1080×2400 uiautomator dump 同一行内 `首页 [63,179][177,261]` + `未登录 [203,194][313,247]`，右侧仍是 `默认账本 [810,189][981,252]`，
+  首页其余内容（结余卡、较上月环比、收入/支出、快捷入口、空态）不受影响。
+- **F-16j 应用锁前置分诊（修复「未录入生物识别时开启应用锁崩溃」，2026-10-13）**：模拟器实测
+  （`locksettings set-pin 1234` 设了系统 PIN、**未录入指纹/人脸**）点 设置 → 安全 → 应用锁开关 ⇒
+  `FATAL EXCEPTION: main / Process: com.minibook, PID: 4040 / java.lang.RuntimeException: java.lang.reflect.InvocationTargetException`
+  → `java.security.InvalidAlgorithmParameterException: At least one biometric must be enrolled to create keys requiring user authentication for every use`
+  ——Android 13+ Keystore 对「每次使用都要用户认证」的 key 的硬要求；`KeyManager.createMasterKeyEncryptCipher(useAuth = true)`
+  在主线程抛出且无人捕获。修法：
+  ① `BiometricHelper.hasEnrolledBiometric()`（`BIOMETRIC_STRONG` / `BIOMETRIC_WEAK` 任一成功即算已录入；
+  **刻意不并入 `DEVICE_CREDENTIAL`**——只设 PIN 时它同样返回 SUCCESS，正是崩溃场景）；
+  ② `SettingsViewModel.setAppLockEnabled(true)` 在 `isDeviceSecure()` 之后增加该分诊，不满足则发 `needBiometric` 事件，
+  **不启用、不降级明文**；③ `SettingsSecurityScreen` 新增生物识别引导卡（跳系统安全设置），与 DEC-003 无锁屏引导卡并列；
+  ④ `AppLockController` 四处 cipher 创建（解锁 / 降级 / 升级 / 首启认证）全部 `runCatching`，失败按 `false` / `AUTH_FAILED`
+  回调（保持锁定，宁可不进也不错）而不是崩主线程。
+  模拟器复测：开关不再崩溃（`pidof` 前后同为 4728）、显示引导卡原文、返回后安全行仍「应用锁未开启」、`logcat -d -b crash` **0 行**；
+  JVM 仍 **569 例 / 0 失败 / 1 跳过**（本次无新增用例）；APK 39,508,475 字节 sha256 `C334F7F480F3BD5B4F3D55FA7F67132D162AC81A34C51F9586A4B894DB60DA9D`。
+- **F-16i 解密门门控 Flow（修复「重锁瞬间主线程崩溃」，2026-10-13）**：真机 crash buffer 实录
+  `java.lang.IllegalStateException: DatabaseGate 未解锁/未打开，无法提供 LedgerDao`（10:11:13，pid 27954）——
+  `AppLockController.lock()`（`AppLockController.kt:72-73`）**先 `databaseGate.close()`、后 `_isLocked.value = true`**，
+  而 UI 生命周期恢复会让 `collectAsStateWithLifecycle` 立刻重启上游 Flow；旧实现在**调用点** `ledgerDao() ?: error(...)`
+  同步抛出 ⇒ `Dispatchers.Main.immediate` 上无人捕获，主线程崩溃。修法：
+  ① `DatabaseProvider.openState: Flow<MiniBookDatabase?>`（`DatabaseGate` 用 `MutableStateFlow` 覆写：`open()` 成功发射、失败与 `close()` 归 `null`）；
+  ② 新增 `data/local/datasource/GatedFlow.kt`：`gatedFlow { db -> ... }` = `openState.flatMapLatest { if (it == null) emptyFlow() else block(it) }`
+  ——**必须把 `null` 换成空流**；写成 `filterNotNull().flatMapLatest(...)` 会让重锁事件到不了 `flatMapLatest`、旧库流留在已关闭实例上（回归测试抓到的点）；
+  ③ `RoomDataSourceImpl` 七个 `observe*`（交易四流 / 债务 / 分类 / 预算）+ `RoomDataSource` 适配器 `observeAll` 全部门控：
+  解密门关闭期间**不发射、不抛异常**，解锁自动切到新建库的 DAO；
+  ④ **一次性 `suspend` 查询/写入仍保持硬失败**（静默返空会把「没解锁」误报成「没有数据」，宁可不记错）；后台接收器（`SmsReceivedReceiver`、自动同步）本就 catch。
+  新增 `GatedFlowTest` 3 例（门关不发射 / 解锁发射当前库值 / 重锁取消上游再解锁切新库）；JVM **569 例 / 0 失败 / 1 跳过**；APK 39,196,755 字节 sha256 `B297835C81F0513D9B6DB38392A960BF4064C893B1842171944AFAC739F2AA71`。
+- **F-16h 内置商户词典（docs/15 第 7 条，2026-10-13）**：按用户定案「联网搜一波大的当内置，学习留在 App 本地」——
+  新建 `app/src/main/res/raw/merchant_dictionary.json`（**1315 条**，70,105 字节，`{version,note,entries:[{keyword,category}]}`，
+  只映射 15 个内置支出分类名，0 重复 keyword）；`domain/usecase/category/MerchantDictionary.kt`（接口）+
+  `BuiltInMerchantDictionary.kt`（安装后按归一化长度降序，先相等后包含，复用 `CategoryRuleNormalizer`）+
+  `data/local/dictionary/MerchantDictionaryJson.kt`（容错解析，坏文件静默降级为空）+ `MerchantDictionaryStore.kt`
+  （`@Singleton`，双检只加载一次，失败静默）+ Hilt `@Binds`。`ImportBillUseCase` 在**第 1.5 步**查词典
+  （仅 `allowWeakRuleMatch = true` 的手动预览/待确认路径；L2 到达即记账**不查词典**，防静默污染），
+  优先级 = 本地学习规则 > 内置词典 > 内置类型映射 > 「其他」。体量：APK 内资源不解压，实测 APK 反而略小
+  （38,788,240 字节）；测试 `MerchantDictionaryTest`（解析 / 相等优先 / 最长包含 / 未加载返回 null / 清空）+
+  词典文件校验（≥1000 条、分类合法、无重复、归一化后非空）。
+- **F-16g 日期区间联动约束（docs/15 第 5 条）**：`ui/components/OptionalDateField.kt` 与
+  `ui/transactions/TransactionsScreen.kt` 的 `DateFilterChip` 新增 `minDateMillis` / `maxDateMillis`，
+  经 M3 `SelectableDates` 在日期选择器内**把不可选日期直接置灰**，取代「先选完再报错」；两处调用点
+  （交易列表筛选、搜索条件）互相传递另一端的值 ⇒ 「结束日期」不能早于「起始日期」，反之亦然。
+- **F-16f 退款记为「收入」+ 单独「退款」分类（docs/15 第 6 条）**：根因是 `SmsBillParser` 的
+  `EXPENSE_KEYWORDS` 含「退款」⇒ 退款短信被记成支出。改为「退款」入 `INCOME_KEYWORDS`，
+  新增 `REFUND_KEYWORD` 在方向判定 `when` 里**优先**判 `TransactionType.INCOME`，并令
+  `platformCategory = "退款"`；`domain/model/BillCategoryMapping.kt` 补短信侧「退款」→ 收入「退款」分类
+  （微信侧原有两条退款条目保留）。按用户拍板**不做支付/退款配对、不红冲、不动数据模型**，
+  退款在收入分析里单列。测试含「消费…已退款到账」等 3 例。
+- **F-16e 贷款/授信营销短信过滤（docs/15 第 4 条）**：用户给的两条真实银行原文（398000 元授信）原被判成
+  收入/支出各一笔并**静默入库**。① 根因：「回6查利息」命中 `INCOME_KEYWORDS` 的「利息」、「可用于日常消费」
+  命中 `EXPENSE_KEYWORDS` 的「消费」，两侧都命中时按**更靠前**者定向，且模板注册表见「银行」锚点即套
+  `bank.generic`（允许 L2 自动记账）。② 修复：在方向判定**之前**加三层预筛——回复指令特征
+  （`拒收请回复`/`退订`/`回+数字+查办确退了复`）→ `NotBill`；授信语义（`授予您`/`特批您`/`预授信`/`可借`/
+  `周转款`/`额度`…）且**无强交易锚点** → `NotBill`；并把「利息」「消费」从单独定向降级为需交易锚点语境。
+  **不遗漏优先**：带「尾号+扣款」的真实交易短信即使带「退订回T」也照常入账（有专门用例守住）。
+  已入账的脏数据按用户 2026-10-13 决定**不清理**。
+- **F-16d 导入前主动申请短信权限（docs/15 第 3 条）**：`ui/billimport/ImportScreen.kt` 新增
+  `smsPermissions()`（`READ_SMS` + `RECEIVE_SMS`，Android 13+ 加 `POST_NOTIFICATIONS`）与
+  `rememberLauncherForActivityResult(RequestMultiplePermissions())`；两个短信导入入口改走
+  `startSmsScan(mode)`（未授权 → 先申请，授权后按**同一 mode** 继续扫，避免权限弹窗把用户意图吞掉）；
+  引导页按钮文案改「授予权限并继续」并补系统设置兜底路径说明。
+- **F-16c 导入来源清单（docs/15 第 2 条）**：用户「多家银行只导入指定的一家」；因 106 端口复用、发送方
+  无法预枚举，改为**从扫描结果反推**：`SmsModels` 增 `SmsWhitelistEntry.importEnabled`、`SmsSenderSummary`
+  与 `SmsScanPreview.senders`；`SmsWhitelistStoreCodec` 改 5 段（旧 4 段自动按 `importEnabled = true` 兼容，
+  老用户不迁移）；`SmsWhitelistStore` 增 `setImportEnabled` / `rememberSenders`；新增
+  `SmsSenderNamer`（按机构词表 + 正文签名猜机构名，猜不出返回 null 绝不硬写）与 `SmsSenderSummaryBuilder`
+  （账单数降序、同数按**号码数值**升序）。`scan()` 跳过未勾选来源并计入「非账单」（**不删任何已入账交易**），
+  只登记真正出过账单的来源；UI：导入页「导入来源」摘要行 + 弹框逐源勾选（**默认全选**，防漏），
+  设置 → 短信账单 → 白名单每源两行开关（上一行自动记账 / 下一行允许导入）。
+- **F-16b 分类规则归一化核心词（docs/15 第 1 条）**：新建
+  `domain/usecase/category/CategoryRuleNormalizer.kt`——归一化四步（剥括号 → 全角转半角、去空白、小写 →
+  按**长词在前**剥后缀表（有限责任公司/股份有限公司/有限公司/分公司/旗舰店/营业部/门店/分店/公司/集团…，
+  **刻意不剥裸「店/市/区/县/中心/广场」**，否则「如家酒店」→「如家酒」、「天猫超市」→「天猫超」）→ 去首尾标点）；
+  匹配强度 `STRONG`（原串包含 / 归一化相等 / 核心词 ≥3 字被包含）与 `WEAK`（公共前缀 ≥2 字）。
+  学习侧 `UpsertUserCategoryRuleUseCase` 改存**核心词**（旧规则不迁移，原串包含仍是 STRONG，行为不退化）；
+  `ImportBillUseCase` 用 `matchStrength` 排序（STRONG 优先 → 核心词更长优先 → 更新时间新优先），
+  新增 `allowWeakRuleMatch` 参数：**L2 到达即记账只认 STRONG**，只有用户看得见、改得动的手动预览与
+  「待确认」路径（`SmsBillImportUseCase.importConfirmed` / `confirmManual`）才允许 WEAK 参与。
+  算法与应用口径落在新文档 `docs/19_category_rule_normalization.md`（用户要求「找个地方单独记录以便后续优化」）。
+- **F-16a 页面顶部留白修复 + 首页账号信息行（用户即时需求，2026-10-13）**：按用户反馈「页面与上部空白太多」
+  「在首页可以增加一个登录信息展示」——① 根因：`ui/main/MainScreen.kt` 的 `Scaffold` 没有 `topBar`，默认
+  `contentWindowInsets = systemBars` 把状态栏高度计入 `innerPadding`，而 5 个 Tab 页各自的 `Scaffold` **又加一次**
+  ⇒ 内容被顶下约两个状态栏高度；改为 `contentWindowInsets = WindowInsets(0, 0, 0, 0)`（底部不受影响，
+  `NavigationBar` 自身消费导航栏 inset）。② 首页 `LazyColumn` 首个 item 新增 `HomeAccountRow`：
+  未登录显示「未登录」+ 右侧「登录」链接，已登录显示昵称 +「账号设置 ›」，整行可点跳转账号页
+  （`HomeNavigation.openAccount()` → 根图 `settings-account`）。昵称来自服务端缓存副本：
+  `SyncAuthStore` 增 `KEY_NICKNAME` / `updateNickname()` / `displayName`（昵称优先、回退用户名、未登录为 null），
+  `AccountViewModel` 在 `GET /me` 与保存资料成功后回写，`HomeViewModel.accountDisplay` 暴露给首页。
+  测试：`SyncAuthStoreTest` +2 例（昵称优先回退用户名、登出清缓存）。
+- **F-15y 账号页「显示名」改称「昵称」+ 不再展示账号 ID（2026-10-13）**：按用户反馈「显示名改一下，叫昵称」
+  「账号ID不要展示」——账号页用户信息行与编辑资料页字段的「显示名」全部改称「**昵称**」（编辑资料页说明行、账号页
+  「编辑资料」行副标题、`AccountViewModel` KDoc 同步；登录页辅助说明改为「登录用的账号名（不是昵称）」以避开混淆）；
+  已登录用户信息由 8 项收为 **7 项**（昵称 / 用户名 / 邮箱 / 个性签名 / 地区 / 注册时间 / 上次登录），
+  `SettingsAccountScreen.kt` 删掉「账号 ID」行——`UiState.userId` 保留（内部仍需要），只是不再展示。
+- **F-15x 预算：总额可删除 / 清空 + 分类预算删除后立即刷新（2026-10-13）**：按用户反馈「预算填写了不能删除或者清空」
+  「分类预算删除后不立马刷新，返回再进来才会删除」——
+  ① 新增 `domain/usecase/budget/ClearTotalBudgetUseCase.kt` + `BudgetsViewModel.clearTotalBudget()`；预算页总额弹层在
+  **已设过总额**时给出「删除月度总预算」danger 入口（`onDelete` 由恒为 `null` 改为按 `successProgress.totalBudgetFen > 0` 提供），
+  `BudgetEditorSheet` 的删除按钮/强确认标题与文案按模式（分类 / 总额）切换，总额模式注明「已记录的交易与分类预算不受影响」。
+  ② **根因修复**：分类预算删除原先走 `RoomDataSourceImpl.deleteByCategory` 的裸 `writableDatabase().delete("budgets", …)`，
+  **绕过了 Room 的失效通知**（DAO 写入会在进程内刷新失效版本；DB 级 TEMP 触发器只在建触发器的连接上生效）⇒
+  `observeByMonth` 的 Flow 不重发 ⇒ 列表不刷新，必须退出页面等 `WhileSubscribed(5s)` 超时重连才更新——这也解释了
+  为何「保存」会刷新（走 DAO `upsert`）而「删除」不会。改为新增 `BudgetDao.deleteCategoryBudget()`（`@Query` DAO 删除，
+  写入与失效通知同一路径闭合），删完列表**立即**刷新。测试：`FakeBudgetRepository` 记录 `lastClearedTotal` /
+  `lastClearedCategory` 供断言，新增 `ClearTotalBudgetUseCaseTest` 1 例 + `ClearCategoryBudgetUseCaseTest` 2 例。
+- **F-15w 账本图标换成自带矢量图标集（2026-10-13）**：按用户反馈「账本的图标也换一下」——新建
+  `ui/components/LedgerIcons.kt`：16 个**稳定 key**（`book` / `notebook` / `journal` / `stories` / `library` / `notes` /
+  `receipt` / `stack` / `work` / `savings` / `bank` / `card` / `chart` / `shopping` / `home` / `car`，路径取自
+  Material Symbols Rounded，Iconify 抓取后内联为自带矢量，`addPathNodes` 解析）；渲染统一走新增的 `LedgerGlyph`
+  （`ui/components/LedgerIcons.kt`）：key / 历史 emoji → 按 `tint` 着色的矢量，未知串 → 文本兜底，**绝不空白**。
+  渲染点全部收口（账本选择器 `Pickers.kt`、账本管理 `LedgerManageScreen.kt`、锁屏 LOGO `LockComponents.kt`）；
+  账本编辑器 `LedgerEditorSheet.kt` 的「emoji 快捷行 + 自定义 Emoji 输入框」换成 **6 列图标网格**
+  （`LedgerIconPickerGrid` / `LedgerIconChoice`：44dp 圆、选中主题描边 + `primaryContainer` 底色），新建账本预选 `book`；
+  默认账本 `BootstrapUseCase` 与导入回退 `ImportAllUseCase` 的 `DEFAULT_ICON` 由 `📒` 改为 `"book"`
+  （domain 层写字面量以免依赖 ui，注释指向 `LedgerIcons.BOOK`）。**不做数据迁移**：老账本 emoji 原样留在 DB 里，
+  由 `LEGACY_EMOJI`（16 条）兜底映射回同批矢量，用户不重新点选就不会改写。守卫：`LedgerIconsTest` 3 例在 JVM 侧
+  逐个解析全部矢量路径（F-15o 教训：编译绿也可能运行时崩）。
+- **F-15v 内置分类图标换成自带矢量图标集（TASK-082，2026-10-12）**：24 条内置分类模板的 `icon` 从 emoji
+  换成 `ui/components/CategoryIcons.kt` 的**稳定 key**（`"food"` … `"cash"`，路径取自 Material Symbols Rounded，
+  Iconify 抓取后内联为自带矢量）——渲染统一走新增的 `CategoryGlyph`（`ui/components/CategoryComponents.kt`）：
+  key → 矢量图标、可按分类色 `tint` 着色；未知串 / 历史 emoji → 文本兜底（`LEGACY_EMOJI` 把 24 个旧 emoji
+  映射回同一批矢量，**不做数据迁移**，老数据原样保留）。9 处渲染点全部改走 `CategoryGlyph`（分类格、交易列表行、
+  记账分类下拉、交易详情、预算进度卡、预算编辑、搜索筛选、搜索条件）；分类编辑器的「手输 Emoji 输入框」换成
+  **6×4 图标网格**（44dp 圆、选中主题描边 + `primaryContainer` 底色，不再提供手输 emoji）。守卫：
+  `CategoryIconsTest` 3 例在 JVM 侧逐个解析全部路径（F-15o 教训）。JVM 521 例 / 0 失败。
+- **F-15u 未登录态收为登录按钮 + 设置页「账号」提第一行（TASK-082，2026-10-12）**：按用户反馈（2026-10-12）
+  「用户未登录时候不要展示一个大框，做成一个让用户登录的按钮即可」——撤销上一版 `GuestLoginCard` 资料头卡
+  （见被否决的 F-15t），未登录的账号页只留满宽「登录」主按钮 + 「还没有账号？注册新账号」文字链
+  （`GuestLoginButtons`）；同时按「账号设置提到设置页面第一行」把设置页「账号」行移到**第一位**（在「账本」
+  之前），作为身份 / 跨设备入口最可能的行动点。
+- **~~F-15t 账号页「未登录」改成资料头卡（TASK-082，2026-10-12；已被用户否决，见 F-15u）~~**：用户拿主流 App 的未登录态对照后要求「这块的模式」——
+  未登录时不再是一行「当前状态 + 未登录」加两个竖排按钮，而是一张**资料头卡**：圆形头像（`MiniBookIcons.Person`）+
+  「未登录」标题 + 一句「登录云同步个人账号，本地账目一条不动」，主操作是满宽「**立即登录**」（按钮内带人形图标，
+  52dp 高），次操作「注册新账号」为描边按钮（48dp）。**只借结构、不借内容**：不写会员 / 权益 / 签到 / 领现金这类
+  我们真没有的东西。已登录态不动（仍是用户信息 8 项 + 账号操作 + 会话三段）。见 `SettingsAccountScreen.kt`
+  （`GuestLoginCard`）。实测：模拟器浅色 / 暗色各一张截图（`build-verify-account-guest-light.png` /
+  `-guest-dark.png`），点「立即登录」正常进独立登录页；JVM 518 例 / 0 失败不变。
+- **F-15s 隐私政策与用户协议落地 + 注册页协议勾选（TASK-076 部分完成，2026-10-12）**：两份法务正文写成
+  **纯文本单一副本** `app/src/main/res/raw/privacy_policy.txt`（11 节）与 `terms_of_service.txt`（10 节）——界面直接读，
+  上架材料与 App 内展示同源（`LegalTextTest` 3 例守着关键条款与"无 Markdown 记号"）；新增
+  `ui/settings/LegalScreen.kt`（枚举 + 滚动正文页）与设置 →「关于」两行入口，路径为**设置 → 关于 → 隐私政策 / 用户协议**
+  （2 跳可达）；注册页新增**默认不勾选**的协议勾选框（未勾选时本地拦下并直说原因，`SyncPresenter.agreementError`），
+  登录页只放「登录即表示你已阅读并同意」+ 一对可点链接——登录页不放勾选框（满足 191 号文一.2 / 三.2 / 三.4）。
+  **运营主体与联系方式按用户要求暂不声明**，正文与 `docs/17` §5 都写明"上线前必须补"。方案与合规对照见 `docs/17`
+  `docs/18`。
+- **F-15r 首页结余卡新增"较上月"环比（TASK-081，2026-10-12）**：结余金额下方一行——「较上月 +¥X / 较上月 ¥-X /
+  与上月持平 / 上月无记录」。**只给可核对的绝对差额，不给百分比**（上月基准为 0 时百分比无定义，硬算等于编造）；
+  上月收支全为 0 视为"上月无记录"，不显示对比；涨跌用**符号 + 语义色双编码**（`NetBalanceTrend` + `NetTrendLine`
+  在 `ui/components/Cards.kt`，判定纯函数 `HomeViewModel.previousBalanceOrNull` 可单测）。
+- **F-15q 视觉现代化：主题 token + 自带矢量图标 + 面板分层（TASK-078 / TASK-079，2026-10-12）**：
+  按平台规范与 2025 视觉趋势做了一轮"不换依赖、不改架构"的外观改造（方案与出处见
+  `16_auth_ux_and_visual_plan.md` §6）：
+  1. **配色与分层**：`ui/theme/Color.kt` 从 2021 默认紫换成青绿「清爽现代」基线，并**补齐 M3 分层表面族**
+     （`surfaceContainerLowest/Low/Container/High/Highest`、`surfaceDim/Bright`、`inverse*`）——此前全仓库
+     `surfaceContainer*` **0 命中**，层级只能靠 `surfaceVariant + alpha` 硬凑；
+  2. **对比度**：`Theme.kt` 的主题色生成改为按背景亮度算 `on*` 色（`onColorFor`），不再无条件
+     `onPrimary = Color.White`（浅色强调色底上的白字曾经过不了 WCAG 1.4.3）；
+  3. **形状/字号**：`MiniBookShapes` 改为 6/12/16/**20**/28dp、`FullShape` 28dp；新增等宽数字金额样式
+     `MoneyLarge` / `MoneyMedium`（`tnum`，28sp/20sp SemiBold），净额卡不再用 36sp Regular；
+  4. **图标全部自带矢量**：新增 `ui/components/MiniBookIcons.kt`（18 个 24dp 图标，路径取自 Material
+     Icons，Apache-2.0），替换底部导航 5 个 emoji、搜索 🔍、账本行 ✏️/🗑、返回 ←、月切换 ‹›、
+     FAB ＋、快捷入口 emoji 等；配套 `MiniBookIconsTest` 遍历全部图标断言可解析
+     （矢量路径写错只在运行时崩，参见 F-15o）；
+  5. **面板分层**：`surfaceVariant.copy(alpha = …)` 的 8 处面板与 3 处显式 `surface` 卡片改
+     `surfaceContainerLow / High / Highest`；筛选 Chip、进度轨道等**语义用色刻意保留** `surfaceVariant`。
+  语义色（收入绿 / 支出红）**不随动态取色漂移**；`dynamicColor = true` 仍旧默认（壁纸取色下强调色来自
+  系统，静态青绿基线用于 API<31、关闭动态取色与自定义主题色）。
+- **F-15p 登录 / 注册页按平台规范补齐交互细节（TASK-075，2026-10-12）**：①口令可见性从"多余的按钮"改成
+  输入框**右侧眼睛图标**（NIST SP 800-63B 允许显示口令、Material 的 `password_toggle` 惯例）；②口令 / 用户名
+  字段带上 **autofill 语义**（`ContentType.Username / Password / NewUsername / NewPassword`），系统密码管理器
+  可自动填充；③键盘：`KeyboardCapitalization.None` + 关闭自动纠错，`imeAction` 串成
+  「下一步 → 完成」（最后一项回车即提交）；④错误**落到字段上**（`isError` + `supportingText`），并用
+  `LiveRegion` 让读屏播报；⑤注册页「两次口令不一致」精确挂到"确认口令"那一格（不再只在页面底部出现一句）；
+  ⑥提交中禁用全部输入；⑦返回键由文本「← 返回」改为矢量箭头并带 `contentDescription`。
+- **F-15o 修复「点注册新账号」闪退（TASK-074，2026-10-12）**：新的登录 / 注册页给应用图标用了
+  `painterResource(R.mipmap.ic_launcher)`，而 `mipmap-anydpi-v26/ic_launcher.xml` 是**自适应图标 XML**，
+  Compose 的 `painterResource` 只认 VectorDrawable 与位图 ⇒ 抛
+  `IllegalArgumentException: Only VectorDrawables and rasterized asset types are supported ex. PNG, JPG, WEBP`
+  并当场结束 Activity（用户点「注册新账号」就是闪退）。**这类缺陷编译绿、JVM 单测也全绿都抓不到**：
+  本次是模拟器实测 + `adb logcat -b crash` 定位的，栈首帧 `AuthComponents.kt:68`。已改用矢量
+  `R.drawable.ic_launcher_foreground`，外套圆角底衬（`Box(76.dp).clip(RoundedCornerShape(22.dp))` +
+  `Image(56.dp)`）。同类隐患：`SmsNotificationHelper`（通知小图标）仍引用 `R.mipmap.ic_launcher`，未改。
+- **F-15n 「注册时间」显示错误修复 + 资料字段扩充（TASK-074，2026-10-12）**：服务端 `UTCDateTime` 读出来是
+  **naive UTC**，`UserOut.created_at` 序列化后不带时区 ⇒ 客户端 `Instant.parse` 抛异常、把 UTC 原样显示
+  （比本地时间早 8 小时且难看）。现在服务端统一输出**带 `Z` 的 UTC**（`UserOut` 的序列化器），客户端
+  `humanTime` 再兜一层「没带时区按 UTC 解释」，并新增 `fullTime`（`yyyy-MM-dd HH:mm`）供「注册时间 /
+  上次登录」使用。资料同时扩充：`users.email`(254) / `bio`(80) / `region`(32)（迁移
+  `0004_user_profile_fields`）；账号页展示 8 项（显示名 / 用户名 / 邮箱 / 个性签名 / 地区 / 注册时间 /
+  上次登录 / 账号 ID），其中「上次登录」= 该账号最近一次**首发**刷新令牌时间（令牌轮换不算新登录）。
+  新增「编辑资料」独立页，保存时**只提交改动过的字段**（null = 不改，空串 = 清除）⇒ 改邮箱不会顺手
+  清掉个性签名。
+- **F-15m 登录 / 注册各自独立成页（TASK-074，2026-10-12）**：原先挤在账号页里的内嵌表单改成两个独立整页
+  （路由 `settings-login` / `settings-register`）：应用图标 + 大标题 + 满宽主按钮 + **页面内错误文案**
+  （不再是一闪而过的 toast）+ 互相切换的文字按钮；注册页带「确认口令」，注册成功即自动登录。新增
+  `AuthViewModel` 专管认证，`AccountViewModel` 只管资料与会话；服务器地址输入框只在调试版的登录页出现。
+- **F-15l 云同步入口去重（TASK-074，2026-10-12）**：用户指出「账号页有云同步、数据页也有」——按「只保留
+  一个」去掉账号页那一行，入口只留在**设置 → 数据 → 云同步**（账号页职责收敛为「账号自己」）。
+- **F-15k 修复「注册失败」提示不准（2026-10-12）**：服务端 `RegisterRequest` 要求 `password ≥ 8`、
+  `username` 3–32 位且限 `[A-Za-z0-9_.-]`，但客户端原先不做本地校验，服务端 422 又被复用成同步用的
+  「数据校验失败，未写入云端」——真机上用户用 6 位口令注册，只看到这句话，完全不知道是口令长度问题。
+  现在：① 注册 / 登录**本地前置校验**，不合规直接说「口令至少 8 位」/「用户名不合规：…」且**不发请求**；
+  ② 表单常驻规则提示（用户名 3–32 位字母/数字/点/下划线/连字符；口令至少 8 位）；
+  ③ 认证类 422 文案改为「输入不符合要求：用户名 3–32 位…，口令至少 8 位」。
+  纯逻辑新增 4 例测试（`SyncPresenterTest`）。
+- **F-15j 修复 `SyncApi` 在主线程读响应体（`NetworkOnMainThreadException`，2026-10-12）**：
+  `callRaw` 把 `resp.body?.string()` 放在 `withContext(ioDispatcher)` **之外**——小响应侥幸已进缓冲区，
+  大响应就会在**调用方线程**真读 socket ⇒ 账号页点「登录」报「操作失败：NetworkOnMainThreadException」。
+  自动同步从未暴露它（`SyncUseCase` 整段已在 IO 上），属典型「JVM 绿、只在真机特定路径炸」。现已把
+  `execute()` 与读 body 一起收进 `withContext(ioDispatcher)`；调试版账号操作失败时打印异常栈便于定位。
+- **F-15h 「账号」页：登录 / 改资料 / 改口令 / 退出 / 注销（DEC-039 / TASK-073，2026-10-12）**：
+  设置首页「账号」点进去的二级页标题改为「**账号**」（与入口同名；原先错走到「云同步」页所以标题对不上）；
+  新增 `settings-account` 路由 + `AccountViewModel` + `SettingsAccountScreen`，并新增「用户信息」区
+  （显示名 / 用户名 / 注册时间）。四类操作：改显示名（**留空 = 清除**，回退显示用户名）、改口令（原口令验证，
+  成功后服务端撤销全部旧刷新令牌并换发新令牌，客户端立即覆盖本地）、退出登录、注销账号（口令二次确认）。
+  **注销与退出都只动云端账号，本机数据一条不删**。服务端新增 `users.nickname`（迁移 `0003_user_nickname`）、
+  `PATCH /api/v1/me`、`POST /api/v1/auth/delete-account`（删云端 6 张业务表 + `sync_log` + 刷新令牌 + 设备 + 用户行）。
+- **F-15i 服务地址不再暴露给用户（DEC-039 / TASK-073，2026-10-12）**：地址改为 `BuildConfig.SYNC_BASE_URL`
+  按构建类型内置（debug = `http://127.0.0.1:8000`；release 留空 = 待填部署域名）；正式版界面**不再出现
+  服务器地址**，仅调试版保留输入框供开发临时改指向；内置地址缺失时明确提示「本安装包未内置服务器地址」。
+- **F-15f App 账号登录可用 + 自动云同步（DEC-038 / TASK-071，2026-10-12）**：
+  按用户纠正的方向落地（原话「**我要的是 app 登录，不是做一个云同步的功能。是 app 能登录，在设置里可以自动云同步或者手动同步**」）：
+  设置首页新增一级「**账号**」行（未登录／已登录两态）直达账号与同步页；账号页新增**自动同步**开关（默认开，
+  打开／回到 App 时静默**双向**同步一次，**≥5 分钟节流**）。`AutoSyncManager` 由 `MainActivity.onStart()`
+  + 解锁后组合的 `LaunchedEffect` 触发（经 `EntryPoint` **延迟取用**，避免解锁前构造 `SyncStateDao` 导致启动即崩）。
+  **安全边界**：会删本地数据或有冲突的计划（`SyncPlan.needsConfirm`）**永不自动执行**，失败静默且不推进游标；手动三模式全部保留。
+  登录失败改为**可见**：`saveSession` 落盘后**读回验证**，Keystore 失败**重试一次**并抛出可读原因
+  （治「服务端 200 但本地没登录、界面毫无提示」）。
+  **验证（实跑）**：JVM **489 例 / 0 失败**、模拟器 **21 例 / 0 失败 / 0 跳过**（新增 `AutoSyncManagerTest`、
+  `SyncAuthStoreDeviceTest`（真 Keystore 往返 + 会话落盘读回）、`MainActivityStartupTest` 启动冒烟）；
+  模拟器实测：登录 → `am force-stop` 后重启仍为「已登录：demo_user_b」→ 回前台自动同步
+  （`GET /sync/pull` + 6×`POST /sync/push` 全 200）→ 云端 `ledgers 1 / categories 25 / transactions 若干 / debts 8 /
+  sync_log 若干`，与用户手机导出的备份**逐项一致**。
+- **F-15g 修复「导入后首页 ¥0.00，看起来像导入失败」（TASK-072，2026-10-12）**：
+  导入会重建账本并重新生成 id，`LedgerDataStore` 的 `current_ledger_id` 随即**悬空** ⇒ 首页/明细显示
+  「¥0.00 · 暂无交易记录」，而数据其实已全部落库（同一份数据随后能把 若干条推上云）。现改为在**事务成功后**
+  用 `ledgerRepository.getDefault()?.id` 把当前账本写回（刻意置于事务外：回滚时指针不动，绝不指向不存在的账本）。
+  实测 `pm clear` 后重新导入同一备份，首页**直接**显示 `2026年10月结余 ¥-2,474.02`（修复前为 `¥0.00`）。
 
 - **F-15 云端存储改版：JSON 通用表 → 6 张真实业务表 + `sync_log`（DEC-037，2026-10-10）**：
   用户验收云端库时否决「业务字段塞进 `payload` JSON」的通用记录表（原话「不要这样，要在云端做明确的表，设计表结构」），
@@ -23,7 +298,7 @@
   JVM `SyncApiE2ETest` 与模拟器 `SyncDeviceE2ETest` 改版后复跑通过。
   修复踩坑：客户端 `explicitNulls=false` ⇒ 可空字段**整个缺键**，拆列必须 `.get()`（用下标会把真实历史行判成脏数据跳过）。
 - **F-15 真 MySQL 8 落地验证（2026-10-10，TASK-069 收口，用户提供内网 MySQL 连接信息）**：
-  在内网 MySQL **8.0.46**（docker `mysql:8.0`，`192.168.190.130:49779`，库 `minibook` / 测试库 `minibook_test`）上真连库跑通：
+  在内网 MySQL **8.0.46**（docker `mysql:8.0`，`<内网主机IP>:49779`，库 `minibook` / 测试库 `minibook_test`）上真连库跑通：
   `alembic upgrade head` 建 5 张业务表 + `alembic_version`（全 `InnoDB` + **`utf8mb4_unicode_ci`** + `DATETIME(6)` + `JSON`）；
   `downgrade base ⇄ upgrade head` 双向真跑通过；**同一套 `pytest` 52 例 / 0 失败，MySQL 与 SQLite 双 DSN 双绿**
   （52 = 原 49 + **TASK-064 新增 3 例「日志不得含 payload」隐私断言**：push / pull / 整批校验失败三条路径，

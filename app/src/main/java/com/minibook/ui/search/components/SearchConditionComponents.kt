@@ -21,13 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.DebtDirection
 import com.minibook.domain.model.TransactionType
+import com.minibook.ui.components.CategoryGlyph
 import com.minibook.ui.components.MoneyInputField
 import com.minibook.ui.components.OptionalDateField
 import com.minibook.ui.components.TransactionTypeTab
+import com.minibook.ui.components.dateToUtcMillis
 import com.minibook.ui.search.SearchTab
 
 /** 条件组切换：「交易 | 债务」SegmentedButton（UI §8.1）。 */
@@ -115,13 +116,14 @@ internal fun TransactionConditions(
 
         Spacer(Modifier.height(8.dp))
 
-        // 日期区间：起 / 止（C-10 ×2，可清空）
+        // 日期区间：起 / 止（C-10 ×2，可清空）；联动约束「止 ≥ 起」在日期选择器内生效（docs/15 第 5 条）
         Row(modifier = Modifier.fillMaxWidth()) {
             OptionalDateField(
                 label = "起",
                 date = dateFrom,
                 onDateChange = onDateFromChange,
                 modifier = Modifier.weight(1f),
+                maxDateMillis = dateTo?.let { dateToUtcMillis(it) },
             )
             Spacer(Modifier.width(8.dp))
             OptionalDateField(
@@ -129,6 +131,7 @@ internal fun TransactionConditions(
                 date = dateTo,
                 onDateChange = onDateToChange,
                 modifier = Modifier.weight(1f),
+                minDateMillis = dateFrom?.let { dateToUtcMillis(it) },
             )
         }
 
@@ -193,7 +196,12 @@ internal fun CategoryFilterChip(category: Category?, onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(category?.icon ?: "🗂", fontSize = 16.sp)
+            CategoryGlyph(
+                icon = category?.icon ?: "🗂",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                size = 16.dp,
+                name = category?.name,
+            )
             Spacer(Modifier.width(8.dp))
             Text(
                 category?.name ?: "全部分类",

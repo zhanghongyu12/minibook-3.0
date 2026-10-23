@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -40,6 +42,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,8 +56,10 @@ import com.minibook.domain.model.TransactionType
 import com.minibook.ui.components.EmptyState
 import com.minibook.ui.components.LedgerSelector
 import com.minibook.ui.components.LoadingState
+import com.minibook.ui.components.MiniBookIcons
 import com.minibook.ui.components.MoneySemantic
 import com.minibook.ui.components.NetBalanceCard
+import com.minibook.ui.components.NetBalanceTrend
 import com.minibook.ui.components.NetBalanceRow
 import com.minibook.ui.components.PrimaryFAB
 import com.minibook.ui.components.TransactionListItem
@@ -89,6 +95,9 @@ interface HomeNavigation {
 
     /** 打开账本管理页（根图 `ledger-manage`，P-11）。 */
     fun openLedgerManage()
+
+    /** 打开账号设置页（根图 `settings-account`，F-16a 首页登录信息行）。 */
+    fun openAccount()
 }
 
 /**
@@ -103,6 +112,7 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
             override fun openBudgets() = Unit
             override fun openImport() = Unit
             override fun openLedgerManage() = Unit
+            override fun openAccount() = Unit
         }
     }
 
@@ -114,7 +124,8 @@ val LocalHomeNavigation: androidx.compose.runtime.ProvidableCompositionLocal<Hom
  * - [HomeUiState.Error]：一屏错误提示并引导账本管理（本期无跳转，仅文案）；
  * - [HomeUiState.Empty] / [HomeUiState.Success]：[HomeDashboardContent]——结余卡
  *   （[NetBalanceCard]「本月结余」+ 收入/支出明细行）+ 最近交易列表（[TransactionListItem]，
- *   前 10 条 UI 截断，A-3）+「查看全部」入口。
+ *   前 10 条 UI 截断，A-3）+「查看全部」入口；顶栏「首页」标题旁是账号链接（F-16a，2026-10-13
+ *   下午按用户要求从大卡收成小链接：未登录显示「未登录」、已登录显示昵称，点击进账号设置页）。
  *
  * **分类联表**：交易无分类名/图标/色，由 [HomeViewModel] 经 `ObserveCategoriesUseCase` 联表
  * （id→[Category]）折叠为 [HomeUiState.Success.categoriesById]；[HomeScreen] 据此给
@@ -140,6 +151,11 @@ fun HomeScreen(
     // 当月预算超支红点（DEC-012 入口轻量提示）：观察 budgetOverBudget。
     val homeNavigation = LocalHomeNavigation.current
     val budgetOverBudget by viewModel.budgetOverBudget.collectAsStateWithLifecycle()
+    // 首页账号信息行（F-16a，2026-10-13）：未登录显示「登录」链接、已登录显示昵称（离线缓存，
+    // 见 SyncAuthStore.KEY_NICKNAME），整行点击进账号设置页。
+    // 首页顶部账号链接（F-16a，2026-10-13；2026-10-13 下午按用户要求从「大卡」收成标题后的小链接）：
+    // 未登录显示「未登录」、已登录显示昵称（离线缓存，见 SyncAuthStore.KEY_NICKNAME），点击进账号设置页。
+    val accountName by viewModel.accountDisplay.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -147,6 +163,8 @@ fun HomeScreen(
                 uiState = uiState,
                 onNavigateToLedgerManage = homeNavigation::openLedgerManage,
                 onOpenSearch = homeNavigation::openSearch,
+                accountName = accountName,
+                onOpenAccount = homeNavigation::openAccount,
             )
         },
         floatingActionButton = {
@@ -171,6 +189,7 @@ fun HomeScreen(
                     expense = 0L,
                     transactions = emptyList(),
                     categoriesById = emptyMap(),
+                    previousBalanceFen = state.previousBalanceFen,
                     onOpenNewTransaction = { onOpenTransaction(null) },
                     onOpenEditTransaction = { tx -> onOpenTransaction(tx.id) },
                     onNavigateToTransactions = onNavigateToTransactions,
@@ -191,6 +210,7 @@ fun HomeScreen(
                     expense = state.expense,
                     transactions = state.recentTransactions,
                     categoriesById = state.categoriesById,
+                    previousBalanceFen = state.previousBalanceFen,
                     onOpenNewTransaction = { onOpenTransaction(null) },
                     onOpenEditTransaction = { tx -> onOpenTransaction(tx.id) },
                     onNavigateToTransactions = onNavigateToTransactions,
@@ -210,17 +230,21 @@ fun HomeScreen(
 }
 
 /**
- * 顶部栏：左「首页」标题 + 右搜索入口（🔍）+ [LedgerSelector]（UI §2 P-02 顶栏；状态栏
- * inset 自处理）。material-icons 缺失（TASK-020 偏差），搜索入口同全工程用 emoji 字符占位。
+ * 顶部栏：左「首页」标题 + 右搜索入口（[MiniBookIcons.Search]）+ [LedgerSelector]（UI §2 P-02 顶栏；状态栏
+ * inset 自处理）。搜索入口用自带矢量图标（全工程不依赖 material-icons 库，见 [MiniBookIcons]）。
  *
  * @param onNavigateToLedgerManage [LedgerSelector] 点击回调（跳账本管理，P-11）。
  * @param onOpenSearch 搜索入口回调（根图导航到 `search`，§8.6「首页顶部搜索入口」）。
+ * @param accountName 登录态展示名（未登录 = null，显示「未登录」）；点标题旁的链接进账号设置页。
+ * @param onOpenAccount 账号链接点击回调（根图 `settings-account`）。
  */
 @Composable
 private fun HomeTopBar(
     uiState: HomeUiState,
     onNavigateToLedgerManage: () -> Unit,
     onOpenSearch: () -> Unit,
+    accountName: String? = null,
+    onOpenAccount: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val currentLedger = (uiState as? HomeUiState.Success)?.currentLedger
@@ -232,13 +256,36 @@ private fun HomeTopBar(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "首页",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(1f),
-        )
+        // 「首页」标题 + 账号链接：整组可点（角色=按钮，点击进账号设置页）。2026-10-13 下午
+        // 按用户要求（「首页账号设置不用那么大，在首页两个字后面加个未登录/昵称作为链接就可以了」）。
+        Row(
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.small)
+                .clickable(role = Role.Button, onClick = onOpenAccount)
+                .defaultMinSize(minHeight = 44.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "首页",
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = accountName ?: "未登录",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.weight(1f))
         IconButton(onClick = onOpenSearch) {
-            Text("🔍", fontSize = 20.sp)
+            Icon(
+                imageVector = MiniBookIcons.Search,
+                contentDescription = "搜索",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         LedgerSelector(
             ledger = currentLedger,
@@ -265,6 +312,7 @@ private fun HomeTopBar(
  * @param onOpenBudgets 「预算」入口回调（根图导航到 `budgets`，§8.6）。
  * @param onOpenImport 「导入账单」入口回调（根图导航到 `import`，§9.1 TASK-044 第三格）。
  * @param budgetOverBudget 所选月预算是否超支（DEC-012 入口提示）；超支时预算入口叠加 `error` 红点。
+ * @param previousBalanceFen 上月结余（分）；null = 上月无收支记录（TASK-081 结余卡环比行）。
  * @param onPreviousMonth 上一月回调（右滑/「‹」箭头，[HomeViewModel.previousMonth]）。
  * @param onNextMonth 下一月回调（左滑/「›」箭头，[HomeViewModel.nextMonth]，上限当前月）。
  */
@@ -283,6 +331,7 @@ private fun HomeDashboardContent(
     onOpenBudgets: () -> Unit = {},
     onOpenImport: () -> Unit = {},
     budgetOverBudget: Boolean = false,
+    previousBalanceFen: Long? = null,
     onPreviousMonth: () -> Unit = {},
     onNextMonth: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -298,6 +347,7 @@ private fun HomeDashboardContent(
                 balance = balance,
                 income = income,
                 expense = expense,
+                previousBalanceFen = previousBalanceFen,
                 onPreviousMonth = onPreviousMonth,
                 onNextMonth = onNextMonth,
                 onOpenMonthTransactions = {
@@ -383,6 +433,7 @@ private val MONTH_SWIPE_THRESHOLD_DP = 64.dp
  * @param balance 所选月结余（分，可负）。
  * @param income 所选月收入（分）。
  * @param expense 所选月支出（分）。
+ * @param previousBalanceFen 上月结余（分）；null = 上月无收支记录（TASK-081 环比行）。
  * @param onPreviousMonth 右滑 /「‹」箭头回调。
  * @param onNextMonth 左滑 /「›」箭头回调。
  * @param onOpenMonthTransactions 结余卡轻点回调（跳转账单当月明细，可空=不可点）。
@@ -393,6 +444,7 @@ private fun MonthBalanceCard(
     balance: Long,
     income: Long,
     expense: Long,
+    previousBalanceFen: Long? = null,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onOpenMonthTransactions: () -> Unit = {},
@@ -432,6 +484,8 @@ private fun MonthBalanceCard(
                 NetBalanceRow(label = "收入", fen = income, semantic = MoneySemantic.INCOME),
                 NetBalanceRow(label = "支出", fen = expense, semantic = MoneySemantic.EXPENSE),
             ),
+            // TASK-081 环比行：只给可核对的差额（上月无记录时只写文案，不给百分比）。
+            trend = NetBalanceTrend.from(balance, previousBalanceFen),
             modifier = Modifier.fillMaxWidth(),
         )
         Row(
@@ -441,13 +495,17 @@ private fun MonthBalanceCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onPreviousMonth) {
-                Text("‹", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(
+                    imageVector = MiniBookIcons.ChevronLeft,
+                    contentDescription = "上一个月",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             IconButton(onClick = onNextMonth, enabled = !isLatestMonth) {
-                Text(
-                    "›",
-                    fontSize = 22.sp,
-                    color = if (isLatestMonth) {
+                Icon(
+                    imageVector = MiniBookIcons.ChevronRight,
+                    contentDescription = "下一个月",
+                    tint = if (isLatestMonth) {
                         MaterialTheme.colorScheme.outline
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -490,7 +548,7 @@ internal fun monthTransactionsRange(month: YearMonth): MonthTransactionsRange =
  *
  * 预算入口在当月超支（[overBudget]）时叠加 `error` 色小圆点（DEC-012「入口轻量提示」，
  * TASK-038 增强项），点击进预算页 `budgets`；报表入口点击进报表页 `reports`；「导入账单」
- * 入口（📥，F-12）点击进根图 `import`。
+ * 入口（[MiniBookIcons.Download]，F-12）点击进根图 `import`。
  *
  * @param overBudget 当月预算是否超支（决定预算入口红点显隐）。
  * @param onOpenReports 「报表」入口回调（根图导航到 `reports`）。
@@ -511,20 +569,20 @@ private fun HomeQuickEntries(
     ) {
         HomeQuickEntry(
             label = "报表",
-            icon = "📊",
+            icon = MiniBookIcons.BarChart,
             onClick = onOpenReports,
             modifier = Modifier.weight(1f),
         )
         HomeQuickEntry(
             label = "预算",
-            icon = "🎯",
+            icon = MiniBookIcons.Flag,
             onClick = onOpenBudgets,
             overBudget = overBudget,
             modifier = Modifier.weight(1f),
         )
         HomeQuickEntry(
             label = "导入账单",
-            icon = "📥",
+            icon = MiniBookIcons.Download,
             onClick = onOpenImport,
             modifier = Modifier.weight(1f),
         )
@@ -535,7 +593,7 @@ private fun HomeQuickEntries(
  * 单个首页快捷入口（Surface 轻量卡片）：图标 + 文案 +（可选）超支红点。
  *
  * @param label 入口文案。
- * @param icon 入口图标（emoji 占位，material-icons 缺失同口径）。
+ * @param icon 入口图标（自带矢量，见 [MiniBookIcons]）。
  * @param onClick 点击回调。
  * @param overBudget 是否叠加 `error` 红点（仅预算入口使用）。
  */
@@ -543,7 +601,7 @@ private fun HomeQuickEntries(
 @Composable
 private fun HomeQuickEntry(
     label: String,
-    icon: String,
+    icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     overBudget: Boolean = false,
@@ -551,14 +609,19 @@ private fun HomeQuickEntry(
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(icon, fontSize = 18.sp)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
             Spacer(Modifier.width(8.dp))
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.weight(1f))

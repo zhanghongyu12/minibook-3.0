@@ -18,6 +18,20 @@ interface SyncRemote {
 
     suspend fun me(baseUrl: String, accessToken: String): SyncUserDto
 
+    /** 改资料 / 改口令（2026-10-12）。改口令时服务端返回新的令牌对，须覆盖本地会话。 */
+    suspend fun updateProfile(
+        baseUrl: String,
+        accessToken: String,
+        request: SyncProfileUpdateRequest,
+    ): SyncProfileUpdateResponse
+
+    /** 注销账号（不可撤销，删云端全部副本）。 */
+    suspend fun deleteAccount(
+        baseUrl: String,
+        accessToken: String,
+        request: SyncDeleteAccountRequest,
+    )
+
     suspend fun push(baseUrl: String, accessToken: String, request: SyncPushRequest): SyncPushResponseDto
 
     suspend fun pull(

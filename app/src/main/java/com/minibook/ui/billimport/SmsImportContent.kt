@@ -14,12 +14,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.SmsImportSummary
 import com.minibook.domain.model.SmsScanPreview
+import com.minibook.ui.components.MiniBookIcons
 
 /**
  * 「读取短信账单」流程 + 结果**同页合一**内容区（F-14，镜像 F-13 [MailImportContent]）：
@@ -48,6 +53,8 @@ import com.minibook.domain.model.SmsScanPreview
  * @param errorMessage 失败文案（ERROR 时非空）。@param failedStep 失败步骤（stepper 标 ✗）。
  * @param onConfirm 「确认写入 N 笔」（仅 PREVIEW）。@param onRescan 「重新扫描」（终态）。
  * @param onViewPending 「查看待确认 K 条」/「查看未识别 / 重复记录」（PREVIEW/DONE 且存在未识别或疑似重复记录时）。@param onBack 返回。
+ * @param onSenderImportToggle 「导入来源」勾选（docs/15 第 2 条）：null = 不展示来源区
+ *   （例如未接入该能力的老调用方）；非空则预览页出现「来源：已选 X / Y 家」入口，勾选立即生效并重扫。
  */
 @Composable
 fun SmsImportContent(
@@ -60,6 +67,7 @@ fun SmsImportContent(
     errorMessage: String? = null,
     failedStep: SmsImportStep? = null,
     onViewPending: (() -> Unit)? = null,
+    onSenderImportToggle: ((String, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val running = phase == SmsImportPhase.SCANNING || phase == SmsImportPhase.IMPORTING
@@ -89,6 +97,11 @@ fun SmsImportContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            // —— 导入来源（docs/15 第 2 条，2026-10-13）：多家银行只导入指定的一家 ——
+            if (preview != null && preview.senders.isNotEmpty() && onSenderImportToggle != null) {
+                SmsSenderSection(preview = preview, onToggle = onSenderImportToggle)
             }
 
             // —— 干跑预览区（零写入）：四类计数 + 余额链 + 逐条结果行 ——
@@ -208,7 +221,7 @@ private fun SmsPreviewSection(preview: SmsScanPreview) {
         var expanded by remember(preview) { mutableStateOf(false) }
         Surface(
             shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -359,3 +372,112 @@ private fun SmsImportStepRow(state: SmsImportStepState) {
 /** 步进行标签/摘要权重份额（防长摘要挤压标签，见 [SmsImportStepRow] KDoc）。 */
 private const val SmsStepLabelWeight = 1f
 private const val SmsStepSummaryWeight = 2.4f
+
+/**
+ * 「导入来源」区（docs/15 第 2 条，2026-10-13 用户口径「多家银行只导入指定的一家」）。
+ *
+ * 一行摘要（「已选 X / Y 家」）+ 点击弹勾选对话框；勾选**立即生效**（[onToggle] 由 ViewModel
+ * 落库并重扫，用户当场看到该来源的短信从「可导入」变成「非账单·来源未勾选」）。
+ */
+@Composable
+private fun SmsSenderSection(preview: SmsScanPreview, onToggle: (String, Boolean) -> Unit) {
+    var showDialog by remember { mutableStateOf(false) }
+    val senders = preview.senders
+    val enabledCount = senders.count { it.importEnabled }
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showDialog = true }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "导入来源",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "已选 $enabledCount / ${senders.size} 家",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = MiniBookIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    if (showDialog) {
+        SmsSenderDialog(preview = preview, onToggle = onToggle, onDismiss = { showDialog = false })
+    }
+}
+
+/**
+ * 来源勾选对话框：每家一行（机构名优先、否则号码）+ 账单/总数 + 勾选框；点「完成」关闭即生效。
+ *
+ * 文案口径：**不删除短信、不删除已入账的交易**；关掉的来源只是「下次扫描不计入账单」。
+ */
+@Composable
+private fun SmsSenderDialog(
+    preview: SmsScanPreview,
+    onToggle: (String, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入来源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "只导入勾选的发送方。未勾选来源的短信不计入账单（显示为「非账单」），" +
+                        "不会删除任何已入账的交易。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                preview.senders.forEach { s ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle(s.sender, !s.importEnabled) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = s.importEnabled,
+                            onCheckedChange = { onToggle(s.sender, it) },
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = s.institution ?: s.sender,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = if (s.institution != null) s.sender else "未知机构",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "${s.billCount} 笔账单 · 共 ${s.totalCount} 条",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}

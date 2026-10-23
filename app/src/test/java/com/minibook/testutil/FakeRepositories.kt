@@ -151,6 +151,12 @@ class FakeBudgetRepository : BudgetRepository {
     var lastObservedMonth: YearMonth? = null
     var lastDeletedCategoryId: String? = null
 
+    /** 最近一次 `clearTotalBudget(ledgerId, month)` 记录（F-15x 单测用）。 */
+    var lastClearedTotal: Pair<String, YearMonth>? = null
+
+    /** 最近一次 `clearCategoryBudget(ledgerId, month, categoryId)` 记录（F-15w 单测用）。 */
+    var lastClearedCategory: Triple<String, YearMonth, String>? = null
+
     override fun observeByMonth(ledgerId: String, month: YearMonth): Flow<List<Budget>> {
         lastObservedLedgerId = ledgerId
         lastObservedMonth = month
@@ -161,9 +167,12 @@ class FakeBudgetRepository : BudgetRepository {
         throw NotImplementedError()
     override suspend fun setCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String, amount: Long) =
         throw NotImplementedError()
-    override suspend fun clearTotalBudget(ledgerId: String, month: YearMonth) = throw NotImplementedError()
-    override suspend fun clearCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String) =
-        throw NotImplementedError()
+    override suspend fun clearTotalBudget(ledgerId: String, month: YearMonth) {
+        lastClearedTotal = ledgerId to month
+    }
+    override suspend fun clearCategoryBudget(ledgerId: String, month: YearMonth, categoryId: String) {
+        lastClearedCategory = Triple(ledgerId, month, categoryId)
+    }
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
     override suspend fun deleteByCategoryId(categoryId: String) {
         lastDeletedCategoryId = categoryId

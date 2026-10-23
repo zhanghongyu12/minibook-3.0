@@ -85,7 +85,9 @@ class LedgerDataSourceAdapter @Inject constructor(
         ledgerDao().getDefault()?.let(LedgerMapper::toDomain)
 
     override fun observeAll(): Flow<List<Ledger>> =
-        ledgerDao().observeAll().map { list -> list.map(LedgerMapper::toDomain) }
+        gate.gatedFlow { db ->
+            db.ledgerDao().observeAll().map { list -> list.map(LedgerMapper::toDomain) }
+        }
 
     private fun ledgerDao(): LedgerDao = gate.database?.ledgerDao()
         ?: error("DatabaseGate 未解锁/未打开，无法提供 LedgerDao")

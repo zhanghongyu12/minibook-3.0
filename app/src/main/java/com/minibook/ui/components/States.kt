@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.sp
 /**
  * 空态占位（UI §4 C-04）。
  *
- * 图标置于 `surfaceVariant` 大尺寸半透明圆底上，配主/副文案与可选动作按钮。
+ * 图标置于 `surfaceContainerHigh` 圆底上，配主/副文案与可选动作按钮。
  * 图标由调用方注入 [ImageVector]（不依赖 material-icons 库）。
  *
  * @param icon 空态图标（调用方注入）。
@@ -66,7 +66,7 @@ fun EmptyState(
             modifier = Modifier
                 .size(96.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -97,7 +97,7 @@ fun EmptyState(
 /**
  * 骨架屏占位块（UI §4 C-05）。
  *
- * `surfaceVariant` 底色 + alpha 脉冲闪烁动画（[rememberInfiniteTransition]）。
+ * `surfaceContainerHighest` 底色 + alpha 脉冲闪烁动画（[rememberInfiniteTransition]）。
  *
  * @param shape 占位块形状，默认 [MaterialTheme.shapes.small]。
  */
@@ -115,7 +115,7 @@ fun SkeletonBlock(
     )
     Box(
         modifier
-            .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest, shape)
             .graphicsLayer { this.alpha = alpha },
     )
 }
@@ -131,7 +131,7 @@ fun LoadingState(modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(MaterialTheme.shapes.medium)
-                    .background(MaterialTheme.colorScheme.surface)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -164,7 +164,7 @@ fun PlaceholderPage(
                 onClick = onBack,
                 modifier = Modifier.size(48.dp).semantics { contentDescription = "返回" },
             ) {
-                Text("←", fontSize = 22.sp)
+                Icon(imageVector = MiniBookIcons.ArrowBack, contentDescription = "返回")
             }
             Spacer(Modifier.width(4.dp))
             Text(title, style = MaterialTheme.typography.titleLarge)
@@ -172,7 +172,9 @@ fun PlaceholderPage(
         Spacer(Modifier.weight(1f))
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
-                modifier = Modifier.size(80.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.size(80.dp).clip(CircleShape).background(
+                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                ),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("🚧", fontSize = 36.sp)

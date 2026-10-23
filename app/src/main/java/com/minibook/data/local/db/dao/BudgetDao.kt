@@ -28,6 +28,18 @@ interface BudgetDao {
     suspend fun deleteTotal(ledgerId: String, month: String)
 
     /**
+     * 删除指定账本 / 月份 / 分类的分类预算行（2026-10-13，F-15w）。
+     *
+     * 取代原 `RoomDataSourceImpl.deleteByCategory` 里的裸
+     * `writableDatabase().delete("budgets", ...)`：裸写绕过 Room 的失效通知
+     * （DAO 写入会在同一进程内刷新失效版本，DB 级 TEMP 触发器又只在建触发器的连接上生效），
+     * 导致 `observeByMonth` 的 Flow 不重发 —— 表现就是「删掉分类预算后列表不刷新，
+     * 退出页面再进来才消失」。走 DAO 后写入与失效通知在同一路径闭合。
+     */
+    @Query("DELETE FROM budgets WHERE ledgerId=:ledgerId AND month=:month AND categoryId=:categoryId")
+    suspend fun deleteCategoryBudget(ledgerId: String, month: String, categoryId: String)
+
+    /**
      * 级联删除该分类的全部分类预算行（P1-1）。
      *
      * 删除分类（DeleteCategoryUseCase / DeleteCategoryWithMigrationUseCase）时，于同一

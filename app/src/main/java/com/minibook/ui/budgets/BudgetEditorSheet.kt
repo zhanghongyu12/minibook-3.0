@@ -19,9 +19,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
+import com.minibook.ui.components.CategoryGlyph
 import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.MoneyInputField
@@ -49,7 +49,7 @@ import com.minibook.util.Validators
  * @param categories 支出分类列表（[CategoryPickerSheet] 候选，`type=expense`）。
  * @param onConfirmTotal 保存月度总预算回调（金额分）；仅 TOTAL 模式使用。
  * @param onConfirmCategory 保存分类预算回调（分类 + 金额分）；仅 CATEGORY 模式使用。
- * @param onDelete 删除回调（存在编辑目标时非 null，展示 danger 删除入口）。
+ * @param onDelete 删除回调（分类模式已选分类、或总额模式已设过总额时非 null，展示 danger 删除入口）。
  * @param onDismiss 关闭回调（保存成功/取消均回调）。
  * @param serverError 保存失败内联文案；null 不展示。
  * @param saving 保存进行中：置灰确认按钮。
@@ -136,15 +136,23 @@ fun BudgetEditorSheet(
             )
         }
 
-        // 编辑已有分类预算的可删除入口（danger 删除，C-18 强确认后走 onDelete）。
-        if (isCategoryMode && selectedCategory != null && onDelete != null) {
+        // 可删除入口：分类模式（已选分类）或总额模式（已设过总额）时给出 danger 删除
+        // （C-18 强确认后走 onDelete）——2026-10-13（F-15x）起月度总预算也可清空。
+        val canDelete = when (mode) {
+            BudgetEditorMode.CATEGORY -> selectedCategory != null
+            BudgetEditorMode.TOTAL -> initialAmountFen != null
+        }
+        if (canDelete && onDelete != null) {
             Spacer(Modifier.height(20.dp))
             OutlinedButton(
                 onClick = { showDeleteConfirm = true },
                 modifier = Modifier.fillMaxWidth(),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
             ) {
-                Text("删除该分类预算", color = MaterialTheme.colorScheme.error)
+                Text(
+                    if (isCategoryMode) "删除该分类预算" else "删除月度总预算",
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
@@ -165,11 +173,15 @@ fun BudgetEditorSheet(
         )
     }
 
-    // 删除分类预算强确认（C-18，danger）。
+    // 删除强确认（C-18，danger）：分类预算 / 月度总预算（2026-10-13 起总额也可清空）。
     if (showDeleteConfirm) {
         ConfirmDialog(
-            title = "删除分类预算",
-            message = "确定删除「${selectedCategory?.name ?: ""}」当月的分类预算吗？",
+            title = if (isCategoryMode) "删除分类预算" else "删除月度总预算",
+            message = if (isCategoryMode) {
+                "确定删除「${selectedCategory?.name ?: ""}」当月的分类预算吗？"
+            } else {
+                "确定删除当月的月度总预算吗？已记录的交易与分类预算不受影响。"
+            },
             confirmLabel = "删除",
             danger = true,
             onConfirm = {
@@ -205,7 +217,12 @@ private fun CategorySelectField(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (category != null) {
-                Text(category.icon, fontSize = 20.sp)
+                CategoryGlyph(
+                    icon = category.icon,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    size = 20.dp,
+                    name = category.name,
+                )
                 Spacer(Modifier.width(12.dp))
                 Text(
                     category.name,

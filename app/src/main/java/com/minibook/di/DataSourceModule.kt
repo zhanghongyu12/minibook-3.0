@@ -21,6 +21,8 @@ import com.minibook.domain.repository.TransactionRepository
 import com.minibook.domain.repository.TransactionRepositoryImpl
 import com.minibook.domain.repository.UserCategoryRuleRepository
 import com.minibook.domain.repository.UserCategoryRuleRepositoryImpl
+import com.minibook.data.local.dictionary.MerchantDictionaryStore
+import com.minibook.domain.usecase.category.MerchantDictionary
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -82,4 +84,8 @@ abstract class DataSourceModule {
 
     @Binds
     abstract fun bindSyncChangeDataSource(impl: RoomDataSourceImpl): SyncChangeDataSource
+
+    /** 内置商户词典（docs/15 第 7 条）：data 层实现只负责装载，查询走 domain 注册表。 */
+    @Binds
+    abstract fun bindMerchantDictionary(impl: MerchantDictionaryStore): MerchantDictionary
 }

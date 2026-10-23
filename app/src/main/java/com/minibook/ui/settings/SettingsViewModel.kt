@@ -11,6 +11,7 @@ import com.minibook.data.local.mail.MailAccountStore
 import com.minibook.data.local.security.AppLockController
 import com.minibook.data.local.security.BiometricHelper
 import com.minibook.data.local.security.LockSwitchResult
+import com.minibook.data.remote.SyncAuthStore
 import com.minibook.domain.usecase.export.ExportAllUseCase
 import com.minibook.domain.usecase.export.ImportAllUseCase
 import com.minibook.domain.usecase.export.ImportResult
@@ -61,6 +62,7 @@ class SettingsViewModel @Inject constructor(
     private val exportAll: ExportAllUseCase,
     private val importAll: ImportAllUseCase,
     private val mailAccountStore: MailAccountStore,
+    private val syncAuthStore: SyncAuthStore,
 ) : ViewModel() {
 
     /** 暗色模式三态（默认跟随系统）。 */
@@ -70,6 +72,15 @@ class SettingsViewModel @Inject constructor(
     /** 应用锁开关（默认关）。 */
     val appLockEnabled: StateFlow<Boolean> = settingsDataStore.appLockEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /**
+     * 设置首页「账号」行的一句话状态（DEC-038）：未登录 / 已登录为谁。
+     *
+     * 只读 [SyncAuthStore] 的账号态（**不揣明文令牌**），登录态变化会自动反映到首页。
+     */
+    val accountSummary: StateFlow<String> = syncAuthStore.state
+        .map { if (it.isLoggedIn) "已登录：${it.username}" else "未登录 · 点此登录云端账号" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "未登录 · 点此登录云端账号")
 
     /** 锁闲置超时五档（默认 1 分钟）。 */
     val lockTimeout: StateFlow<LockTimeout> = settingsDataStore.lockTimeout
@@ -114,6 +125,18 @@ class SettingsViewModel @Inject constructor(
 
     /** 设备无系统锁屏引导事件（DEC-003）：开启应用锁前检测失败时发射，UI 展示 GuidanceCard。 */
     val needDeviceSecure: SharedFlow<Unit> = _needDeviceSecure.asSharedFlow()
+
+    private val _needBiometric = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * 未录入生物识别引导事件（F-16j，2026-10-13）。
+     *
+     * 只设了系统锁屏（PIN/图案/密码）却没有录入指纹/人脸的设备，Keystore 生成 auth-gated key
+     * 会抛 `InvalidAlgorithmParameterException: At least one biometric must be enrolled …`，
+     * 旧实现直接崩在主线程。开启应用锁前用 [BiometricHelper.hasEnrolledBiometric] 分诊，
+     * 不满足时发本事件由 UI 引导去系统设置录入，**不启用、不降级明文**。
+     */
+    val needBiometric: SharedFlow<Unit> = _needBiometric.asSharedFlow()
 
     /** 清除待展示轻提示。 */
     fun clearSnackbar() {
@@ -170,6 +193,13 @@ class SettingsViewModel @Inject constructor(
             // DEC-003：设备无系统锁屏时不开锁（不降级明文），暴露引导事件。
             if (!biometricHelper.isDeviceSecure()) {
                 _needDeviceSecure.tryEmit(Unit)
+                return
+            }
+            // F-16j（2026-10-13）：只设了系统锁屏、未录入生物识别的设备，Keystore 生成
+            // 「每次使用都要认证」的 key 会抛 InvalidAlgorithmParameterException（主线程未捕获 ⇒
+            // 崩溃，模拟器实测）。开启前先分诊，缺生物识别时只引导、不启用。
+            if (!biometricHelper.hasEnrolledBiometric()) {
+                _needBiometric.tryEmit(Unit)
                 return
             }
             // DEC-002：开启锁须先把 blob 重加密为 auth 包裹（认证后），成功才落库开启；

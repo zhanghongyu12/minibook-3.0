@@ -26,10 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.minibook.domain.model.BudgetProgress
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryBudgetProgress
+import com.minibook.ui.components.CategoryGlyph
 import com.minibook.ui.components.MoneySemantic
 import com.minibook.ui.components.MoneyText
 import com.minibook.ui.theme.LocalSemanticColors
@@ -271,7 +271,7 @@ private fun CategoryIconCircle(
             .background(circleColor.copy(alpha = 0.15f)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(category.icon, fontSize = 22.sp, color = circleColor)
+        CategoryGlyph(icon = category.icon, tint = circleColor, size = 24.dp, name = category.name)
     }
 }
 

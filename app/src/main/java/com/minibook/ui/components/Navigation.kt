@@ -10,13 +10,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.sp
 import com.minibook.ui.theme.FullShape
 
 /**
  * 底部浮动「＋」按钮（UI §4 C-06）。
  *
- * 全圆角 [FloatingActionButton]，内部以纯 UI 文案「＋」代替图标（不依赖 material-icons 库）。
+ * 全圆角 [FloatingActionButton]，内部用自带矢量图标（[MiniBookIcons.Add]，不依赖 material-icons 库）。
  *
  * @param contentDescription 无障碍描述，默认「新增」。
  */
@@ -31,7 +30,7 @@ fun PrimaryFAB(
         modifier = modifier.semantics { this.contentDescription = contentDescription },
         shape = FullShape,
     ) {
-        Text("＋", fontSize = 30.sp)
+        Icon(imageVector = MiniBookIcons.Add, contentDescription = null)
     }
 }
 

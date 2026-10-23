@@ -20,6 +20,18 @@ val hasSigningProps = keystorePropsFile.exists() &&
     listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
         .all { !keystoreProps.getProperty(it).isNullOrBlank() }
 
+// 远程入口地址：**只从 sync.properties 读**（该文件已 gitignore，模板见 sync.properties.example）。
+// 目的：仓库里不出现任何真实服务器地址/域名；换机器只要放一份 sync.properties 即可。
+val syncPropsFile = rootProject.file("sync.properties")
+val syncProps = Properties().apply {
+    if (syncPropsFile.exists()) syncPropsFile.inputStream().use { load(it) }
+}
+/** 正式包内置入口；缺省为空串 = 未配置（App 会明确提示，不会静默失败）。 */
+val syncBaseUrl = syncProps.getProperty("sync.baseUrl").orEmpty().trim()
+/** 调试包内置入口；缺省回落本地回环，配合 `adb reverse tcp:8000 tcp:8000` 联调。 */
+val syncDebugBaseUrl = syncProps.getProperty("sync.debugBaseUrl").orEmpty().trim()
+    .ifEmpty { "http://127.0.0.1:8000" }
+
 android {
     namespace = "com.minibook"
     compileSdk = 36
@@ -56,10 +68,23 @@ android {
 
     buildFeatures {
         compose = true
+        // 需要 BuildConfig：云同步的**内置**服务地址按构建类型注入——正式版不再让用户填地址（2026-10-12 用户要求）
+        buildConfig = true
     }
 
     buildTypes {
+        debug {
+            // 调试版内置地址：来自本机 sync.properties（缺省回落 http://127.0.0.1:8000，
+            // 配合 `adb reverse tcp:8000 tcp:8000` 直连本机 API）；填远程地址即可让调试包直连线上。
+            // 调试版在「账号」页保留一个地址输入框（仅调试版可见），可临时改地址。
+            buildConfigField("String", "SYNC_BASE_URL", "\"$syncDebugBaseUrl\"")
+        }
         release {
+            // 正式版内置地址：同样只从本机 sync.properties 注入，**仓库里不留真实服务器地址**。
+            // 缺省空串 = 未配置，App 会明确提示而不是静默失败。
+            // 明文 HTTP：线上本轮不加证书（DEC-053），平台层已整体放开明文；
+            // 应用层仍收窄——SyncUrlValidator 只放行「内置入口那个 host」，其余地址必须 https://。
+            buildConfigField("String", "SYNC_BASE_URL", "\"$syncBaseUrl\"")
             // keystore.properties 存在时使用正式签名，否则退回未签名产物（assembleRelease 仍成功）
             signingConfig = signingConfigs.findByName("release")
             // 当前不做混淆/裁剪（proguard-rules.pro 的 keep 规则为备用配置，未实际生效）；

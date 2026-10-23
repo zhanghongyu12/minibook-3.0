@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
@@ -31,6 +32,7 @@ import com.minibook.domain.model.BudgetProgress
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryBudgetProgress
 import com.minibook.ui.components.LoadingState
+import com.minibook.ui.components.MiniBookIcons
 import com.minibook.ui.components.MiniBookSnackbarHost
 import com.minibook.ui.navigation.BillsFilterBus
 
@@ -51,9 +53,9 @@ import com.minibook.ui.navigation.BillsFilterBus
  * （总额=全部支出 / 分类行=该分类支出）+ [onOpenBills] 前压栈跳根图账单明细页（账单页
  * applyBillsFilter 填入查询框，返回一次回到本页）。
  *
- * 编辑入口：总额卡「编辑总额/设预算」→ [BudgetEditorSheet]（TOTAL mode）；区头「+ 添加」或
- * 分类行尾「编辑」→ [BudgetEditorSheet]（CATEGORY mode，可删除）。保存/删除走
- * [BudgetsViewModel]（总额先删后插 & 分类 UNIQUE，DEC-008）。
+ * 编辑入口：总额卡「编辑总额/设预算」→ [BudgetEditorSheet]（TOTAL mode，已设过则带
+ * 「删除月度总预算」）；区头「+ 添加」或分类行尾「编辑」→ [BudgetEditorSheet]（CATEGORY mode，
+ * 带「删除该分类预算」）。保存/删除走 [BudgetsViewModel]（总额先删后插 & 分类 UNIQUE，DEC-008）。
  *
  * @param onBack 顶栏返回回调（NavHost 接线传入 `popBackStack()`）。
  * @param onOpenBills 跳转账单明细回调（根图 `navigate(transactions)` 前压栈，返回回到本页；不再 `onBack`）。
@@ -138,7 +140,7 @@ fun BudgetsScreen(
         }
     }
 
-    // 总额预算编辑弹层（TOTAL mode）。
+    // 总额预算编辑弹层（TOTAL mode）。已设过总额（>0）时给出删除入口（2026-10-13，F-15x）。
     if (showTotalEditor) {
         BudgetEditorSheet(
             mode = BudgetEditorMode.TOTAL,
@@ -147,7 +149,11 @@ fun BudgetsScreen(
             categories = expenseCategories,
             onConfirmTotal = viewModel::setTotalBudget,
             onConfirmCategory = { _, _ -> },
-            onDelete = null,
+            onDelete = if (successProgress?.totalBudgetFen?.let { it > 0 } == true) {
+                { viewModel.clearTotalBudget() }
+            } else {
+                null
+            },
             onDismiss = {
                 showTotalEditor = false
                 viewModel.clearEditorError()
@@ -269,7 +275,7 @@ private fun CategoryEmptyHint(
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(
@@ -284,7 +290,11 @@ private fun CategoryEmptyHint(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            Text("＋", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Icon(
+                imageVector = MiniBookIcons.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

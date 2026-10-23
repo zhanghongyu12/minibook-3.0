@@ -120,7 +120,14 @@ class AppLockController(
             authFirstLaunchOpen(host, onResult)
             return
         }
-        val cipher = keyManager.createDecryptCipher(useAuth = true)
+        // F-16j（2026-10-13）：auth key 可能因「生物识别被移除 / key 失效」而无法初始化，
+        // Keystore 抛 InvocationTargetException / InvalidAlgorithmParameterException /
+        // KeyPermanentlyInvalidatedException；旧实现在主线程直接崩，现在改为失败回调（保持锁定）。
+        val cipher = runCatching { keyManager.createDecryptCipher(useAuth = true) }.getOrNull()
+            ?: run {
+                onResult?.invoke(false)
+                return
+            }
         biometricHelper.authenticate(
             activity = host,
             cipher = cipher,
@@ -166,7 +173,12 @@ class AppLockController(
             onResult?.invoke(LockSwitchResult.AUTH_FAILED)
             return
         }
-        val cipher = keyManager.createDecryptCipher(useAuth = true)
+        // F-16j：同 unlock——cipher 初始化失败不再崩主线程，按「切换失败」回调。
+        val cipher = runCatching { keyManager.createDecryptCipher(useAuth = true) }.getOrNull()
+            ?: run {
+                onResult?.invoke(LockSwitchResult.AUTH_FAILED)
+                return
+            }
         biometricHelper.authenticate(
             activity = activity,
             cipher = cipher,
@@ -226,7 +238,13 @@ class AppLockController(
         // 绑定一把 auth-gated ENCRYPT cipher 到 BiometricPrompt（对齐 authFirstLaunchOpen）：
         // 认证通过后 Keystore 才对这把 cipher 放行 doFinal；复用回调返回的 authorizedCipher
         // 重加密 master key 落盘，绝不新建未授权 cipher（会抛 UserNotAuthenticatedException）。
-        val encryptCipher = keyManager.createMasterKeyEncryptCipher(useAuth = true)
+        // F-16j：同 unlock——auth ENCRYPT cipher 初始化失败（未录入生物识别 / key 失效）不崩主线程。
+        val encryptCipher = runCatching {
+            keyManager.createMasterKeyEncryptCipher(useAuth = true)
+        }.getOrNull() ?: run {
+            onResult?.invoke(LockSwitchResult.AUTH_FAILED)
+            return
+        }
         biometricHelper.authenticate(
             activity = activity,
             cipher = encryptCipher,
@@ -283,7 +301,13 @@ class AppLockController(
      * cipher 触发 [UserNotAuthenticatedException]（ARCHITECTURE §7.5 认证语义）。
      */
     private fun authFirstLaunchOpen(activity: FragmentActivity, onResult: ((Boolean) -> Unit)?) {
-        val encryptCipher = keyManager.createMasterKeyEncryptCipher(useAuth = true)
+        // F-16j：auth ENCRYPT cipher 初始化失败（未录入生物识别 / key 失效）不崩主线程。
+        val encryptCipher = runCatching {
+            keyManager.createMasterKeyEncryptCipher(useAuth = true)
+        }.getOrNull() ?: run {
+            onResult?.invoke(false)
+            return
+        }
         biometricHelper.authenticate(
             activity = activity,
             cipher = encryptCipher,

@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,6 +63,7 @@ import com.minibook.domain.model.Category
 import com.minibook.domain.model.CategoryType
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionType
+import com.minibook.ui.components.CategoryGlyph
 import com.minibook.ui.components.CategoryPickerSheet
 import com.minibook.ui.components.ConfirmDialog
 import com.minibook.ui.components.DateSectionHeader
@@ -496,6 +498,7 @@ private fun QueryFilterArea(
                 value = dateFrom,
                 onChange = onDateFromChange,
                 modifier = Modifier.weight(1f),
+                maxDateMillis = dateTo?.let { dateToUtcMillis(it) },
             )
             Text("~", color = MaterialTheme.colorScheme.onSurfaceVariant)
             DateFilterChip(
@@ -503,6 +506,7 @@ private fun QueryFilterArea(
                 value = dateTo,
                 onChange = onDateToChange,
                 modifier = Modifier.weight(1f),
+                minDateMillis = dateFrom?.let { dateToUtcMillis(it) },
             )
             CategoryFilterEntry(
                 categories = categories,
@@ -516,6 +520,9 @@ private fun QueryFilterArea(
 /**
  * 单个日期筛选 chip（起/止日期）：展示 `yyyy-MM-dd` 或占位文案，点击弹 [DatePickerDialog]；
  * 已设值时右侧「✕」可单独清空（回调 null）。
+ *
+ * 联动约束（docs/15 第 5 条，2026-10-13）：[minDateMillis]/[maxDateMillis] 由调用方按「起/止」
+ * 另一端的值给出，选择器内不可选的日期直接置灰——不再允许选出「止 < 起」的反向区间。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -524,6 +531,8 @@ private fun DateFilterChip(
     value: String?,
     onChange: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    minDateMillis: Long? = null,
+    maxDateMillis: Long? = null,
 ) {
     var showPicker by remember { mutableStateOf(false) }
     val initialMillis = remember(value) { value?.let { dateToUtcMillis(it) } }
@@ -571,7 +580,16 @@ private fun DateFilterChip(
         }
     }
     if (showPicker) {
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialMillis,
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    if (minDateMillis != null && utcTimeMillis < minDateMillis) return false
+                    if (maxDateMillis != null && utcTimeMillis > maxDateMillis) return false
+                    return true
+                }
+            },
+        )
         DatePickerDialog(
             onDismissRequest = { showPicker = false },
             confirmButton = {
@@ -696,11 +714,20 @@ private fun CategoryDropdownSection(
     items.forEach { category ->
         DropdownMenuItem(
             text = {
-                Text(
-                    "${category.icon} ${category.name}",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CategoryGlyph(
+                        icon = category.icon,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        size = 18.dp,
+                        name = category.name,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        category.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             },
             trailingIcon = if (category.id == selectedCategoryId) {
                 { Text("✓", color = MaterialTheme.colorScheme.primary) }

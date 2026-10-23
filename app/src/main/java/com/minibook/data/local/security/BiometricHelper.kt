@@ -45,6 +45,27 @@ class BiometricHelper(
         context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
 
     /**
+     * 设备是否已录入至少一种生物识别（指纹/人脸）——2026-10-13（F-16j）。
+     *
+     * 为什么单独分诊：Android 13+ 的 Keystore 在生成「每次使用都要用户认证」的 key
+     * （[KeyManager] 的 `setUserAuthenticationRequired(true)`，不设 validity duration）时，
+     * 要求设备**至少录入一个生物识别**；只设了系统锁屏 PIN/图案/密码的设备会抛
+     * `InvalidAlgorithmParameterException: At least one biometric must be enrolled to create
+     * keys requiring user authentication for every use`。该异常发生在主线程且未被捕获 ⇒
+     * 应用直接崩溃（模拟器实测：设 PIN 后开启应用锁即崩，PID 4040，FATAL EXCEPTION: main）。
+     *
+     * 口径：`BIOMETRIC_STRONG` 或 `BIOMETRIC_WEAK` 任一 `BIOMETRIC_SUCCESS` 即视为已录入
+     * （**刻意不并入 DEVICE_CREDENTIAL**——只有 PIN 的情况下它也会返回 SUCCESS，正是崩溃场景）。
+     */
+    fun hasEnrolledBiometric(): Boolean =
+        canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ||
+            canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+
+    private fun canAuthenticate(authenticators: Int): Boolean =
+        BiometricManager.from(context).canAuthenticate(authenticators) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+
+    /**
      * 启动一次 BiometricPrompt 认证。
      *
      * @param activity 当前 [FragmentActivity]（仅本次认证期间引用，不长期持有）。

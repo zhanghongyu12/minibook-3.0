@@ -4,9 +4,11 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.minibook.data.local.datastore.LedgerDataStore
+import com.minibook.data.remote.SyncAuthStore
 import com.minibook.domain.common.LedgerNotFound
 import com.minibook.domain.model.Category
 import com.minibook.domain.model.Ledger
+import com.minibook.domain.model.MonthSummary
 import com.minibook.domain.model.Transaction
 import com.minibook.domain.model.TransactionFilter
 import com.minibook.domain.usecase.budget.ObserveBudgetProgressUseCase
@@ -46,7 +48,11 @@ sealed interface HomeUiState {
     data object Loading : HomeUiState
 
     /** 空态：无交易记录；[currentLedger] 供顶部账本选择器展示（结余卡仍显示 ¥0.00）。 */
-    data class Empty(val currentLedger: Ledger?) : HomeUiState
+    data class Empty(
+        val currentLedger: Ledger?,
+        /** 上月结余（分）；null = 上月无收支记录（TASK-081 环比行）。 */
+        val previousBalanceFen: Long? = null,
+    ) : HomeUiState
 
     /** 错误态：展示错误文案并引导账本管理（本期无跳转，仅文案）。 */
     data class Error(val message: String) : HomeUiState
@@ -60,6 +66,8 @@ sealed interface HomeUiState {
         val currentLedger: Ledger?,
         val categoriesById: Map<String, Category>,
         val month: YearMonth,
+        /** 上月结余（分）；null = 上月无收支记录（TASK-081 环比行，见 [NetBalanceTrend.from]）。 */
+        val previousBalanceFen: Long? = null,
     ) : HomeUiState
 }
 
@@ -101,6 +109,7 @@ class HomeViewModel @Inject constructor(
     private val observeBudgetProgress: ObserveBudgetProgressUseCase,
     private val ledgerDataStore: LedgerDataStore,
     private val smsBillImport: SmsBillImportUseCase,
+    private val syncAuthStore: SyncAuthStore,
 ) : ViewModel() {
 
     init {
@@ -140,6 +149,19 @@ class HomeViewModel @Inject constructor(
     /** 对外只读的所选月份（首页结余卡标题 + 左右切换 + 预算红点联动）。 */
     val selectedMonth: StateFlow<YearMonth> = _selectedMonth.asStateFlow()
 
+    /**
+     * 首页顶部「登录信息」行要显示的名字（2026-10-13 用户要求）。
+     *
+     * - `null` = 未登录 ⇒ UI 显示「登录」链接；
+     * - 非空 = 已登录 ⇒ 显示昵称（昵称为空时回退用户名），点击进账号页。
+     *
+     * 派生自 [SyncAuthStore.state]（DataStore 缓存，**不发网络请求**；昵称由账号页
+     * `GET /me` 与保存资料时写入），见 [com.minibook.data.remote.SyncAccountState.displayName]。
+     */
+    val accountDisplay: StateFlow<String?> = syncAuthStore.state
+        .map { it.displayName }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** 手动刷新触发器（每 +1 触发一次月度汇总重算）。 */
     private val refreshTrigger = MutableStateFlow(0)
 
@@ -174,8 +196,13 @@ class HomeViewModel @Inject constructor(
                     }
                     try {
                         val summary = fetchMonthSummary(month)
+                        // TASK-081 环比（首页 Hero 卡）：多取一次「上月」汇总（同账本、DB 端 SQL 聚合，
+                        // 代价可忽略）。上月收入与支出全为 0 视为「无记录」→ null（环比行只写文案，
+                        // 不编造 0 对比数字，见 [NetBalanceTrend.from] 的口径注释）。
+                        val previousSummary = fetchMonthSummary(month.minusMonths(1))
+                        val previousBalanceFen = previousBalanceOrNull(previousSummary)
                         if (source.transactions.isEmpty()) {
-                            emit(HomeUiState.Empty(currentLedger))
+                            emit(HomeUiState.Empty(currentLedger, previousBalanceFen))
                         } else {
                             emit(
                                 HomeUiState.Success(
@@ -186,6 +213,7 @@ class HomeViewModel @Inject constructor(
                                     currentLedger = currentLedger,
                                     categoriesById = source.categories.associateBy { it.id },
                                     month = month,
+                                    previousBalanceFen = previousBalanceFen,
                                 )
                             )
                         }
@@ -250,6 +278,17 @@ class HomeViewModel @Inject constructor(
          */
         fun clampNextMonth(current: YearMonth, now: YearMonth): YearMonth =
             if (current < now) current.plusMonths(1) else current
+
+        /**
+         * 上月结余（纯函数，供单测）：上月收入与支出**全为 0** 视为「无记录」→ null。
+         *
+         * 口径理由（TASK-081）：环比必须可核对。上月真的一条记录都没有时，取 0 当基准会
+         * 让本月任意金额都显示成「较上月 +¥X」，属于编造对比；此处返回 null，由 UI 写
+         * 「上月无记录」。上月只有零金额记录（收入=支出=0 且有记录）这一极罕见情形会被误判为
+         * 无记录，代价是少一行环比、不产生错误数字，可接受。
+         */
+        fun previousBalanceOrNull(previous: MonthSummary): Long? =
+            previous.balanceFen.takeIf { previous.incomeFen != 0L || previous.expenseFen != 0L }
     }
 }
 

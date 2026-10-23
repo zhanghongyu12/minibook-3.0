@@ -113,12 +113,37 @@ data class BalanceGap(
     val detail: String,
 )
 
-/** 白名单条目（L2 自动记账准入；设计 §3.8）。 */
+/**
+ * 白名单/来源条目（L2 自动记账准入 + 导入来源开关；设计 §3.8）。
+ *
+ * [importEnabled]（docs/15 第 2 条，2026-10-13 用户口径「多家银行只导入指定一家」）：
+ * **默认 true = 允许导入**（防漏优先：新出现的发送方自动带勾，不会静默漏账）；
+ * 关掉后该发送方的短信在扫描时直接不计入账单（进「非账单」计数，理由写明「来源未勾选」），
+ * **不下发、不删短信**。与 [autoEnabled]（L2 自动记账准入）是两件事：可以「手动导入允许、自动记账不允许」。
+ */
 data class SmsWhitelistEntry(
     val sender: String,
     val autoEnabled: Boolean,
     val confirmedCount: Int,
     val lastErrorAtMs: Long? = null,
+    val importEnabled: Boolean = true,
+)
+
+/**
+ * 一次扫描里出现过的**导入来源**汇总（docs/15 第 2 条）。
+ *
+ * 用户要「多家银行只导入指定的那一家」，而短信发送方号码无法预先枚举（106 端口会被多家复用），
+ * 因此来源清单**从扫描结果反推**：号码 + 从正文猜出的机构名 + 条数 + 最后一次时间 + 当前是否允许导入。
+ *
+ * 不含短信原文（DEC-026）：[institution] 只存机构名（如「建设银行」），猜不出则为 null（UI 显示号码）。
+ */
+data class SmsSenderSummary(
+    val sender: String,
+    val institution: String?,
+    val totalCount: Int,
+    val billCount: Int,
+    val lastAtMs: Long,
+    val importEnabled: Boolean = true,
 )
 
 /**
@@ -192,6 +217,10 @@ data class SmsScanPreview(
      * 用户口径（2026-10-10）：「增量扫描的时间节点……应该是当前扫描的时间」，不是最后一条短信的时间。
      */
     val scannedAtMs: Long = 0L,
+    /**
+     * 本次扫描出现的**导入来源**汇总（docs/15 第 2 条；扫描时自动登记，供「导入来源」勾选页展示）。
+     */
+    val senders: List<SmsSenderSummary> = emptyList(),
 ) {
     /** 已解析条数（= 可导入 + 同源已存在 + 跨源判重 + 疑似重复）。 */
     val parsedTotal: Int get() = importable.size + existing.size + duplicates.size + ambiguous.size

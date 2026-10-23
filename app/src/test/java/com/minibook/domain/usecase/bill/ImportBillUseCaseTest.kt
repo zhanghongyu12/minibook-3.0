@@ -22,6 +22,7 @@ import com.minibook.domain.model.UserCategoryRule
 import com.minibook.domain.repository.CategoryRepository
 import com.minibook.domain.repository.UserCategoryRuleRepository
 import com.minibook.domain.usecase.category.EnsureBuiltInCategoriesUseCase
+import com.minibook.domain.usecase.category.MerchantDictionary
 import com.minibook.testutil.FakeTransactionRunner
 import java.io.File
 import java.io.IOException
@@ -200,6 +201,7 @@ class ImportBillUseCaseTest {
         runner: TransactionRunner = FakeTransactionRunner(),
         rules: List<UserCategoryRule> = emptyList(),
         preparer: BillFilePreparer = FakeBillFilePreparer(),
+        merchantDictionary: MerchantDictionary = EmptyMerchantDictionary,
     ): ImportBillUseCase = ImportBillUseCase(
         transactionRunner = runner,
         filePreparer = preparer,
@@ -208,6 +210,7 @@ class ImportBillUseCaseTest {
         transactionDataSource = txDs,
         ensureBuiltInCategories = EnsureBuiltInCategoriesUseCase(FakeCategoryRepositoryForEnsure()),
         userCategoryRuleRepository = FakeUserCategoryRuleRepository(rules),
+        merchantDictionary = merchantDictionary,
         ioDispatcher = UnconfinedTestDispatcher(),
     )
 
@@ -530,7 +533,65 @@ class ImportBillUseCaseTest {
         }
     }
 
+    @Test
+    fun `内置词典 - 预览路径按词典建议分类 未覆盖仍归其他`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource().apply {
+            categories = listOf(
+                category("cat-eat", "餐饮", CategoryType.EXPENSE),
+                category("cat-other-exp", "其他", CategoryType.EXPENSE),
+            )
+        }
+        val dict = object : MerchantDictionary {
+            override suspend fun ensureLoaded() = Unit
+
+            override fun suggest(counterparty: String): String? =
+                if (counterparty.contains("罗森")) "餐饮" else null
+        }
+        val rows = listOf(
+            row("alipay:1", 100, counterparty = "罗森(北京)有限公司房山店"),
+            row("alipay:2", 200, counterparty = "街角无名小店"),
+        )
+
+        val result = useCase(txDs, catDs, parser = null, merchantDictionary = dict)
+            .importParsedRows(rows, TransactionSource.ALIPAY_IMPORT, LEDGER, allowWeakRuleMatch = true)
+
+        assertEquals(2, result.success)
+        assertEquals("cat-eat", txDs.inserted[0].categoryId)
+        assertEquals("cat-other-exp", txDs.inserted[1].categoryId)
+    }
+
+    @Test
+    fun `内置词典 - 自动路径不采纳词典建议 防止静默写错账`() = runTest {
+        val txDs = FakeTransactionDataSource()
+        val catDs = FakeCategoryDataSource().apply {
+            categories = listOf(
+                category("cat-eat", "餐饮", CategoryType.EXPENSE),
+                category("cat-other-exp", "其他", CategoryType.EXPENSE),
+            )
+        }
+        val dict = object : MerchantDictionary {
+            override suspend fun ensureLoaded() = Unit
+
+            override fun suggest(counterparty: String): String? = "餐饮"
+        }
+        val rows = listOf(row("alipay:1", 100, counterparty = "罗森(北京)有限公司房山店"))
+
+        val result = useCase(txDs, catDs, parser = null, merchantDictionary = dict)
+            .importParsedRows(rows, TransactionSource.ALIPAY_IMPORT, LEDGER) // allowWeakRuleMatch = false
+
+        assertEquals(1, result.success)
+        assertEquals("cat-other-exp", txDs.inserted[0].categoryId)
+    }
+
     private companion object {
         const val LEDGER = "ledger-1"
     }
+}
+
+/** 无建议词典（本文件用例不验证词典路径；词典匹配逻辑由 BuiltInMerchantDictionary/MerchantDictionary 相关测试覆盖）。 */
+private object EmptyMerchantDictionary : MerchantDictionary {
+    override suspend fun ensureLoaded() = Unit
+
+    override fun suggest(counterparty: String): String? = null
 }

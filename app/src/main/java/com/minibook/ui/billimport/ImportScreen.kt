@@ -3,6 +3,7 @@ package com.minibook.ui.billimport
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -63,6 +64,18 @@ private fun readSmsGrantedNow(context: Context): Boolean =
         PackageManager.PERMISSION_GRANTED
 
 /**
+ * 需要申请的短信相关权限（TASK-084 ⑤）：`READ_SMS` 扫描必需、`RECEIVE_SMS` 到达即记账、
+ * `POST_NOTIFICATIONS` 静默聚合通知（仅 Android 13+ 存在，低版本不申请）。
+ */
+private fun smsPermissions(): Array<String> = buildList {
+    add(Manifest.permission.READ_SMS)
+    add(Manifest.permission.RECEIVE_SMS)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}.toTypedArray()
+
+/**
  * 账单导入页（TASK-044，UI §9.2 P-15 / F-12）。
  *
  * 根图全屏页，TopAppBar「导入账单」＋ 返回 ←（任何态保留；返回 = 放弃回入口页）。内容区按
@@ -101,7 +114,8 @@ fun ImportScreen(
         viewModel.onFilePicked(uri?.toString())
     }
 
-    // F-14 权限门：只做「状态展示 + 引导」，不在此发起权限请求（TODO(F-14 权限申请)）。
+    // F-14 权限门：**导入前主动申请**（TASK-084 ⑤，2026-10-13 用户要求「有的权限先获取一下，
+    // 如果权限不全提示让给权限，不要硬导入」）；未授予时仍然只展示引导态、不扫描不写库。
     //
     // ⚠️ 真机教训（2026-10-10，小米 HyperOS/Android 16）：此处原为**组合期一次性快照** →
     // 用户在系统设置授予后回到本页，快照仍是 false，「重新检查权限」永远拿旧值（引导页成死状态）。
@@ -111,6 +125,24 @@ fun ImportScreen(
     LifecycleResumeEffect(Unit) {
         readSmsGranted = readSmsGrantedNow(context)
         onPauseOrDispose { }
+    }
+    // 三个权限一次申请；授权后**接着跑用户刚点的那次扫描**（不让他再点一遍），被拒才落到引导态。
+    var pendingSmsMode by remember { mutableStateOf(SmsScanMode.FULL) }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        val granted = readSmsGrantedNow(context)
+        readSmsGranted = granted
+        viewModel.onReadSmsBills(granted, pendingSmsMode)
+    }
+    // 短信入口统一走这里：已授权直接扫；未授权先申请（这就是「主动申请」）。
+    val startSmsScan: (SmsScanMode) -> Unit = { mode ->
+        if (readSmsGrantedNow(context)) {
+            viewModel.onReadSmsBills(true, mode)
+        } else {
+            pendingSmsMode = mode
+            smsPermissionLauncher.launch(smsPermissions())
+        }
     }
     // SMS 流程「重新扫描」：当场复查权限后重跑扫描。模式**沿用当前模式**（2026-10-10 两种扫描方式：
     // 增量/全量由入口页选定；扫描结果里带着本次模式，故这里从 preview 读回，切模式请回入口页）。
@@ -148,12 +180,8 @@ fun ImportScreen(
                     ImportUiState.Idle -> ImportIdleContent(
                         onSelectFile = { filePicker.launch(arrayOf("*/*")) },
                         onFetchMailBills = viewModel::onFetchMailBills,
-                        onReadSmsIncremental = {
-                            viewModel.onReadSmsBills(readSmsGrantedNow(context), SmsScanMode.INCREMENTAL)
-                        },
-                        onReadSmsFull = {
-                            viewModel.onReadSmsBills(readSmsGrantedNow(context), SmsScanMode.FULL)
-                        },
+                        onReadSmsIncremental = { startSmsScan(SmsScanMode.INCREMENTAL) },
+                        onReadSmsFull = { startSmsScan(SmsScanMode.FULL) },
                     )
                     ImportUiState.Busy -> Unit // 由下方顶层遮罩承接
                     is ImportUiState.Result -> ImportResultContent(
@@ -216,6 +244,9 @@ fun ImportScreen(
                         onRescan = rescanSms,
                         onBack = leaveOrBackToLanding,
                         onViewPending = onNavigateToSmsPending,
+                        onSenderImportToggle = { sender, enabled ->
+                            viewModel.onSenderImportEnabled(sender, enabled, currentSmsMode)
+                        },
                     )
                     is ImportUiState.SmsImporting -> SmsImportContent(
                         phase = SmsImportPhase.IMPORTING,
@@ -243,7 +274,7 @@ fun ImportScreen(
                         onBack = leaveOrBackToLanding,
                     )
                     ImportUiState.SmsPermissionNeeded -> ImportSmsPermissionContent(
-                        onRecheck = { viewModel.onReadSmsBills(readSmsGrantedNow(context), currentSmsMode) },
+                        onRequestPermission = { startSmsScan(currentSmsMode) },
                     )
                 }
             }
@@ -316,7 +347,7 @@ private fun ImportIdleContent(
         Spacer(Modifier.height(8.dp))
         Surface(
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
@@ -440,20 +471,23 @@ private fun ImportEntryCard(
 }
 
 /**
- * F-14 未授予短信读取权限的引导页：只做状态展示 + 引导文案（**不实现权限请求流程**，
- * `// TODO(F-14 权限申请)`），文案口径见 UI §11.4「权限被拒」。
+ * F-14 未授予短信读取权限的引导页（TASK-084 ⑤ 起**主动申请**）：主按钮直接拉起系统权限框
+ * （三个权限一起申请），已授权后点它就继续扫描；系统不再弹窗时按副标题走系统设置。
  *
- * @param onRecheck 「重新检查权限」回调（回到设置授权后返回本页重试）。
+ * 文案口径见 UI §11.4「权限被拒」。
+ *
+ * @param onRequestPermission 「授予权限 / 继续」回调：未授权拉起系统弹窗，已授权直接继续这次扫描。
  */
 @Composable
-private fun ImportSmsPermissionContent(onRecheck: () -> Unit) {
+private fun ImportSmsPermissionContent(onRequestPermission: () -> Unit) {
     EmptyState(
         icon = ImportErrorIcon,
         title = "需要短信权限；可去系统设置授予，或改用分享导入",
-        subtitle = "开启方式：系统设置 → 应用 → MiniBook → 权限 → 短信。授予后回到本页重试。" +
+        subtitle = "点下方按钮直接申请（读取短信 / 接收短信 / 通知）；若系统不再弹窗，请到" +
+            "系统设置 → 应用 → MiniBook → 权限 → 短信授予，然后回到本页。" +
             "（本应用只读短信，不删除、不修改、不标记已读，也不申请为默认短信应用。）",
-        actionLabel = "重新检查权限",
-        onAction = onRecheck,
+        actionLabel = "授予权限并继续",
+        onAction = onRequestPermission,
         modifier = Modifier.fillMaxSize(),
     )
 }

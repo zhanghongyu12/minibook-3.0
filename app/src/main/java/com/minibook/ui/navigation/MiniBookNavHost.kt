@@ -17,6 +17,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.minibook.AutoSyncEffect
 import com.minibook.data.local.security.AppLockController
 import com.minibook.domain.model.DebtDirection
 import com.minibook.ui.budgets.BudgetsScreen
@@ -30,8 +31,14 @@ import com.minibook.ui.main.MainScreen
 import com.minibook.ui.reports.ReportsScreen
 import com.minibook.ui.search.SearchScreen
 import com.minibook.ui.settings.LedgerManageScreen
+import com.minibook.ui.settings.LegalDocument
+import com.minibook.ui.settings.LegalScreen
 import com.minibook.ui.settings.LocalSettingsNavigation
 import com.minibook.ui.settings.SettingsAppearanceScreen
+import com.minibook.ui.settings.LoginScreen
+import com.minibook.ui.settings.ProfileEditScreen
+import com.minibook.ui.settings.RegisterScreen
+import com.minibook.ui.settings.SettingsAccountScreen
 import com.minibook.ui.settings.SettingsCloudScreen
 import com.minibook.ui.settings.SettingsDataScreen
 import com.minibook.ui.settings.SettingsNavigation
@@ -136,6 +143,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 // 直达根图目的地需本根 Controller navigate 中转，经 LocalHomeNavigation 注入；
                 // 设置二级页（settings-appearance/security/data/sms）同理走 LocalSettingsNavigation。
                 composable(Destination.Home.route) {
+                    // 自动云同步（DEC-038）：Home 只在**解锁后**才可达/组合，此处取用 SyncUseCase
+                    // 才安全（解锁前 DatabaseGate 未开，构造即崩）。详见 AutoSyncEffect 注释。
+                    AutoSyncEffect()
                     val homeNavigation = remember(rootController) {
                         object : HomeNavigation {
                             override fun openSearch() {
@@ -152,6 +162,9 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             }
                             override fun openLedgerManage() {
                                 rootController.navigate(Destination.LedgerManage.route)
+                            }
+                            override fun openAccount() {
+                                rootController.navigate(Destination.SettingsAccount.route)
                             }
                         }
                     }
@@ -170,6 +183,18 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             }
                             override fun openSms() {
                                 rootController.navigate(Destination.SettingsSms.route)
+                            }
+                            override fun openAccount() {
+                                rootController.navigate(Destination.SettingsAccount.route)
+                            }
+                            override fun openCloud() {
+                                rootController.navigate(Destination.SettingsCloud.route)
+                            }
+                            override fun openPrivacyPolicy() {
+                                rootController.navigate(Destination.SettingsPrivacyPolicy.route)
+                            }
+                            override fun openTerms() {
+                                rootController.navigate(Destination.SettingsTerms.route)
                             }
                         }
                     }
@@ -315,8 +340,56 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                 composable(Destination.SettingsSms.route) {
                     SettingsSmsScreen(onBack = { rootController.popBackStack() })
                 }
+                composable(Destination.SettingsAccount.route) {
+                    SettingsAccountScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenLogin = { rootController.navigate(Destination.SettingsLogin.route) },
+                        onOpenRegister = { rootController.navigate(Destination.SettingsRegister.route) },
+                        onOpenProfileEdit = { rootController.navigate(Destination.SettingsProfileEdit.route) },
+                    )
+                }
+                // 登录 / 注册各自独立成页：互相切换时把对方从回退栈里换掉，
+                // 这样「返回」永远直接回账号页，不会在两页之间来回弹。
+                composable(Destination.SettingsLogin.route) {
+                    LoginScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenRegister = {
+                            rootController.navigate(Destination.SettingsRegister.route) {
+                                popUpTo(Destination.SettingsLogin.route) { inclusive = true }
+                            }
+                        },
+                        onOpenPrivacyPolicy = { rootController.navigate(Destination.SettingsPrivacyPolicy.route) },
+                        onOpenTerms = { rootController.navigate(Destination.SettingsTerms.route) },
+                        onDone = { rootController.popBackStack() },
+                    )
+                }
+                composable(Destination.SettingsRegister.route) {
+                    RegisterScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenLogin = {
+                            rootController.navigate(Destination.SettingsLogin.route) {
+                                popUpTo(Destination.SettingsRegister.route) { inclusive = true }
+                            }
+                        },
+                        onOpenPrivacyPolicy = { rootController.navigate(Destination.SettingsPrivacyPolicy.route) },
+                        onOpenTerms = { rootController.navigate(Destination.SettingsTerms.route) },
+                        onDone = { rootController.popBackStack() },
+                    )
+                }
+                composable(Destination.SettingsPrivacyPolicy.route) {
+                    LegalScreen(document = LegalDocument.Privacy, onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.SettingsTerms.route) {
+                    LegalScreen(document = LegalDocument.Terms, onBack = { rootController.popBackStack() })
+                }
+                composable(Destination.SettingsProfileEdit.route) {
+                    ProfileEditScreen(onBack = { rootController.popBackStack() })
+                }
                 composable(Destination.SettingsCloud.route) {
-                    SettingsCloudScreen(onBack = { rootController.popBackStack() })
+                    SettingsCloudScreen(
+                        onBack = { rootController.popBackStack() },
+                        onOpenAccount = { rootController.navigate(Destination.SettingsAccount.route) },
+                    )
                 }
 
                 // 底部弹层（sheets）家族：可选 `{id}` 查询参数（UUID，§12）。

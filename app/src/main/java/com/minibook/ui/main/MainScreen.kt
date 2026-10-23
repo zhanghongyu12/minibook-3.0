@@ -1,7 +1,9 @@
 package com.minibook.ui.main
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -11,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -18,6 +22,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.minibook.domain.model.DebtDirection
 import com.minibook.ui.categories.CategoriesScreen
+import com.minibook.ui.components.MiniBookIcons
 import com.minibook.ui.debts.DebtsScreen
 import com.minibook.ui.home.HomeScreen
 import com.minibook.ui.navigation.BillsFilterBus
@@ -30,19 +35,19 @@ import kotlinx.coroutines.flow.first
 /**
  * 底部导航 Tab 定义（TASK-021，UI §4 C-07 简化版）。
  *
- * material-icons 缺失（TASK-020 偏差），icon 槽用 emoji 字符占位，不依赖 ImageVector；
- * 与 components/Navigation.kt 的 [com.minibook.ui.components.BottomNavItem]（要求
- * ImageVector）区分，避免重复定义。
+ * 2026-10-12（TASK-079，DEC-042）：图标由 emoji 字符换成本项目自带的矢量
+ * [com.minibook.ui.components.MiniBookIcons]——emoji 各机型字形不一、无法随选中态着色，
+ * 正是用户反馈「样式太老」的直观来源；仓库禁改依赖（无 material-icons），故自带矢量。
  */
-private data class MainTab(val route: String, val label: String, val emoji: String)
+private data class MainTab(val route: String, val label: String, val icon: ImageVector)
 
 /** 5 个主页面 Tab：Home / Transactions / Debts / Categories / Settings。 */
 private val mainTabs = listOf(
-    MainTab(Destination.Home.route, "首页", "🏠"),
-    MainTab(Destination.Transactions.route, "记账", "📋"),
-    MainTab(Destination.Debts.route, "债务", "💰"),
-    MainTab(Destination.Categories.route, "分类", "🏷️"),
-    MainTab(Destination.Settings.route, "设置", "⚙️"),
+    MainTab(Destination.Home.route, "首页", MiniBookIcons.Home),
+    MainTab(Destination.Transactions.route, "记账", MiniBookIcons.Receipt),
+    MainTab(Destination.Debts.route, "债务", MiniBookIcons.Wallet),
+    MainTab(Destination.Categories.route, "分类", MiniBookIcons.Label),
+    MainTab(Destination.Settings.route, "设置", MiniBookIcons.Tune),
 )
 
 /**
@@ -100,16 +105,26 @@ fun MainScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        // 本 Scaffold **不消费**系统栏 inset（F-1? 2026-10-13，用户「页面与上部空白太多」）：
+        // 它没有 topBar，默认会把状态栏高度加进 innerPadding；而每个 Tab 自己的 Scaffold
+        // 又会再加一次系统栏 inset ⇒ 内容顶部被顶下去两倍状态栏高度（模拟器实测约 100dp），
+        // 5 个主页面全部如此。这里置零，各页面按自己的 Scaffold 处理一次即可。
+        // 底部不需要 offset：NavigationBar 自身消费导航栏 inset，innerPadding.bottom 即其高度。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                // 无阴影 + 色面分层（2025–2026 主流，TASK-079）：底栏改用分层表面色，
+                // 选中态由 M3 默认的 tonal pill indicator 承担，不再用整条 secondaryContainer。
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 0.dp,
             ) {
                 mainTabs.forEach { tab ->
                     val selected = currentRoute == tab.route
                     NavigationBarItem(
                         selected = selected,
                         onClick = { navigateToTab(tab.route) },
-                        icon = { Text(tab.emoji) },
+                        // label 已提供文字，图标不再重复播报（accessibility）。
+                        icon = { Icon(imageVector = tab.icon, contentDescription = null) },
                         label = { Text(tab.label) },
                     )
                 }
