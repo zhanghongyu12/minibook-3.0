@@ -69,6 +69,13 @@ MySQL 侧的硬要求由迁移与 `__table_args__` 同口径保证，并由 `tes
 2. **`downgrade()` 只能 `DROP TABLE`，不能先 `DROP INDEX`**：MySQL 上 `DROP INDEX ix_refresh_tokens_user`
    会因该索引是外键支撑索引而失败（`errno 1553`），且中途失败留下**半删库**；先删子表、最后删父表即可。
 
+### 清库 / 重置数据：只删业务行，别碰这两张表
+
+- **可删**：`ledgers` / `categories` / `transactions` / `debts` / `budgets` / `user_category_rules` / `sync_log` / `devices` / `refresh_tokens` / `users`。
+- **永不删**：`sync_counters`（`server_seq` 发号状态）、`alembic_version`（迁移版本状态）—— 它们是**部署状态**，不是业务数据。
+- 2026-10-23 真实事故：一次「清空所有表行」把两者一起删掉 ⇒ `push` 全 500（`server_seq 计数器缺失`），而 `pull` 正常，极难自查。现 `next_seq()` 已能按 `MAX(sync_log.server_seq)` 自愈（DEC-055），但**仍不要**依赖它。
+- 恢复顺序：① `SELECT COALESCE(MAX(server_seq),0) FROM sync_log`；② 用①的值补种 `sync_counters`；③ `alembic current` 为空则 `alembic stamp <最新 revision>`（**不要** `alembic upgrade head`）；④ `alembic current` 复核。
+
 ## 目录
 
 ```

@@ -15,7 +15,8 @@
 from typing import Any, NamedTuple
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, select, update
+from sqlalchemy import func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..entity_spec import ENTITY_TYPES, PayloadError
@@ -49,13 +50,38 @@ class _State(NamedTuple):
 _UNKNOWN = _State(None, None, False, None, 0, None)
 
 
-def next_seq(db: Session) -> int:
-    """原子自增并返回新 `server_seq`（`UPDATE … value+1` 取行锁；SQLite/MySQL 通用）。"""
-    result = db.execute(
-        update(SyncCounter).where(SyncCounter.name == COUNTER_NAME).values(value=SyncCounter.value + 1)
+def _bump(db: Session) -> int:
+    """`UPDATE … value+1` 并返回受影响行数（0 = 计数器行缺失）。"""
+    return int(
+        db.execute(
+            update(SyncCounter).where(SyncCounter.name == COUNTER_NAME).values(value=SyncCounter.value + 1)
+        ).rowcount
     )
-    if result.rowcount != 1:
-        raise ApiError("server_error", "server_seq 计数器缺失，请先执行 alembic upgrade head")
+
+
+def _seed_counter(db: Session) -> None:
+    """补种缺失的计数器行：值取 `MAX(sync_log.server_seq)`，**绝不用 0**。
+
+    从 0 重新发号会和已有 `sync_log` 的 `(user_id, server_seq)` 主键撞车——比缺行更难查。
+    并发下两个请求同时补种时，另一个会撞主键（`IntegrityError`），视作「已被对方补好」忽略。
+    """
+    highest = db.execute(select(func.max(SyncLog.server_seq))).scalar()
+    try:
+        db.execute(insert(SyncCounter).values(name=COUNTER_NAME, value=int(highest or 0), shard=0))
+    except IntegrityError:  # pragma: no cover - 并发补种竞态
+        pass
+
+
+def next_seq(db: Session) -> int:
+    """原子自增并返回新 `server_seq`（`UPDATE … value+1` 取行锁；SQLite/MySQL 通用）。
+
+    计数器行缺失时**自愈**：按 `MAX(sync_log.server_seq)` 补种后重试一次。该行属于**部署状态**，
+    不是可清理的业务数据——「清空所有表行」会把它一并删掉（2026-10-23 线上事故：pull 200 / push 全 500）。
+    """
+    if _bump(db) != 1:
+        _seed_counter(db)
+        if _bump(db) != 1:
+            raise ApiError("server_error", "server_seq 计数器缺失且补种失败，请检查 sync_counters 表")
     return int(db.execute(select(SyncCounter.value).where(SyncCounter.name == COUNTER_NAME)).scalar_one())
 
 

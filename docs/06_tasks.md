@@ -2469,3 +2469,12 @@
 - 证据：手机内 `base.apk` sha256 = 本地 `app-release.apk`（`48887B68…B67198`）；签名 `CN=Minibook`（证书 sha256 `e137b7e5…`）；登录页 uiautomator 全量文本 12 条且 `含「服务器地址」输入栏: False`；手机自带 `curl http://<远程公网IP>:38080/healthz` → **HTTP 200**；`firstInstallTime` = 2026-10-23 10:25:56（新装，本地数据按预期清空）。
 - 恢复路径：登录（用户自己的账号与口令）→「设置 → 数据 → 导入数据」→ 选 `Download/minibook_backup_20261023_102433.json`（手机 Download 里两份，本机另存一份 `%TEMP%\minibook_backup_phone.json`）。
 - 验收：[x] 正式包装上且能连远程（内置地址来自 `sync.properties` + 手机侧 curl 200）；[x] 界面无地址栏；[x] 数据有备份、恢复路径明确；[ ] 真机登录 POST 的服务端日志见证（用错误账号做 UI 探针时被手机**拼音输入法**把注入文本转成中文、口令框为空 ⇒ 未发出登录请求；最终确认留给用户登录后看服务端访问日志）。
+
+### TASK-093: 云同步 push 全 500 的根因修复 —— 计数器缺行自愈 + 清库边界（2026-10-23）
+
+- 来源：用户 2026-10-23 追问「手机上的云同步怎么失败了」；随后拍板「1、`next_seq` 缺行自愈 + 回归测试；2、清库边界写进文档；3、重打镜像部署」（其中「是否从宿主机恢复旧云数据」用户明确**不需要**）。
+- 关联：DEC-055；`docs/14_cloud_sync.md §18`；`docs/09_test_report.md` 顶部章节。
+- 根因：清库把 `sync_counters` 种子行与 `alembic_version` 一起删掉 ⇒ `next_seq()` 的 `UPDATE` 影响 0 行 ⇒ 抛 `ApiError 500`「server_seq 计数器缺失」；`current_seq()` 对缺行容忍 ⇒ 「pull 200 / push 500」的不对称，且日志无异常行。
+- 做了什么：① 数据面恢复：按 `MAX(sync_log.server_seq)` 补种计数器 + `alembic stamp 0004_user_profile_fields`（**刻意不跑 `upgrade head`**）；② 代码面：新增 `_bump` / `_seed_counter`，`next_seq` 缺行自愈（重试一次，仍失败才 500）；③ 新增 `tests/test_counter_selfheal.py` 2 例；④ 文档：§18 + `server/README.md` 清库边界 + DEC-055 + CHANGELOG + 测试报告。
+- 验收：[x] 缺陷版注入 ⇒ 2 例均失败；[x] 双 DSN 各 **78 例 / 0 失败**（SQLite 30.819 s / 腾讯云 MySQL 457.733 s，junitxml `failures=0 errors=0 skipped=0`）；[x] 镜像重建部署后容器 `healthy`、`/healthz` 200、容器内含新代码；[x] 线上发号实测 `server_seq_global` 2314→2315 + `pull` 取回该条；[x] 用户手机 1157 条数据上云成功（`demo_user` 若干账本 / 分类 / 交易 / 债务 / 日志）。
+- 诚实挂账：① 线上发号实测用我的探针账号 `probe723685`（本就待清理），该账号因此多落 **1 行**；② 探针账号 `probe723551` / `probe723685` 仍在库里，清理 SQL 中含 `DELETE` 的命令被操作者策略拒绝（**未重试、未绕行**）—— SQL 已交付用户；③ 清空前的旧云数据按用户决定**不恢复**，宿主机原始 MySQL 未动，需要时可再迁；④ 自愈只在缺行时生效，计数器值被人工改小仍会撞主键。

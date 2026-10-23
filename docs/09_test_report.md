@@ -5,10 +5,35 @@
 > 更早更新：2026-10-13（**TASK-084**：docs/15 七条整改【分类规则归一化、导入来源清单、导入前主动申请短信权限、贷款营销短信过滤、日期区间联动约束、退款记收入+「退款」分类、内置商户词典】+ 即时需求【页面顶部留白修复、首页账号信息行】；JVM 569 例 / 0 失败（含 TASK-085/F-16i `GatedFlowTest` 3 例）；**F-16j** 应用锁前置分诊——未录入生物识别时开启应用锁不再崩溃；**TASK-087 / F-16k + F-16l** 首页账号入口收成标题旁小链接 + 礼金与红包图标去重（JVM **571 例 / 0 失败 / 1 跳过**）；模拟器逐条实测通过；真机安装验证通过）
 > 上一轮更新（真机换版）：2026-10-21（**真机换版安装与启动验证**：真机由 TASK-084 的包 `2FD3869…`（2026-10-13 15:22:06 安装，**不含 F-16i 门控修复**）原地覆盖为 TASK-087 的构建 `A6DD265B…`（含 F-16i / F-16k / F-16l；JVM 571 例 / 0 失败 / 1 跳过）；装前 / 装后数据逐字节一致（11,510,272 字节，sha256 `F25D2C30…BD5E9`）；`firstInstallTime` 未变、`lastUpdateTime` → 2026-10-21 14:14:12；手机内 `base.apk` 与本地产物 sha256 一致；启动无崩溃（当日 crash buffer 0 行）；只读 dump 确认 F-16k 小链接在真机就位 —— 见下方最新章节）
 > 上一轮更新（F-15 上云）：2026-10-21（**TASK-088**：数据库 host → 腾讯云迁移（11 表行数一致、canonical dump 逐字节相同 `e0ec23b8…`、按账号逐行哈希相同 `326161b5…`、`alembic_version=0004_user_profile_fields`）+ 服务端**在服务器上打镜像、Docker 部署**（`minibook-api:latest`，容器 `healthy`，`/healthz` `/docs` 200）+ 模拟器对**线上服务器**跑通「注册 → 登录 → 记账 → 双向同步」闭环（服务端日志 201/200/200 + `pull`/`push` 200，库内 `24 分类 / 1 账本 / 1 交易 / 26 sync_log`）；服务端 73/73 双跑；**联测中查出服务端缺陷一处**（`_touch_device` 设备归属 → 注册被误报「用户名已被占用」），**该缺陷已于 2026-10-22 修复：TASK-089** —— 见下方最新章节）
-> 最后更新：2026-10-23（**配置分仓与去敏 + 提交前体检 + 正式包真机安装**：远程地址从仓库彻底移出（`sync.properties` 注入 + docs 占位符化，受版本控制文件里真实公网 IP **0 命中**）、服务端配置拆成 `server/.env.local.example` / `.env.remote.example` 两份、新增 `tools/check-secrets.ps1`（全量 **518 文件 0 命中**）、App 单测 + debug/release 打包 **BUILD SUCCESSFUL**、**正式包装到真机且界面无地址栏**（uiautomator 文本无「服务器地址」）、手机内 `base.apk` 与本地产物 sha256 一致 `48887B68…B67198`、手机自带 `curl` 直连远程 `/healthz` **200**；装正式包前导出 **（备份大小略）**备份（若干账本 / 若干分类 / **若干交易** / 若干债务）—— 见下方最新章节）
+> 最后更新：2026-10-23（**云同步 push 全 500 的根因修复**：清库把 `sync_counters` 种子行与 `alembic_version` 一起删掉 ⇒ `next_seq()` 的 `UPDATE` 影响 0 行 ⇒ **所有账号 push 全 500**，而 `pull` 正常、日志无异常行（该 500 是刻意返回的 `ApiError`）；数据面按 `MAX(sync_log.server_seq)` 补种 + `alembic stamp 0004_user_profile_fields`（**刻意不跑 `upgrade head`**），代码面 `next_seq()` 缺行自愈（DEC-055 / TASK-093）；双 DSN 各 **78 例 / 0 失败**、缺陷版注入 ⇒ 新增 2 例均红；重打镜像部署后线上发号实测 `server_seq_global` 2314→2315；**用户手机导入备份后同步成功**（云端 `demo_user` = 若干账本 / 分类 / 交易 / 债务 / 日志）—— 见下方最新章节）
+> 上一轮更新（配置分仓与去敏 + 提交前体检 + 正式包真机安装）：2026-10-23（远程地址从仓库彻底移出（`sync.properties` 注入 + docs 占位符化，受版本控制文件里真实公网 IP **0 命中**）、服务端配置拆成 `server/.env.local.example` / `.env.remote.example` 两份、新增 `tools/check-secrets.ps1`（全量 **518 文件 0 命中**）、App 单测 + debug/release 打包 **BUILD SUCCESSFUL**、**正式包装到真机且界面无地址栏**（uiautomator 文本无「服务器地址」）、手机内 `base.apk` 与本地产物 sha256 一致 `48887B68…B67198`、手机自带 `curl` 直连远程 `/healthz` **200**；装正式包前导出 **（备份大小略）**备份（若干账本 / 若干分类 / **若干交易** / 若干债务）—— 见下方最新章节）
 > 上一轮更新（公网入口上线：明文 HTTP + 端口 38080）：2026-10-23（外网直连 `/healthz` **200**、`/docs`+`/redoc`+`/openapi.json` 全 **404**、`minibook_test` 登录+push+pull 全绿（重推幂等、seq 不推进）、容器日志记录**真实公网 IP**（限流口径正确）；服务端套件 **76 passed**；App 正式包改指该地址（DEC-053，见 `14_cloud_sync.md §16`））
 > 上一轮更新（TASK-089 设备归属缺陷修复 + TASK-090 公网接入方案（待审批））：`_touch_device` 由「重复 INSERT 主键」改为「设备已存在即改归属」，并补证 `login()` 同样中招（无异常兜底 ⇒ 换账号登录 500）；新增 2 条回归测试并**在缺陷版代码上确认两条均失败**；本地 SQLite **75 passed** / 腾讯云 MySQL **75 passed**；新镜像 `6f29b8c354b7` 已部署（回滚标签 `minibook-api:pre-fix-20261021`），线上实测「用属于他人账号的 device_id 登录」旧 500 → 新 200；公网方案结论为**只开 443 + Caddy(TLS-ALPN)**，见 `14_cloud_sync.md §15`（**该方案已于 2026-10-23 被用户否决**：443 不批准、暂不加证书 → 改为明文 HTTP + 38080，见 §16）—— 见下方最新章节）
 > 维护者：Tester
+
+## 最新测试（云同步 push 全 500 的根因修复：计数器缺行自愈，2026-10-23）
+
+**测试信息**
+- 触发（用户原话）：「手机上的云同步怎么失败了」；随后拍板「1、`next_seq` 缺行自愈 + 回归测试；2、清库边界写进文档；3、重打镜像部署」（「是否从宿主机恢复旧云数据」用户明确**不需要**）。
+- 范围：服务端计数器自愈（代码 + 数据库恢复）+ 线上重部署与发号实测 + 文档。App 侧本轮无改动；真机未由本轮操作（数据由用户自行导入并同步）。
+
+**结果**
+| 项 | 证据 |
+|---|---|
+| 根因定位 | 同形报文（由手机备份重建 1157 条、200/批）打线上，拿到 500 响应体 `server_seq 计数器缺失，请先执行 alembic upgrade head`；库内 `sync_counters` **0 行**、`alembic_version` **空**、`sync_log` **0 行** |
+| 修复前/后对比 | 修复前 `push` **500**（0.3 s 快速返回、日志无非 INFO 行 —— 因为它是 `ApiError` 刻意返回）；修复后 6 批全 **200**、`server_seq` 0→1157、首批 `skipped:1`（幂等） |
+| 回归测试有效 | 新增 `tests/test_counter_selfheal.py` 2 例；**注入缺陷版（去掉自愈）后两条均失败**（`ApiError`），恢复后通过 |
+| 双 DSN 双绿 | SQLite **78 例 / 0 失败 / 0 错误 / 0 跳过**（30.819 s）；腾讯云 MySQL `minibook_test`（经 SSH 隧道）**78 例 / 0 失败 / 0 错误 / 0 跳过**（457.733 s）；junitxml 双份均 `tests="78" failures="0" errors="0" skipped="0"` |
+| 部署 | `docker compose build && docker compose up -d` ⇒ 容器 **Up (healthy)**、`/healthz` **200**、容器内 `app/services/sync_service.py` 含 `_seed_counter`（grep 2 处） |
+| 线上发号实测 | 部署后 `login 200` → `status` `server_seq_global` **2314** → push 1 条新变更 `applied:1` → `status` **2315** → `pull?since_seq=1157` 取回该条（`next_seq` 发号路径真跑通） |
+| 用户侧闭环 | 云端 `demo_user` = **若干账本 / 分类 / 交易 / 债务 / 日志**，与手机备份逐项吻合（该账号此前为 0 行） |
+| 数据边界 | 清库只删业务表行、`sync_counters` 与 `alembic_version` 永不删 —— 已写入 `docs/14_cloud_sync.md §18` 与 `server/README.md`（DEC-055） |
+
+**诚实挂账**
+- 线上发号实测用的是我的探针账号 `probe723685`（本就待清理），该账号因此多落 **1 行**；
+- 探针账号 `probe723551` / `probe723685` 仍在库里，清理 SQL 中含 `DELETE` 的命令被操作者策略拒绝，**未重试、未绕行**，SQL 已交付用户；
+- 清空前的旧云数据（旧 `demo_user` 若干笔等）按用户决定**不恢复**；宿主机原始 MySQL 未动，需要时可再迁一次；
+- 自愈只在**缺行**时生效：若计数器值被人工改小，仍会撞 `sync_log` 的 `(user_id, server_seq)` 主键（自愈不校验语义）。
 
 ## 最新测试（配置分仓与去敏 + 提交前体检 + 正式包真机安装，2026-10-23）
 
@@ -19,7 +44,7 @@
 **结果**
 | 项 | 证据 |
 |---|---|
-| 地址出仓库 | 受版本控制文件里 `<远程公网IP>` **0 命中**（ripgrep 全仓）；`app/build.gradle.kts` 改为从 `sync.properties` 注入；`docs/*.md` 的真实公网 / 内网 IP 已占位符化 |
+| 地址出仓库 | 受版本控制文件里真实公网 IP **0 命中**（ripgrep 全仓）〔本行原先把该地址原文写在此处，2026-10-23 复查时发现并改为占位符：体检脚本的规则要求 IP 出现在 `//`、`@`、`:端口` 或配置赋值位，**反引号内的散文不触发**，是规则的一个已知缺口〕；`app/build.gradle.kts` 改为从 `sync.properties` 注入；`docs/*.md` 的真实公网 / 内网 IP 已占位符化 |
 | 配置拆两份 | `server/.env.local.example`（SQLite + 开发密钥）/ `server/.env.remote.example`（MySQL + 占位符）；`server/.env.example` 删除；服务器上两份模板同步写入，服务器 `.env`（823 B，真实值）未动 |
 | 提交前体检 | `tools/check-secrets.ps1 -All` → `Checked 518 file(s) [all tracked + untracked]` + `OK`，退出码 **0**；过程中如实记录 2 处假命中（PS 5.1 用 ANSI 读 UTF-8），改 `-Encoding UTF8` 后清零（见 DEC-054 / §17.2） |
 | App 单测与打包 | `:app:testDebugUnitTest` + `:app:assembleDebug` + `:app:assembleRelease` → **BUILD SUCCESSFUL in 5m 31s**；`SyncUrlValidatorTest` 样本改成 TEST-NET 文档段地址后全绿 |

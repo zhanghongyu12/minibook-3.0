@@ -981,3 +981,13 @@
 - 影响：`app/build.gradle.kts`、`app/src/main/res/xml/network_security_config.xml`（删掉写死 host 与 debug 覆盖资源）、`app/src/test/.../SyncUrlValidatorTest.kt`（样本改 TEST-NET 文档段地址）、`sync.properties(.example)`、`server/.env.local.example` / `.env.remote.example`（`server/.env.example` 删除）、`.gitignore`、`tools/check-secrets.ps1`、`server/README.md`、`docs/*`。
 - **已知代价（诚实挂账）**：① 平台层不再做 host 级明文固定（只留应用层校验）——正式版没有地址输入框、校验器仍只放行内置 host，实际暴露面未变，但确实是安全性上的一次让步；② 新增一个维护面（脚本）；③ 正则是启发式，base64 之类的机密形态不在覆盖内，仍需人工过一眼 diff。
 - 验证：`check-secrets.ps1 -All` 对 **518 个文件 0 命中**（退出码 0）；受版本控制文件里真实公网 IP **0 命中**；正式包真机安装后界面无地址栏、手机 `curl` 直连 `/healthz` **200**。完整记录见 `docs/14_cloud_sync.md §17` 与 `docs/09_test_report.md` 最新章节。
+
+## DEC-055: `sync_counters` 属部署状态 —— 缺行自愈 + 清库边界写进流程（2026-10-23）
+
+- 背景：用户报「手机上的云同步怎么失败了」。定位为一次「清空所有表行」把 `sync_counters` 的种子行与 `alembic_version` 一并删掉，`next_seq()` 的 `UPDATE … value+1` 影响 0 行 ⇒ **所有账号 push 全 500**；而 `current_seq()` 对缺行容忍（`or 0`）⇒ 表现为「pull 200 / push 500」，且该 500 是刻意返回的 `ApiError`（日志无异常行），极难自查。
+- **决策**：① `next_seq()` 缺行时**自愈** —— 按 `MAX(sync_log.server_seq)` 补种后重试一次，仍失败才报 `server_error`；② 明确「清库边界」：只删业务表行，**永不删** `sync_counters` / `alembic_version`；③ 版本表为空时用 `alembic stamp`，**不用** `alembic upgrade head`。
+- 理由：① 计数器行是**部署状态**不是业务数据，把它当可清理数据会直接打断写路径；② 补种值必须取 `MAX(sync_log.server_seq)` 而非 0 —— `sync_log` 主键是 `(user_id, server_seq)`，从 0 重发会撞已有行；③ 「快速失败」的原始意图（提示迁移未完成）在「有人手动清库」这个真实场景里代价过大（整站写不可用），故改为自愈 + 保留失败兜底。
+- 被否决的替代方案：计数器换 MySQL 自增列 / `LAST_INSERT_ID()`（破坏「双 DSN 同一套代码」）；`SELECT MAX(server_seq)+1 FOR UPDATE`（锁范围大、并发差）；把 `sync_log` 主键改成自增 `id` 并以其为 seq（最简洁，但要改协议 + 迁移 + 游标语义，收益不抵改动面）；每用户一行计数器（`shard` 预留路径，本项目量级用不上，且多出「注册插行 + 缺失自愈」复杂度）。
+- 影响：`server/app/services/sync_service.py`（`_bump` / `_seed_counter` / `next_seq`）、`server/app/models.py`（`SyncCounter` 注释）、新增 `server/tests/test_counter_selfheal.py`、`docs/14_cloud_sync.md §18`、`server/README.md`。
+- **已知代价（诚实挂账）**：① 自愈只在**缺行**时生效，若计数器值被人工改小仍会撞 `sync_log` 主键（自愈不校验语义）；② `shard` 列仍是无用预留（恒 0）；③ 报错文案从「请先执行 alembic upgrade head」改为「补种失败」，旧文档若引用该字符串需注意。
+- 验证：新增 2 例回归测试（注入缺陷版 ⇒ 两条均红）；双 DSN 各 **78 例 / 0 失败**；部署后线上发号实测 `server_seq_global` 2314→2315；用户手机导入备份后同步成功（云端 `demo_user` 行数与备份逐项吻合）。

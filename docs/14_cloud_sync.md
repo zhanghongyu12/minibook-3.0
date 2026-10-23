@@ -784,3 +784,50 @@ release 包**禁止明文 HTTP**，且 `app/build.gradle.kts` 里 release 的 `S
 2. 服务端：本地开发 `cp server/.env.local.example server/.env`；服务器上按 `.env.remote.example` 填真实口令与 `JWT_SECRET`。
 3. 改完先跑 `powershell -NoProfile -File tools/check-secrets.ps1 -All`，绿了再 `git add` / `git commit`。
 
+## 18 `sync_counters` 缺行自愈 + 清库边界（2026-10-23，DEC-055）
+
+### 18.1 事故：pull 正常、push 全 500
+
+- 现象：手机端「云同步」失败。服务端访问日志里同一会话是 `login 200` / `me 200` / `pull 200` / **`push 500`**，且 push **0.3 秒内快速返回**（不是超时），日志里**没有任何异常行**。
+- 定位：用 App 同形报文（由手机备份重建 1157 条、200/批）打线上，拿到响应体
+  `{"error":{"code":"server_error","message":"server_seq 计数器缺失，请先执行 alembic upgrade head"}}`。
+- 根因链：一次「清空所有表行」连 **`sync_counters` 的种子行**（和 `alembic_version`）一起删了 ⇒
+  `next_seq()` 的 `UPDATE … value+1` 影响 **0 行** ⇒ 抛 500。
+- **为什么难自查（这条不对称本身就是坑）**：读路径容忍缺行（`current_seq()` 是 `scalar_one_or_none() or 0`），
+  写路径致命（`rowcount != 1` 即抛）⇒ 表现为「拉得下来、推不上去」；而且这个 500 是**刻意返回的 `ApiError`**
+  （不是未捕获异常）⇒ 日志干净，三条异常处理器一条都不会触发。
+
+### 18.2 两层修复
+
+1. **数据面（当场恢复）**：
+   `INSERT INTO sync_counters (name, value, shard) VALUES ('server_seq', (SELECT COALESCE(MAX(server_seq),0) FROM sync_log), 0)`
+   并 `alembic stamp 0004_user_profile_fields` 补回版本号。
+   - **刻意不跑 `alembic upgrade head`**：`alembic_version` 为空时 Alembic 认为「一个迁移都没跑过」，
+     会从 0001 开始对**已存在的表**执行 `CREATE TABLE` ⇒ 把好库改成事故现场。版本表为空时正确动作是 `stamp`。
+2. **代码面（防复发，DEC-055）**：`sync_service.next_seq()` 在 `rowcount != 1` 时调 `_seed_counter()`
+   **按 `MAX(sync_log.server_seq)` 补种后重试一次**；仍失败才抛 `server_error`。
+   - **绝不能用 0 补种**：`sync_log` 主键是 `(user_id, server_seq)`，从 0 重发号会撞已有行 —— 比缺行更难查。
+   - 并发补种撞主键（另一个请求刚补好）按「已被对方补好」忽略。
+
+### 18.3 清库 / 重置数据边界（硬规则）
+
+- **可删（业务行）**：`ledgers` / `categories` / `transactions` / `debts` / `budgets` / `user_category_rules` /
+  `sync_log` / `devices` / `refresh_tokens` / `users`。
+- **永不删（部署状态）**：`sync_counters`（发号状态）、`alembic_version`（迁移状态）。
+  删它们与「清数据」的目的无关，等于自毁部署。
+- 万一真被删了，按序恢复：① `SELECT COALESCE(MAX(server_seq),0) FROM sync_log` 取真实水位；
+  ② 用①的值补种 `sync_counters`；③ `alembic current` 为空则 `alembic stamp <最新 revision>`；
+  ④ `alembic current` 复核。
+- 新代码上线后第②步漏了也会在下次 push 自愈，但**不要依赖自愈**：自愈只保证发号不断，不保证你删对了东西。
+
+### 18.4 验证（全部真跑）
+
+| 项 | 证据 |
+|---|---|
+| 缺陷复现与修复 | 同形报文修复前 **500**（`server_seq 计数器缺失`）→ 补种后 6 批全 **200**、`server_seq` 0→1157、首批 `skipped:1`（幂等） |
+| 回归测试有效 | 新增 `tests/test_counter_selfheal.py` 2 例；**去掉自愈（缺陷版）后两条均失败**（`ApiError`），恢复后通过 |
+| 双 DSN 双绿 | SQLite **78 例 / 0 失败**（30.819 s）；腾讯云 MySQL `minibook_test` **78 例 / 0 失败**（457.733 s）；junitxml `failures=0 errors=0 skipped=0` |
+| 部署 | 服务器 `docker compose build && docker compose up -d` ⇒ 容器 `Up (healthy)`、`/healthz` **200**、容器内含 `_seed_counter` |
+| 线上发号实测 | 部署后 push 1 条新变更 ⇒ `applied:1`、`server_seq_global` 2314→**2315**、`pull?since_seq=1157` 取回该条 |
+| 用户侧闭环 | 手机「导入备份 → 双向同步」后云端 `demo_user` = **若干账本 / 分类 / 交易 / 债务 / 日志**，与备份逐项吻合 |
+

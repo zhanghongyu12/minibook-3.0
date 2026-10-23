@@ -307,6 +307,9 @@ class SyncCounter(Base):
 
     实现为**原子自增**：`UPDATE sync_counters SET value = value + 1 WHERE name = 'server_seq'`
     后读回（rowcount 必须为 1），不依赖行锁语义，SQLite/MySQL 通用（见 `14_cloud_sync.md §12.2`）。
+
+    本表是**部署状态**而非业务数据：行缺失时 `next_seq()` 会按 `MAX(sync_log.server_seq)` 自愈补种
+    （DEC-055）。清理数据时**不要删这张表**（同理别删 `alembic_version`）。
     """
 
     __tablename__ = "sync_counters"
