@@ -43,7 +43,11 @@ class AutoSyncManager @Inject constructor(
 
             val preview = sync.preview(SyncMode.BOTH)
             if (preview !is SyncPreview.Ready) return false
-            if (preview.plan.isEmpty) return false
+            if (preview.plan.isEmpty) {
+                // 无变化也是成功：落时间戳（否则状态行永远显示上次真实改动的时间，看起来像没同步）。
+                sync.recordNoopSuccess(SyncMode.BOTH, preview.nextCursor)
+                return false
+            }
             // 危险计划（会删本地/有冲突）不自动跑：交给用户在手动同步里看清数字后确认。
             if (preview.plan.needsConfirm) return false
 

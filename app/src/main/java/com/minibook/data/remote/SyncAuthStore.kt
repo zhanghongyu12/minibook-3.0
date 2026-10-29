@@ -186,7 +186,9 @@ class SyncAuthStore @Inject constructor(
     }
 
     private fun Preferences.toState(): SyncAccountState = SyncAccountState(
-        baseUrl = this[KEY_BASE_URL].orEmpty(),
+        // 所有调用方（同步 / 刷新令牌 / 账号页 / 退出登录）都从这里取地址：
+        // 正式包以安装包内置地址为准，避免 DataStore 里的旧地址把请求劫持到已下线的服务器。
+        baseUrl = SyncBaseUrl.resolve(this[KEY_BASE_URL].orEmpty()),
         username = this[KEY_USERNAME].orEmpty(),
         userId = this[KEY_USER_ID].orEmpty(),
         nickname = this[KEY_NICKNAME].orEmpty(),

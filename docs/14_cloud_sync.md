@@ -865,3 +865,79 @@ release 包**禁止明文 HTTP**，且 `app/build.gradle.kts` 里 release 的 `S
 
 **遗留（与本轮无关、未擅自动）**：MySQL 容器 `mysql` 的 Docker 健康检查长期超时（`mysqladmin ping -h 127.0.0.1 -P 49779`，`exit=-1`，容器 2026-10-10 起 `restarts=0`），而它的读写、pytest 与 API 全部正常；`minibook-api` 的 `depends_on` 早已满足，不影响发版。
 
+## 20. 服务器换到阿里云 + 两个把同步打断的真故障（2026-10-29）
+
+背景：用户把云端从腾讯云整体搬到阿里云（新机 `/opt/docker/minibook-api` 照搬、MySQL 数据照搬、旧机下线）。搬迁本身「看起来成功」——新机 `/healthz` 200、登录接口返回我们自己的 422 校验体、`alembic current` 已是 `0005_transaction_debt_link`——但手机端同步一直失败。查下来是**两个互相独立**的故障叠加。
+
+### 20.1 新机形态（与旧机的差异）
+
+| 项 | 旧机（腾讯云） | 新机（阿里云） |
+|---|---|---|
+| API 对外 | uvicorn 容器直接发布 `0.0.0.0:38080` | 容器只发布 `127.0.0.1:8000`，由 **nginx 监听 38080** 反代 |
+| `/healthz` | 外网 200 | **外网 403**（nginx `allow 127.0.0.1; deny all`，这是刻意设计，不是故障） |
+| 暴露面 | `/docs` 关闭 | nginx **只放行 `/api/v1/*`**，其余一律 404 |
+| 限流 | 应用内按 IP | nginx 三档桶：登录/注册/刷新 10r/m、全站 60r/m、连接 20 |
+
+排查时先按「外网 403」误判成健康检查坏了，实际是安全配置生效。**判断依据应看 `POST /api/v1/auth/login` 的响应体形状**，而不是 `/healthz` 状态码。
+
+### 20.2 故障一：MySQL 数据目录属主错，能读不能写
+
+现象：把旧机 dump 导进新机时 `ERROR 1030 (HY000): Got error 168 from storage engine`、随后 `ERROR 1813: Tablespace 'minibook.alembic_version' exists`；`docker logs mysql` 里刷 `[InnoDB] Operating system error number 13`（权限）、`Unable to open './#innodb_redo/#ib_redo10'`、`permission error, can't delete! ... .ibd`。
+
+根因：`/opt/docker/mysql/data` 是**以 `ubuntu`(uid 1000) 身份拷贝**过来的，而 `mysql:8.0` 容器内 `mysqld` 以 **`mysql`(999:999)** 运行 ⇒ 只能读已存在文件（binlog/查询照常），**建表、删表、改表全部失败**。表现极具误导性：SELECT 一切正常、API 健康检查 200，只有写路径偶发 500/导入失败。
+
+修复（顺序不可颠倒）：
+
+```bash
+docker stop minibook-api && docker stop mysql
+sudo chown -R 999:999 /opt/docker/mysql/data
+docker start mysql && sleep 12 && docker logs mysql --since 40s | grep -c ERROR   # 期望 0
+```
+
+失败的那次导入留下了**孤儿表空间** `alembic_version.ibd`（表已从字典删掉、文件还在 ⇒ 再建同名表报 1813）。处理：停 MySQL → `mv data/minibook data/minibook.broken-<日期>`（**保留而非删除**）→ 起 MySQL → 重建库 → 重新导入。修完两个容器都是 `healthy`，重启后日志 **0 ERROR**。
+
+### 20.3 故障二：客户端把同步发到了已下线的旧服务器
+
+现象：手机「云同步」页显示 **「已登录：demo_user · 上次同步 10-29 11:29（双向同步）」**，看起来一切正常；但新机 `sync_log` 的最后一条是 **10-28 09:07**，`transactions.debt_id` 非空行 **0** —— 新机**一个请求都没收到过**。旧机 nginx 日志里倒是有 11:22–11:29 的那批请求。
+
+根因：地址优先级写反了。`SyncAuthStore` 的 `base_url`（DataStore）**优先于** `BuildConfig.SYNC_BASE_URL`（安装包内置）：
+
+```kotlin
+// 修复前
+raw = typed.ifEmpty { store.baseUrl() }.ifEmpty { BuildConfig.SYNC_BASE_URL }
+```
+
+换服务器时只换了安装包内置地址，DataStore 里的旧地址（腾讯云）命中第一条就短路，于是**一直打旧机**。更糟的是正式包**不显示地址输入框**，用户没有任何手段纠正；旧机一下线，表现就是「同步不上」，而界面仍停在旧的成功时间上。
+
+修复：新增纯函数 `SyncBaseUrl.resolve(saved, debug, builtIn)`，在**唯一入口** `SyncAuthStore.toState()` 生效 ——
+
+- **正式包**（`BuildConfig.DEBUG == false`）：一律用内置地址；内置为空才回退已保存地址（兼容旧包）。
+- **调试包**：保持旧优先级（已保存 > 内置），内网联调仍可在界面上改地址。
+
+放在 `toState()` 是因为同步、令牌刷新、账号页、退出登录**全部**经由 `store.current().baseUrl` 取地址，一处改完即全覆盖；登录成功时 `saveSession(baseUrl=…)` 写入的是生效地址，旧值顺便自愈。
+
+> 教训：**安装包内置地址才是真相，DataStore 里的地址只能当调试便利**。凡「换服务器只换内置地址」的设计，必须让内存在日常量永不覆盖内置量。
+
+### 20.4 迁移后的数据一致性核对
+
+| 指标 | 旧机（腾讯云，下线前） | 新机（阿里云，导入后） |
+|---|---|---|
+| `transactions` | 2262 | **2262** |
+| `transactions.debt_id IS NOT NULL` | 2 | **2** |
+| `debts` / `users` | 16 / 3 | **16 / 3** |
+| `sync_log` 最大 `server_seq` | 2338 | **2338** |
+| `alembic_version` | `0005_transaction_debt_link` | **`0005_transaction_debt_link`** |
+| 表数 | 12 | **12** |
+
+一致性判断口径：`max(server_seq)` 与 `debt_id` 非空行数两项就够用 —— 前者代表「云端变更流到哪」，后者代表新增列是否真的写进去了。手机端游标已是 2338，与新机相等 ⇒ 修好地址后首轮同步应为 **0 增量**（不重复上传、不误删）。
+
+旧机资源未销毁：`minibook-api` 容器已 `down`（外网 38080 连接被拒），**MySQL 容器保留且数据完整**，作为回滚副本。
+
+### 20.5 连带修掉的显示缺陷：空计划同步不更新时间
+
+地址修好后 `sync/pull?since_seq=2338` 已返回 200，但界面**仍显示「上次同步 10-29 11:29」**。原因：空计划（本地与云端都没有要传/要收的东西）走的是「弹一句『没有需要同步的内容』就结束」的分支，**从不写 `last_sync_at`**。于是「同步成功且无变化」与「同步压根没跑」在界面上完全一样 —— 用户只能得出「同步不上」的结论。
+
+修法：`SyncUseCase.recordNoopSuccess(mode, nextCursor)` —— 空计划时照样推进游标（仅下载/双向模式）、`last_pushed_at`（仅上传/双向模式）与 `last_sync_at`，**不写业务数据、不落快照**（没有要保护的东西）。手动同步（`SettingsCloudViewModel.preview`）与自动同步（`AutoSyncManager.runOnForeground`）都会调它。
+
+口径：**「无变化」也是一种成功**，状态行必须反映「刚刚同步过」。这也让自动同步的 5 分钟节流真正生效（`isDue` 读的就是 `last_sync_at`）。
+

@@ -114,6 +114,8 @@ class SettingsCloudViewModel @Inject constructor(
             is SyncPreview.Failed -> toast(outcome.message)
             is SyncPreview.Ready -> {
                 if (outcome.plan.isEmpty) {
+                    // 没有要传的东西 = 也是一次成功的同步：记一笔时间，别让状态行停在几小时前。
+                    sync.recordNoopSuccess(mode, outcome.nextCursor)
                     toast(SyncPresenter.emptyPlanMessage(mode))
                 } else {
                     val details = SyncPresenter.previewDetails(mode, outcome.plan)

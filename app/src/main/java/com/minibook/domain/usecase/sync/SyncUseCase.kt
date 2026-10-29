@@ -209,6 +209,27 @@ class SyncUseCase @Inject constructor(
         }
     }
 
+    /**
+     * 空计划（云端与本地都没有要传/要收的东西）：**这一轮仍然是一次成功的同步**。
+     *
+     * 必须落一笔「上次同步」，否则界面会一直停在上一次真实改动的时间上 ——
+     * 用户看到几小时前的时间，就会以为同步没跑/失败了（2026-10-29 换服务器后真实踩到：
+     * 地址已修正、`sync/pull` 也真返回 200，但因为计划为空，状态行还写着旧时间）。
+     *
+     * 只推进状态与游标，**不写业务数据、不落快照**（没有要保护的东西）。
+     */
+    suspend fun recordNoopSuccess(mode: SyncMode, nextCursor: Long) {
+        if (mode.downloads && nextCursor > store.serverCursor()) {
+            store.setServerCursor(nextCursor)
+        }
+        if (mode.uploads) {
+            store.setLastPushedAt(TimeFormatter.nowIso())
+        }
+        val unresolved = conflictDao.unresolvedCount()
+        store.setLastSyncResult(atIso = TimeFormatter.nowIso(), mode = mode.label, conflictCount = unresolved)
+        store.setConflictCount(unresolved)
+    }
+
     /** 冲突数（未处理口径）+ 账号态，供 UI 状态行。 */
     suspend fun statusLine(): CloudStatusLine {
         val state = store.current()
