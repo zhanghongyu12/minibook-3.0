@@ -149,6 +149,7 @@ fun DebtsScreen(
                     if (tabIndex == 0) {
                         DebtDetailsList(
                             details = state.details,
+                            linkedDebtIds = state.linkedDebtIds,
                             onItemClick = { debt -> onOpenDebt(debt.id, null, null) },
                             onEditClick = { debt -> onOpenDebtEdit(debt.id) },
                             onDeleteClick = { debt -> deleteTarget = debt },
@@ -251,6 +252,7 @@ private fun NetBalanceHeader(
  * 前缀与行 key（`id`）隔离，`animateItem` 提供条目增删/移动的位移动画。
  *
  * @param details 扁平列表（DAO 已按 createdAt DESC 排序，故组内天然倒序）。
+ * @param linkedDebtIds 由账单转入的债务 id 集合（DEC-056，行尾「账单转入」标记）。
  * @param onItemClick 行点击回调（跳详情/编辑态）。
  * @param onEditClick 长按菜单「编辑」回调（跳详情页编辑态）。
  * @param onDeleteClick 长按菜单「删除」/ 左滑「删除」回调（触发单条删除强确认）。
@@ -258,6 +260,7 @@ private fun NetBalanceHeader(
 @Composable
 private fun DebtDetailsList(
     details: List<Debt>,
+    linkedDebtIds: Set<String>,
     onItemClick: (Debt) -> Unit,
     onEditClick: (Debt) -> Unit,
     onDeleteClick: (Debt) -> Unit,
@@ -279,6 +282,7 @@ private fun DebtDetailsList(
             items(items = debts, key = { it.id }) { debt ->
                 DebtRow(
                     debt = debt,
+                    fromBill = debt.id in linkedDebtIds,
                     onClick = { onItemClick(debt) },
                     onEdit = { onEditClick(debt) },
                     onDelete = { onDeleteClick(debt) },
@@ -305,6 +309,7 @@ private fun DebtRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    fromBill: Boolean = false,
     expanded: Boolean = false,
     onExpand: () -> Unit = {},
 ) {
@@ -320,6 +325,7 @@ private fun DebtRow(
                 debt = debt,
                 onClick = onClick,
                 onLongClick = { showMenu = true },
+                fromBill = fromBill,
             )
         }
     }

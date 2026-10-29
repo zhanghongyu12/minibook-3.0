@@ -24,6 +24,13 @@ import kotlinx.serialization.Serializable
  *
  * 字段顺序：syncStatus 之后追加 4 新列，与 MIGRATION_1_2 的 ALTER 追加顺序一一对应
  * （列名比较不依赖物理顺序，但保持「fresh 建表 == 迁移后」的列序一致、便于审阅）。
+ *
+ * 账单转债务关联（DEC-056，DB version 5 迁移 [MIGRATION_4_5]）：
+ * - `debtId`：该账单已转成的债务 id（`debts.id`），NULL=未转。关联只记在**账单侧**，
+ *   单一事实来源——债务侧的「账单转入」标记由「存在 `debtId = 本债务 id` 的账单」反查得出，
+ *   删债务只需把该列清回 NULL，删账单则无需清理任何东西（关联随行消失）。
+ * - 统计口径：聚合 SQL 一律 `AND debtId IS NULL`，即已转债务的账单不进收支/分类/预算统计
+ *   （钱是借出/借入，不是消费）。
  */
 @Entity(
     tableName = "transactions",
@@ -51,4 +58,5 @@ data class TransactionEntity(
     val counterparty: String? = null,
     val paymentMethod: String? = null,
     @ColumnInfo(defaultValue = "'manual'") val source: String = "manual",
+    val debtId: String? = null,
 )

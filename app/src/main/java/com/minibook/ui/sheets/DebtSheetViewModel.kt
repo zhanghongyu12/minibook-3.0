@@ -106,6 +106,13 @@ class DebtSheetViewModel @Inject constructor(
     /** 编辑回填的原始债务：update/delete 复用其 id/ledgerId/createdAt 等只读字段。 */
     private var originalDebt: Debt? = null
 
+    /**
+     * 账单转债务（DEC-056）：来源账单 id。非空时 [save] 走
+     * `AddDebtUseCase(linkTransactionId = …)`，落债务与置位账单 `debtId` 同事务完成。
+     * 只在新增态生效；编辑/还款态恒为 null（不允许把已有债务改挂到账单上）。
+     */
+    private var linkedTransactionId: String? = null
+
     /** 查看回填的完整债务（详情页查看态展示全字段用；新增/还款/未回填为 null）。 */
     private val _detailDebt = MutableStateFlow<Debt?>(null)
     val detailDebt: StateFlow<Debt?> = _detailDebt.asStateFlow()
@@ -157,18 +164,29 @@ class DebtSheetViewModel @Inject constructor(
         _remark.value = remark
     }
 
-    /** 重置为新增态（Sheet 以 `debt=null` 打开时调用）。 */
-    fun initNew() {
+    /**
+     * 重置为新增态（Sheet 以 `debt=null` 打开时调用）；也可带账单转债务的预填（DEC-056）。
+     *
+     * @param prefillAmountFen 预填金额（分）；null=空，由用户填写（账单转入时传账单金额）。
+     * @param prefillDate 预填日期 `yyyy-MM-dd`；null=今天（账单转入时传账单日期）。
+     * @param sourceTransactionId 来源账单 id；非空=保存成功后把该账单标记为已转债务。
+     */
+    fun initNew(
+        prefillAmountFen: Long? = null,
+        prefillDate: String? = null,
+        sourceTransactionId: String? = null,
+    ) {
         originalDebt = null
         _detailDebt.value = null
         _isEditMode.value = false
         _editingId.value = null
         _partyName.value = ""
-        _amountFen.value = null
+        _amountFen.value = prefillAmountFen
         _kind.value = DebtKind.LEND
         _direction.value = DebtDirection.OWE_ME
-        _date.value = today()
+        _date.value = prefillDate ?: today()
         _remark.value = ""
+        linkedTransactionId = sourceTransactionId
     }
 
     /**
@@ -189,6 +207,7 @@ class DebtSheetViewModel @Inject constructor(
         _direction.value = direction
         _date.value = today()
         _remark.value = ""
+        linkedTransactionId = null
     }
 
     /**
@@ -213,6 +232,7 @@ class DebtSheetViewModel @Inject constructor(
             _direction.value = debt.direction
             _date.value = debt.date
             _remark.value = debt.remark.orEmpty()
+            linkedTransactionId = null
         }
     }
 
@@ -265,6 +285,8 @@ class DebtSheetViewModel @Inject constructor(
                         direction = _direction.value,
                         date = _date.value,
                         remark = remarkOrNull,
+                        // 账单转债务（DEC-056）：非空时同事务置位账单 debtId。
+                        linkTransactionId = linkedTransactionId,
                     )
                     _snackbar.value = "已记录"
                 }

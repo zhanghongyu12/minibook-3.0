@@ -1,11 +1,13 @@
 package com.minibook.domain.usecase.debt
 
+import com.minibook.data.datasource.TransactionRunner
 import com.minibook.domain.common.InvalidInput
 import com.minibook.domain.common.LedgerProvider
 import com.minibook.domain.model.Debt
 import com.minibook.domain.model.DebtDirection
 import com.minibook.domain.model.DebtKind
 import com.minibook.domain.repository.DebtRepository
+import com.minibook.domain.repository.TransactionRepository
 import com.minibook.util.TimeFormatter
 import com.minibook.util.Validators
 import java.util.UUID
@@ -29,10 +31,16 @@ import javax.inject.Inject
  *
  * 记入「当前账本」：经 [LedgerProvider] 取当前账本 ID（ARCHITECTURE §8.2 / §8.5），
  * 本类不感知 DataStore/Room（DEC-001）。`createdAt/updatedAt` 统一 [TimeFormatter.nowIso]。
+ *
+ * **账单转债务（DEC-056）**：可选 [linkTransactionId] 非空时，落债务与把该账单的 `debtId`
+ * 置为该债务 id **在同一事务内**完成——要么「有债务且账单已关联」，要么两件事都没发生，
+ * 不产生「账单显示已转债务但债务不存在」或「债务已建但账单仍在统计里」的半成品。
  */
 class AddDebtUseCase @Inject constructor(
     private val debtRepository: DebtRepository,
     private val ledgerProvider: LedgerProvider,
+    private val transactionRepository: TransactionRepository,
+    private val transactionRunner: TransactionRunner,
 ) {
 
     /**
@@ -44,8 +52,10 @@ class AddDebtUseCase @Inject constructor(
      * @param direction 方向（owe_me/i_owe）；与 [kind] 组成四态，全部合法。
      * @param date 发生日期 `yyyy-MM-dd`（DATABASE §9.5 口径）。
      * @param remark 备注（≤ 200 字符，可为空）。
+     * @param linkTransactionId 非空 = 账单转债务（DEC-056）：同一事务内把该账单的 `debtId`
+     *   置为本债务 id；账单已被删时整体回滚并抛 [InvalidInput]（不留孤儿债务）。
      * @return 落库债务 id（数据层 insert 生成 UUID）。
-     * @throws InvalidInput 姓名空 / 金额 ≤ 0 或超上限。
+     * @throws InvalidInput 姓名空 / 金额 ≤ 0 或超上限 / 关联的账单已不存在。
      * @throws com.minibook.domain.common.LedgerNotFound 当前账本未初始化（§8.5）。
      */
     suspend operator fun invoke(
@@ -55,6 +65,7 @@ class AddDebtUseCase @Inject constructor(
         direction: DebtDirection,
         date: String,
         remark: String? = null,
+        linkTransactionId: String? = null,
     ): String {
         // 录入校验（TASK-010 Validators，DATABASE §9.4）：姓名空 / 金额 ≤0 或超上限拒绝。
         if (!Validators.validatePartyName(partyName)) throw InvalidInput("对方姓名不能为空")
@@ -62,19 +73,25 @@ class AddDebtUseCase @Inject constructor(
         // 四态校验：kind/direction 强类型枚举取值恒合法，无非法组合（见类 KDoc 字典）。
         val ledgerId = ledgerProvider.currentLedgerId()
         val now = TimeFormatter.nowIso()
-        return debtRepository.insert(
-            Debt(
-                id = UUID.randomUUID().toString(), // 数据层 insert 重生成 UUID，此处占位
-                ledgerId = ledgerId,
-                partyName = partyName,
-                amount = amount,
-                kind = kind,
-                direction = direction,
-                date = date,
-                remark = remark,
-                createdAt = now,
-                updatedAt = now,
-            ),
+        val debt = Debt(
+            id = UUID.randomUUID().toString(), // 数据层 insert 重生成 UUID，此处占位
+            ledgerId = ledgerId,
+            partyName = partyName,
+            amount = amount,
+            kind = kind,
+            direction = direction,
+            date = date,
+            remark = remark,
+            createdAt = now,
+            updatedAt = now,
         )
+        return transactionRunner.runInTransaction {
+            val debtId = debtRepository.insert(debt)
+            if (linkTransactionId != null) {
+                val updated = transactionRepository.setDebtId(ledgerId, linkTransactionId, debtId)
+                if (updated == 0) throw InvalidInput("这笔账单已不存在，未建立关联")
+            }
+            debtId
+        }
     }
 }

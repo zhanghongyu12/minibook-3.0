@@ -831,3 +831,37 @@ release 包**禁止明文 HTTP**，且 `app/build.gradle.kts` 里 release 的 `S
 | 线上发号实测 | 部署后 push 1 条新变更 ⇒ `applied:1`、`server_seq_global` 2314→**2315**、`pull?since_seq=1157` 取回该条 |
 | 用户侧闭环 | 手机「导入备份 → 双向同步」后云端 `demo_user` = **若干账本 / 分类 / 交易 / 债务 / 日志**，与备份逐项吻合 |
 
+## 19. 协议再扩一列：`transaction.debtId`（账单转债务，DEC-056 / TASK-094，2026-10-28）
+
+### 19.1 为什么必须动服务端
+
+同步协议是「整行 JSON 当 payload」，服务端按 `entity_spec.ENTITY_SPECS` 的**白名单**校验：多一个未登记字段就 `422 invalid_payload`。所以客户端一旦可能发出 `debtId`（账单转成债务后非空），老服务端的 `push` 会整批失败；反过来若服务端不认这列，`pull` 回来的 payload 也不含它 ⇒ 关联被拉掉。因此服务端必须与客户端**同批**改，且**先上线服务端**。
+
+### 19.2 四处同步改（缺一即被测试拦）
+
+| 位置 | 改动 |
+|---|---|
+| `server/app/entity_spec.py` | `transaction` 白名单末尾加 `"debtId": _f(str, nullable=True, max_length=36)`（在 `source` 之后，保持与本地实体字段顺序一致） |
+| `server/app/models.py` | `Transaction.debt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)`，**不建外键**（跨账号/跨账本的行不该被 FK 约束绑死，且删账单不级联删债务） |
+| `server/app/services/entity_store.py` | `COLUMN_MAPS["transaction"]` 加 `"debtId": "debt_id"` |
+| `server/alembic/versions/0005_transaction_debt_link.py` | `upgrade`: `op.add_column("transactions", sa.Column("debt_id", sa.String(36), nullable=True))`；`downgrade`: `drop_column`。纯加列、可空、无回填 ⇒ 对线上 1157 行数据零风险 |
+
+锁死机制：客户端 `SyncPayloadContractTest`（解析 `entity_spec.py`，断言序列化键集逐字一致）与 `tests/test_typed_storage.py::test_column_maps_match_spec_and_models`（spec ↔ `COLUMN_MAPS` ↔ 模型列 三方一致，含 `max_length == 列长度`）。
+
+### 19.3 一个连带修复：`reassemble` 要容忍「该版本没有这一列」
+
+`alembic downgrade` 到 0001 时，0005 的 `downgrade` 已经把 `transactions.debt_id` 删掉，而 0002 的降级回填仍会用**当前** spec 把业务行拼回 `sync_records.payload` ⇒ `getattr(row, "debt_id")` 直接 `AttributeError`（`test_migration.py::test_downgrade_reassembles_payloads` 会红）。修法：`reassemble` 用 `getattr(row, col, _MISSING)`，缺失列补 `None` —— 语义上「该 schema 版本还没有这个字段」==「值为空」，于是 payload 的 key 集恒等于 spec 声明集，`shred` / `reassemble` 在任一版本上都保持可逆。列映射写错这类问题仍由 `test_column_maps_match_spec_and_models` 静态锁死，不靠这里兜。
+
+对应测试夹具（`tests/conftest.py::transaction_payload`、`tests/test_migration.py::TX_PAYLOAD`）同步补 `"debtId": None` —— 它们代表「完整 payload」，不补就会让「逐字拼回」断言失真。
+
+### 19.4 部署顺序（硬要求）
+
+1. 服务器：`cd /opt/docker/minibook-api && docker compose build && docker compose up -d`（代码进镜像，镜像只读根文件系统 ⇒ 必须重建）；
+2. 容器内执行 `alembic upgrade head`（到 `0005_transaction_debt_link`）—— 只加一列，可在线做；
+3. 再发新版客户端（带 `debtId` 的 push 才安全）；
+4. 回滚：`alembic downgrade 0004_user_profile_fields`（丢 `debtId` 列，本地保留，下轮重推会被 LWW 收敛）+ 换回旧镜像标签。
+
+**执行结果（2026-10-28 已完成）**：镜像重建 `sha256:97efae6b…`（回滚标签 `minibook-api:pre-debt-20261028` = `0e773b7f…`）→ 容器 `Up (healthy)` → 容器内 `alembic upgrade head` 输出 `Running upgrade 0004_user_profile_fields -> 0005_transaction_debt_link` → `alembic current` = `0005_transaction_debt_link (head)`；`information_schema.COLUMNS` 确认 `minibook.transactions.debt_id = varchar(36) YES`；`transactions` 行数仍 **2261**（纯加列、无数据变更）；外网 `/healthz` **200**；容器内对腾讯云 `minibook_test` 跑全套 **78 例 / 0 失败**（含带 `debtId` 的 push/pull 往返）。**客户端侧**：`SyncPayloadContractTest` 通过即客户端键集 == 新白名单，故新客户端可云同步。
+
+**遗留（与本轮无关、未擅自动）**：MySQL 容器 `mysql` 的 Docker 健康检查长期超时（`mysqladmin ping -h 127.0.0.1 -P 49779`，`exit=-1`，容器 2026-10-10 起 `restarts=0`），而它的读写、pytest 与 API 全部正常；`minibook-api` 的 `depends_on` 早已满足，不影响发版。
+

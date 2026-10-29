@@ -77,6 +77,9 @@ import kotlin.math.abs
  * @param prefillParty 还款预填对方姓名（非空 = 直接进还款态）。
  * @param prefillDirection 还款预填方向（非空时与 prefillParty 配套）。
  * @param initialEdit 初始是否直接进编辑态（列表长按「编辑」经 `?edit=1` 传入）；仅 [debtId] 非空时生效。
+ * @param prefillAmountFen 账单转债务预填金额（分，DEC-056）；null=空由用户填。
+ * @param prefillDate 账单转债务预填日期（`yyyy-MM-dd`）；null=今天。
+ * @param sourceTransactionId 来源账单 id（DEC-056）；非空=保存成功后把该账单标记为已转债务。
  * @param onBack 返回回调（NavHost 接线传入 `rootController.popBackStack()`）。
  * @param viewModel 复用债务 VM；默认经 Hilt 注入（作用域为当前 nav backStack entry）。
  */
@@ -88,6 +91,9 @@ fun DebtDetailScreen(
     prefillDirection: DebtDirection?,
     onBack: () -> Unit,
     initialEdit: Boolean = false,
+    prefillAmountFen: Long? = null,
+    prefillDate: String? = null,
+    sourceTransactionId: String? = null,
     viewModel: DebtSheetViewModel = hiltViewModel(),
 ) {
     val partyName by viewModel.partyName.collectAsStateWithLifecycle()
@@ -111,13 +117,18 @@ fun DebtDetailScreen(
     var repaying by remember(debtId, prefillParty) { mutableStateOf(false) }
 
     // 打开时初始化：编辑回填（含 detailDebt） / 还款预填 / 新增重置；长按编辑入口直接进编辑态。
-    LaunchedEffect(debtId, prefillParty, prefillDirection) {
+    LaunchedEffect(debtId, prefillParty, prefillDirection, sourceTransactionId) {
         editing = initialEdit && debtId != null
         repaying = false
         when {
             debtId != null -> viewModel.initEdit(debtId)
             prefillParty != null -> viewModel.initRepay(prefillParty, prefillDirection ?: DebtDirection.OWE_ME)
-            else -> viewModel.initNew()
+            // 账单转债务（DEC-056）：金额/日期带入，其余留空由用户填写；保存后才建债务并关联。
+            else -> viewModel.initNew(
+                prefillAmountFen = prefillAmountFen,
+                prefillDate = prefillDate,
+                sourceTransactionId = sourceTransactionId,
+            )
         }
     }
 
@@ -142,6 +153,7 @@ fun DebtDetailScreen(
         amount > abs(partyNetFen ?: 0L)
 
     val title = when {
+        isNew && sourceTransactionId != null -> "转为债务"
         isNew -> "记一笔债务"
         isPrefillRepay || repaying -> if (direction == DebtDirection.OWE_ME) "收到还款" else "我还款"
         editing -> "编辑债务"
@@ -162,6 +174,15 @@ fun DebtDetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             val viewDebt = detailDebt
+            // 账单转债务说明（DEC-056）：讲清「带入了什么」「保存后发生什么」，避免误以为已保存。
+            if (isNew && sourceTransactionId != null) {
+                Text(
+                    text = "来自账单：金额与日期已带入，其余请手动填写。" +
+                        "保存后这条账单会标记为「已转债务」，并不再计入收支统计。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             when {
                 isNew || editing -> DebtForm(
                     partyName = partyName,

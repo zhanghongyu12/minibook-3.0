@@ -80,6 +80,8 @@ ENTITY_SPECS: dict[str, dict[str, FieldSpec]] = {
         "counterparty": _f(str, nullable=True, max_length=128),
         "paymentMethod": _f(str, nullable=True, max_length=64),
         "source": _f(str, max_length=16),
+        # 账单转债务关联（DEC-056）：该账单已转成的债务 id；NULL=未转。
+        "debtId": _f(str, nullable=True, max_length=36),
     },
     "debt": {
         "id": _f(str, max_length=64),

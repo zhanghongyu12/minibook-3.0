@@ -21,6 +21,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.minibook.domain.model.DebtDirection
+import com.minibook.domain.model.Transaction
 import com.minibook.ui.categories.CategoriesScreen
 import com.minibook.ui.components.MiniBookIcons
 import com.minibook.ui.debts.DebtsScreen
@@ -75,6 +76,8 @@ private val mainTabs = listOf(
  *   party/direction）；MiniBookNavHost 接线传入，分发到 Debts Tab 入口。
  * @param onOpenDebtEdit 债务详情页「编辑态」导航回调（根图跳转到 `debt-detail?edit=1`，列表
  *   长按菜单「编辑」用）；分发到 Debts Tab。
+ * @param onConvertToDebt 账单转债务导航回调（DEC-056）：参数为被长按的账单，根图跳转到
+ *   `debt-detail?amount=&date=&fromTx=` 并带入金额/日期；分发到 Transactions Tab。
  */
 @Composable
 fun MainScreen(
@@ -82,6 +85,7 @@ fun MainScreen(
     onOpenTransactionEdit: (String) -> Unit = {},
     onOpenDebt: (String?, String?, DebtDirection?) -> Unit = { _, _, _ -> },
     onOpenDebtEdit: (String) -> Unit = {},
+    onConvertToDebt: (Transaction) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -148,6 +152,7 @@ fun MainScreen(
                 TransactionsScreen(
                     onOpenTransaction = onOpenTransaction,
                     onOpenTransactionEdit = onOpenTransactionEdit,
+                    onConvertToDebt = onConvertToDebt,
                 )
             }
             composable(Destination.Debts.route) {

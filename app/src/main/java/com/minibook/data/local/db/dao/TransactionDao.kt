@@ -125,6 +125,8 @@ interface TransactionDao {
     /**
      * 月结余：命中 `(ledgerId, date)` 复合索引的 BETWEEN 范围查询。
      * 结果映射 [SummaryRow]，balance 由 domain 层聚合（income - expense）。
+     *
+     * **统计口径（DEC-056）**：`debtId IS NULL` —— 已转债务的账单不计入收支统计。
      */
     @Query(
         """
@@ -133,6 +135,7 @@ interface TransactionDao {
           COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END), 0) AS incomeFen
         FROM transactions
         WHERE ledgerId=:ledgerId AND date BETWEEN :monthStart AND :monthEnd
+          AND debtId IS NULL
         """,
     )
     suspend fun monthSummary(ledgerId: String, monthStart: String, monthEnd: String): SummaryRow
@@ -141,6 +144,7 @@ interface TransactionDao {
      * 报表·月度收支趋势：按天桶（bucket=date），命中 `(ledgerId, date)` 区间索引。
      * 对齐 DATABASE §10.3；`start/end` 为当月首/末日（`yyyy-MM-dd`）。
      * `expenseFen`/`incomeFen` 均 COALESCE 兜 0（无数据桶不出现，由 GROUP BY 决定）。
+     * 统计口径同 [monthSummary]：已转债务的账单不计入（DEC-056）。
      */
     @Query(
         """
@@ -149,6 +153,7 @@ interface TransactionDao {
                COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END), 0) AS incomeFen
         FROM transactions
         WHERE ledgerId=:ledgerId AND date BETWEEN :start AND :end
+          AND debtId IS NULL
         GROUP BY date
         ORDER BY bucket ASC
         """,
@@ -158,6 +163,7 @@ interface TransactionDao {
     /**
      * 报表·年度收支趋势：按月桶（substr(date,1,7)，与 month 'yyyy-MM' 口径一致，§9.5）。
      * 命中 `(ledgerId, date)` 区间索引；`start/end` 为当年首/末日。
+     * 统计口径同 [monthSummary]：已转债务的账单不计入（DEC-056）。
      */
     @Query(
         """
@@ -166,6 +172,7 @@ interface TransactionDao {
                COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END), 0) AS incomeFen
         FROM transactions
         WHERE ledgerId=:ledgerId AND date BETWEEN :start AND :end
+          AND debtId IS NULL
         GROUP BY substr(date,1,7)
         ORDER BY bucket ASC
         """,
@@ -176,6 +183,8 @@ interface TransactionDao {
      * 报表·分类占比 / 预算「已用」：按 type + categoryId 分组金额合计（`totalFen` Long 分）。
      * 命中 `(ledgerId, date)` 范围扫描；结果分组走 `(ledgerId, categoryId)`（DATABASE §10.3/§10.5）。
      * [type] 为存储值（'expense'/'income'），收入/支出分开聚合，不在 SQL 内 JOIN 分类表。
+     * 统计口径同 [monthSummary]：已转债务的账单不计入（DEC-056）——预算「已用」也随之排除
+     * （借出去的钱不是消费，不该占预算）。
      */
     @Query(
         """
@@ -183,11 +192,38 @@ interface TransactionDao {
                COALESCE(SUM(amount), 0) AS totalFen
         FROM transactions
         WHERE ledgerId=:ledgerId AND type=:type AND date BETWEEN :start AND :end
+          AND debtId IS NULL
         GROUP BY categoryId
         ORDER BY totalFen DESC
         """,
     )
     fun observeCategoryAgg(ledgerId: String, type: String, start: String, end: String): Flow<List<CategoryAggRow>>
+
+    /**
+     * 把一条账单标记为「已转债务」（DEC-056）：`debtId` 置为目标债务 id。
+     *
+     * 只改 `debtId` 与 `updatedAt`，其余字段不动（金额/日期/分类仍是原账单的）。
+     * 返回受影响行数（0=账单已被删，由调用方决定是否回滚整个转换）。
+     */
+    @Query("UPDATE transactions SET debtId=:debtId, updatedAt=:updatedAt WHERE id=:id AND ledgerId=:ledgerId")
+    suspend fun setDebtId(id: String, ledgerId: String, debtId: String, updatedAt: String): Int
+
+    /**
+     * 债务被删后解除关联（DEC-056）：把 `debtId = :debtId` 的账单清回 NULL，
+     * 统计随即把该账单重新计入（用户要求的「删债务 → 账单恢复统计」）。
+     *
+     * 返回受影响行数（正常为 0 或 1）。
+     */
+    @Query("UPDATE transactions SET debtId=NULL, updatedAt=:updatedAt WHERE debtId=:debtId AND ledgerId=:ledgerId")
+    suspend fun clearDebtIdByDebt(debtId: String, ledgerId: String, updatedAt: String): Int
+
+    /**
+     * 账本内「已转债务」的债务 id 集合（供债务列表打「账单转入」标记，DEC-056）。
+     *
+     * 只取 id 列、不取整行：债务行本身不含来源信息，标记是**反查**出来的。
+     */
+    @Query("SELECT debtId FROM transactions WHERE ledgerId=:ledgerId AND debtId IS NOT NULL")
+    fun observeLinkedDebtIds(ledgerId: String): Flow<List<String>>
 
     /** 分类删除前关联检查（命中 `(ledgerId, categoryId)` 索引）。 */
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryId=:categoryId AND ledgerId=:ledgerId")

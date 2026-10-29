@@ -8,6 +8,7 @@ import com.minibook.domain.model.DebtFilter
 import com.minibook.domain.usecase.debt.DeleteDebtUseCase
 import com.minibook.domain.usecase.debt.NetByPartyUseCase
 import com.minibook.domain.usecase.debt.ObserveDebtsUseCase
+import com.minibook.domain.usecase.debt.ObserveLinkedDebtIdsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -45,6 +47,7 @@ class DebtsViewModel @Inject constructor(
     private val observeDebts: ObserveDebtsUseCase,
     private val netByParty: NetByPartyUseCase,
     private val deleteDebtUseCase: DeleteDebtUseCase,
+    private val observeLinkedDebtIds: ObserveLinkedDebtIdsUseCase,
 ) : ViewModel() {
 
     /** 当前页签：0=明细，1=按对象（初值明细）。 */
@@ -68,15 +71,18 @@ class DebtsViewModel @Inject constructor(
      */
     val uiState: StateFlow<DebtsUiState> = refreshTick
         .flatMapLatest {
-            observeDebts.observe(DebtFilter())
-                .map { details -> details to safeNetByParty() }
+            // 明细 + 「由账单转入」的债务 id 集合（DEC-056，反查账单侧关联）并行订阅。
+            combine(
+                observeDebts.observe(DebtFilter()),
+                observeLinkedDebtIds.observe(),
+            ) { details, linkedIds -> Triple(details, linkedIds, safeNetByParty()) }
         }
-        .map { (details, byParty) ->
+        .map { (details, linkedIds, byParty) ->
             val totalNet = byParty.values.sum()
             if (details.isEmpty() && byParty.isEmpty()) {
                 DebtsUiState.Empty
             } else {
-                DebtsUiState.Success(details, byParty, totalNet)
+                DebtsUiState.Success(details, byParty, totalNet, linkedIds)
             }
         }
         .catch { e ->
@@ -158,6 +164,7 @@ class DebtsViewModel @Inject constructor(
  * @property details 明细扁平列表（账本内按时间倒序，按日期分组在 UI 层完成）。
  * @property byParty 按对方姓名净额映射（正值=对方欠我，负值=我欠对方，0=两清）。
  * @property totalNet 全部对象净额合计（`byParty.values.sum()`，VM 计算）。
+ * @property linkedDebtIds 由账单转入的债务 id 集合（DEC-056；UI 据此打「账单转入」标记）。
  */
 sealed interface DebtsUiState {
 
@@ -170,10 +177,11 @@ sealed interface DebtsUiState {
     /** 错误态：观察流收集异常（如账本未初始化 / 数据库异常），展示文案 + 重试。 */
     data class Error(val message: String) : DebtsUiState
 
-    /** 非空债务数据：明细 + 按对象净额 + 净额合计。 */
+    /** 非空债务数据：明细 + 按对象净额 + 净额合计 + 由账单转入的债务 id 集合。 */
     data class Success(
         val details: List<Debt>,
         val byParty: Map<String, Long>,
         val totalNet: Long,
+        val linkedDebtIds: Set<String> = emptySet(),
     ) : DebtsUiState
 }

@@ -79,6 +79,11 @@ class ImportBillUseCaseTest {
         override suspend fun monthlySummary(ledgerId: String, month: YearMonth): MonthSummary = throw NotImplementedError()
         override suspend fun getById(id: String): Transaction? = throw NotImplementedError()
         override suspend fun countTransactionsByCategory(categoryId: String): Int = throw NotImplementedError()
+
+        // 账单转债务关联（DEC-056）：导入用例不触达，暴露即漏测。
+        override suspend fun setDebtId(ledgerId: String, id: String, debtId: String): Int = throw NotImplementedError()
+        override suspend fun clearDebtIdByDebt(ledgerId: String, debtId: String): Int = throw NotImplementedError()
+        override fun observeLinkedDebtIds(ledgerId: String): Flow<Set<String>> = throw NotImplementedError()
     }
 
     private class FakeCategoryDataSource : CategoryDataSource {

@@ -991,3 +991,16 @@
 - 影响：`server/app/services/sync_service.py`（`_bump` / `_seed_counter` / `next_seq`）、`server/app/models.py`（`SyncCounter` 注释）、新增 `server/tests/test_counter_selfheal.py`、`docs/14_cloud_sync.md §18`、`server/README.md`。
 - **已知代价（诚实挂账）**：① 自愈只在**缺行**时生效，若计数器值被人工改小仍会撞 `sync_log` 主键（自愈不校验语义）；② `shard` 列仍是无用预留（恒 0）；③ 报错文案从「请先执行 alembic upgrade head」改为「补种失败」，旧文档若引用该字符串需注意。
 - 验证：新增 2 例回归测试（注入缺陷版 ⇒ 两条均红）；双 DSN 各 **78 例 / 0 失败**；部署后线上发号实测 `server_seq_global` 2314→2315；用户手机导入备份后同步成功（云端 `demo_user` 行数与备份逐项吻合）。
+
+## DEC-056: 账单 ⇄ 债务关联只记在账单侧 —— 「转为债务」+ 统计让位 + 删债务即恢复（2026-10-28）
+
+- 背景：用户要求「账单长按 → 弹出框加『转为债务』→ 跳到记一笔债务页，账单金额和日期带入，其余手动填写、**不自动保存**；保存后把这条债务和账单关联起来；**账单统计里不统计这条账单**；债务里删掉这条数据后统计要重新统计账单；账单上打一个**绿色**标记『已转债务』、债务条目上标记『账单转入』」。
+- **决策一（关联只存账单侧）**：只加 `transactions.debtId`（可空，指向 `debts.id`），债务表**不加** `sourceTransactionId`。理由：① 统计排除退化为四处聚合 SQL 各加一个 `AND debtId IS NULL`；若关联放债务侧，每个聚合都得 `NOT IN (SELECT … WHERE sourceTransactionId IS NOT NULL)` 或 JOIN 债务表，成本高且易漏；② 账单绿标是本地列直读，列表渲染零额外查询；③ 删账单无需清理（标记随行消失），删债务只需一条 `UPDATE transactions SET debtId=NULL, updatedAt=? WHERE debtId=:id AND ledgerId=:ledgerId`；④ 单一事实来源，不存两份冗余（DEC-037 同款取向）。
+- **决策二（债务侧标记为派生）**：「账单转入」由 `SELECT debtId FROM transactions WHERE ledgerId=? AND debtId IS NOT NULL` 反查成 `Flow<List<String>>`（`ObserveLinkedDebtIdsUseCase` 按 `currentLedgerId.flatMapLatest` 包一层），`DebtsViewModel` 与债务列表 `combine` 后判定。债务行本身**不含**来源字段 —— 想「编辑债务时改挂到别的账单」这种需求本轮明确不做。
+- **决策三（统计范围）**：排除 `monthSummary` / `observeDailyTrend` / `observeMonthlyTrend` / `observeCategoryAgg` 四处（后者同时喂预算「已用」与分类占比 —— 借出去的钱不是消费，不该占预算）。交易**列表**不排除，否则看不到「已转债务」绿标。搜索/导出不受影响（它们读明细，不读聚合）。
+- **决策四（原子性）**：`AddDebtUseCase(linkTransactionId=…)` 用 `TransactionRunner` 把「落债务 + 置位 `debtId`」包进同一事务：`setDebtId` 影响 0 行（账单已删）即抛 `InvalidInput` 整体回滚，不留「债务已建但账单仍计入统计」的半成品。`DeleteDebtUseCase` 同样把「删债务 + 清关联」包进同一事务 —— 否则中途失败会留下「已转债务但债务不存在」的幽灵账单（永远不进统计、用户也无法恢复）。
+- 被否决的替代方案：关联存债务侧（聚合全要反查/子查询）；两边都存（双事实来源，删改要同步两处，必然漂移）；独立关联表（同步协议多一个实体类型 + 迁移 + 冲突合并，而一条账单只对应一条债务，收益为负）。
+- **已知语义（写进 KDoc 并对用户说明）**：① 转换**不改**账单金额/日期/分类，之后编辑账单也不回写债务（两者独立记账）；② 删掉已转债务的账单：债务保留成普通债务、「账单转入」标记自动消失（不拦阻、不级联删除）；③ 一条账单只对应一条债务（已转的账单菜单项置灰为「已转债务」）；④ 统计口径按「当月」聚合，故转换发生在哪个月就影响哪个月的报表，历史月份不受追溯改动。
+- 同步：`debtId` 必须四处同步改（`entity_spec.py` 白名单 + `models.Transaction.debt_id` `String(36)` 可空 + `COLUMN_MAPS` + 迁移 `0005_transaction_debt_link`），`SyncPayloadContractTest`（客户端实体键集 == 服务端白名单）与 `test_column_maps_match_spec_and_models`（spec == COLUMN_MAPS == 列）双向钉死。**服务端必须先升级**：老服务端遇到带 `debtId` 的 push 会按未知字段 422，直接打断同步。
+- 影响：客户端 24 个文件（实体/模型/mapper/DAO/DataSource/Repository/2 个 UseCase + 新增 1 个/UI 5 处/导航 3 处/备份 DTO）；服务端 5 个文件（含 `reassemble` 容忍「降级后该列已不存在」⇒ 补 null）；Room v4→v5；新增 2 份 instrumented 测试。
+- 验证：客户端 JVM **580 例 / 0 失败 / 1 跳过**（新增 `BillToDebtLinkUseCaseTest` 8 例；`SyncPayloadContractTest` 通过即证明客户端键集与服务端白名单一致）；服务端 pytest SQLite **78 例 / 0 失败** + 容器内腾讯云 MySQL **78 例 / 0 失败**；Room `5.json` 相对 `4.json` 只多 1 个可空列；instrumented **7 例已在 Pixel_7（API 35）全绿**；设备端 **9 步逐条验收通过**（含「统计让位 → 删债务恢复」与「返回不落库」两条关键语义）；服务端已部署到 `0005`（详见 `09_test_report.md` 顶部章节、`14_cloud_sync.md §19`）。

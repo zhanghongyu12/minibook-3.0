@@ -59,6 +59,9 @@ TX_PAYLOAD = {
     "counterparty": None,
     "paymentMethod": None,
     "source": "manual",
+    # 账单转债务关联（DEC-056）：v1 payload 无此键，但「拆列→拼回」必须补回完整 key 集
+    # （降级到 0001 时 `transactions.debt_id` 已被 0005 的 downgrade 删除 ⇒ 视为 None）。
+    "debtId": None,
 }
 
 

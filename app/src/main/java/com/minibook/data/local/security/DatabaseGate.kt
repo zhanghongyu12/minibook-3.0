@@ -76,6 +76,7 @@ class DatabaseGate(
                         MiniBookDatabase.MIGRATION_1_2, // F-12：version 1→2 加列 + 唯一索引（DEC-018）
                         MiniBookDatabase.MIGRATION_2_3, // F-12：version 2→3 新增 user_category_rules 表（分类自学习）
                         MiniBookDatabase.MIGRATION_3_4, // F-15：version 3→4 新增 sync_state / sync_conflicts（DEC-033）
+                        MiniBookDatabase.MIGRATION_4_5, // DEC-056：version 4→5 transactions 加 debtId（账单转债务）
                     )
                     .build()
                 // 触发真实打开：SQLCipher 先以 key 解密，随后 Room 在同一上下文执行

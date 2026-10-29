@@ -116,10 +116,41 @@ class FakeTransactionRepository : TransactionRepository {
         throw NotImplementedError()
     override suspend fun insertBatch(txs: List<Transaction>): Int = throw NotImplementedError()
     override suspend fun getExistingExternalIds(ledgerId: String): Set<String> = throw NotImplementedError()
+
+    // ---- 账单转债务关联（DEC-056）：在内存 map 上真改，供 UseCase 单测断言 ----
+
+    var lastSetDebtId: Triple<String, String, String>? = null
+    var lastClearedDebtId: Pair<String, String>? = null
+
+    override suspend fun setDebtId(ledgerId: String, id: String, debtId: String): Int {
+        lastSetDebtId = Triple(ledgerId, id, debtId)
+        val tx = transactionsById[id] ?: return 0
+        transactionsById = transactionsById + (id to tx.copy(debtId = debtId))
+        return 1
+    }
+
+    override suspend fun clearDebtIdByDebt(ledgerId: String, debtId: String): Int {
+        lastClearedDebtId = ledgerId to debtId
+        val hit = transactionsById.filterValues { it.ledgerId == ledgerId && it.debtId == debtId }
+        if (hit.isEmpty()) return 0
+        transactionsById = transactionsById + hit.mapValues { (_, tx) -> tx.copy(debtId = null) }
+        return hit.size
+    }
+
+    override fun observeLinkedDebtIds(ledgerId: String): Flow<Set<String>> = flowOf(
+        transactionsById.values
+            .filter { it.ledgerId == ledgerId }
+            .mapNotNull { it.debtId }
+            .toSet(),
+    )
 }
 
 /**
  * Fake [DebtRepository]：记录最后一次 `observeByLedger` 入参，返回可配置债务列表。
+ *
+ * 写路径（insert/deleteById）在内存里假实现，供 AddDebt/DeleteDebt 系列 UseCase 单测断言
+ * 「落库了什么、删了哪条」（DEC-056 账单转债务）。[insertResultId] 非空时 insert 返回它，
+ * 便于把「债务 id」这个随机 UUID 固定下来。
  */
 class FakeDebtRepository : DebtRepository {
 
@@ -127,15 +158,25 @@ class FakeDebtRepository : DebtRepository {
     var lastObservedLedgerId: String? = null
     var lastFilter: DebtFilter? = null
 
+    // ==== 写路径记录 ====
+    val insertedDebts: MutableList<Debt> = mutableListOf()
+    val deletedIds: MutableList<String> = mutableListOf()
+    var insertResultId: String? = null
+
     override fun observeByLedger(ledgerId: String, filter: DebtFilter): Flow<List<Debt>> {
         lastObservedLedgerId = ledgerId
         lastFilter = filter
         return flowOf(debts)
     }
 
-    override suspend fun insert(debt: Debt): String = throw NotImplementedError()
+    override suspend fun insert(debt: Debt): String {
+        insertedDebts += debt
+        return insertResultId ?: debt.id
+    }
     override suspend fun update(debt: Debt) = throw NotImplementedError()
-    override suspend fun deleteById(id: String) = throw NotImplementedError()
+    override suspend fun deleteById(id: String) {
+        deletedIds += id
+    }
     override suspend fun deleteByLedger(ledgerId: String) = throw NotImplementedError()
     override suspend fun netByParty(ledgerId: String): Map<String, Long> = throw NotImplementedError()
 }

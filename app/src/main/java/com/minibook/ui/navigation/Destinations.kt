@@ -114,14 +114,22 @@ sealed class Destination(val route: String) {
 
     /** 债务详情全屏页（P-08/P-09）：新增/查看/编辑/还款四态合一，替代旧 ModalBottomSheet。
      *  查询参数：`id`（债务 id，null=新增/还款预填）、`party`（还款预填对方，URL 编码）、
-     *  `direction`（还款预填方向，枚举 name 序列化）、`edit`（1=直接进编辑态）；四者均可选。 */
-    data object DebtDetail : Destination("debt-detail?id={id}&party={party}&direction={direction}&edit={edit}") {
+     *  `direction`（还款预填方向，枚举 name 序列化）、`edit`（1=直接进编辑态）；
+     *  账单转债务（DEC-056）另带 `amount`（预填金额，分）、`date`（预填日期 yyyy-MM-dd）、
+     *  `fromTx`（来源账单 id，保存成功后回写该账单的 debtId）。全部可选。 */
+    data object DebtDetail : Destination(
+        "debt-detail?id={id}&party={party}&direction={direction}&edit={edit}" +
+            "&amount={amount}&date={date}&fromTx={fromTx}",
+    ) {
         /** 构造带可选参数的导航 route：无参返回 base route（新增态）。 */
         fun createRoute(
             debtId: String? = null,
             partyName: String? = null,
             direction: DebtDirection? = null,
             edit: Boolean = false,
+            amountFen: Long? = null,
+            date: String? = null,
+            fromTransactionId: String? = null,
         ): String {
             val base = route.substringBefore('?')
             val params = buildList {
@@ -129,6 +137,9 @@ sealed class Destination(val route: String) {
                 partyName?.let { add("party=${Uri.encode(it)}") }
                 direction?.let { add("direction=${it.name}") }
                 if (edit) add("edit=1")
+                amountFen?.let { add("amount=$it") }
+                date?.let { add("date=${Uri.encode(it)}") }
+                fromTransactionId?.let { add("fromTx=${Uri.encode(it)}") }
             }
             return if (params.isEmpty()) base else "$base?${params.joinToString("&")}"
         }

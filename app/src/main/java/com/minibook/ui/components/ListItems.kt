@@ -97,6 +97,11 @@ fun TransactionListItem(
                     Spacer(Modifier.width(6.dp))
                     SourceBadge(source = tx.source)
                 }
+                // 「已转债务」绿色标记（DEC-056）：该账单已转为债务、不再计入统计。
+                if (tx.debtId != null) {
+                    Spacer(Modifier.width(6.dp))
+                    LinkedBadge(label = "已转债务")
+                }
             }
             // 副文本 0~2 行：先交易对方、后退为描述（§9.3.1；均 isNotBlank 才渲染）。
             tx.counterparty?.takeIf { it.isNotBlank() }?.let { counterparty ->
@@ -210,6 +215,7 @@ fun DebtDetailRow(
     modifier: Modifier = Modifier,
     kindLabel: (Debt) -> String = { standardKindLabel(it) },
     onLongClick: (() -> Unit)? = null,
+    fromBill: Boolean = false,
 ) {
     val (fen, semantic) = netContribution(debt)
     val clickModifier = if (onLongClick != null) {
@@ -239,7 +245,20 @@ fun DebtDetailRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(debt.partyName, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    debt.partyName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // 「账单转入」标记（DEC-056）：这条债务是由某笔账单转来的。
+                if (fromBill) {
+                    Spacer(Modifier.width(6.dp))
+                    LinkedBadge(label = "账单转入")
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 TimeFormatter.formatDate(debt.date),
@@ -292,3 +311,26 @@ private fun parseCategoryHex(colorHex: String?, fallback: Color): Color =
     } else {
         runCatching { Color(AndroidColor.parseColor(colorHex)) }.getOrDefault(fallback)
     }
+
+/**
+ * 账单 ⇄ 债务关联标记徽标（DEC-056）：账单侧「已转债务」、债务侧「账单转入」共用。
+ *
+ * 统一用**收入语义绿**（`LocalSemanticColors.income`，12% alpha 底 + 实色字）：绿色在这里
+ * 表达「这笔钱已按借/还处理、不再计入消费统计」，与 [SourceBadge] 的中性底色明确区分，
+ * 也不会跟支出的红色金额抢注意力。
+ */
+@Composable
+private fun LinkedBadge(label: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(semanticContainerColor(MoneySemantic.INCOME))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = semanticContentColor(MoneySemantic.INCOME),
+        )
+    }
+}

@@ -23,6 +23,9 @@ from typing import Any
 from ..entity_spec import ENTITY_SPECS, PayloadError
 from ..models import Budget, Category, Debt, Ledger, Transaction, UserCategoryRule
 
+#: `getattr` 哨兵：区分「属性值为 None」与「该版本的表根本没有这一列」（见 `reassemble`）。
+_MISSING: Any = object()
+
 #: entity_type → ORM 模型
 TYPED_MODELS: dict[str, type[Any]] = {
     "ledger": Ledger,
@@ -70,6 +73,7 @@ COLUMN_MAPS: dict[str, dict[str, str]] = {
         "counterparty": "counterparty",
         "paymentMethod": "payment_method",
         "source": "source",
+        "debtId": "debt_id",
         "createdAt": "created_at_raw",
     },
     "debt": {
@@ -123,6 +127,13 @@ def reassemble(entity_type: str, row: Any) -> dict[str, Any]:
 
     顺序固定为 `ENTITY_SPECS` 的声明顺序 —— 与本地实体构造顺序一致，便于人工比对。
     `bool` 列显式转 `bool`：SQLite 存 0/1，回 JSON 必须是 true/false（客户端是 Boolean 列）。
+
+    **列缺失时补 None**（`_MISSING` 分支）：本函数有两个调用方——同步下行组装 payload，
+    以及 0002 降级回填 `sync_records`（`alembic downgrade`）。后者会先执行更高版本的
+    downgrade（例如 0005 把 `transactions.debt_id` 删掉），此时行对象上已没有该列属性。
+    语义上「该 schema 版本还没有这个字段」==「值为空」，故补 None 而不是抛错；这样
+    payload 的 key 集恒等于 spec 声明集，shred/reassemble 在任一版本上都保持可逆。
+    （列映射写错这类问题由 `test_column_maps_match_spec_and_models` 静态锁死，不靠这里兜。）
     """
     spec = ENTITY_SPECS[entity_type]
     mapping = COLUMN_MAPS[entity_type]
@@ -131,7 +142,10 @@ def reassemble(entity_type: str, row: Any) -> dict[str, Any]:
         if key in ENVELOPE_KEY_TO_COLUMN:
             payload[key] = getattr(row, ENVELOPE_KEY_TO_COLUMN[key])
             continue
-        value = getattr(row, mapping[key])
+        value = getattr(row, mapping[key], _MISSING)
+        if value is _MISSING:
+            payload[key] = None
+            continue
         if spec[key].type is bool and value is not None:
             value = bool(value)
         payload[key] = value

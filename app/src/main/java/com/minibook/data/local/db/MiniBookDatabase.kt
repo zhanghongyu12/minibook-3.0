@@ -26,8 +26,10 @@ import com.minibook.data.local.db.entity.TransactionEntity
 import com.minibook.data.local.db.entity.UserCategoryRuleEntity
 
 /**
- * MiniBook 房间数据库（version=4），对齐 DATABASE §2/§4/§7。
+ * MiniBook 房间数据库（version=5），对齐 DATABASE §2/§4/§7。
  *
+ * - version = 5：账单转债务关联（DEC-056）——`transactions` 加可空列 `debtId`，显式
+ *   [MIGRATION_4_5] 落地；统计口径改由聚合 SQL 的 `debtId IS NULL` 承担（见实体注释）。
  * - version = 4：F-15 云端同步（DEC-033）**只加两张新表**（`sync_state` / `sync_conflicts`），
  *   **既有 6 张业务表零改动**（含 `sync_changes`，本轮不接墓碑写入——墓碑改由
  *   `sync_state` 差分补发，见 DEC-035 与 `SyncStateEntity` 注释）。显式 [MIGRATION_3_4] 落地。
@@ -41,7 +43,7 @@ import com.minibook.data.local.db.entity.UserCategoryRuleEntity
  * - 注册 [Converter]（Boolean↔Int，§9.6）；枚举/日期以 String 列存，无需额外转码。
  *
  * **迁移策略（§7.3，显式禁止破坏迁移）**：本库构建时必须搭配
- * `.fallbackToDestructiveMigration(false)` 且 `.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)`，
+ * `.fallbackToDestructiveMigration(false)` 且 `.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)`，
  * 即任何版本升级都不允许整库重建丢弃数据。该 builder 调用在
  * [com.minibook.data.local.security.DatabaseGate.open]（TASK-004，SQLCipher 接线）落地；
  * 此处声明迁移常量，确保实现不越权关闭该保护。
@@ -58,7 +60,7 @@ import com.minibook.data.local.db.entity.UserCategoryRuleEntity
         SyncStateEntity::class,
         SyncConflictEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converter::class)
@@ -186,6 +188,23 @@ abstract class MiniBookDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_sync_conflicts_ledgerId " +
                         "ON sync_conflicts(ledgerId)",
                 )
+            }
+        }
+
+        /**
+         * 迁移 4 → 5（账单转债务关联，DEC-056）。
+         *
+         * 只有一条 `ALTER TABLE ... ADD COLUMN`：`transactions.debtId TEXT`（**可空、无默认值**）。
+         * - 可空 + 无默认值 ⇒ 存量行自动为 NULL（= 未转债务），无需回填；
+         * - **不建索引**：关联查询只有两种——按 `id` 置位/清位（主键命中）与按 `debtId`
+         *   反查债务来源（账本内债务数量级小，`(ledgerId, ...)` 范围扫描足够）；
+         * - 统计口径「已转债务不进统计」落在聚合 SQL 的 `debtId IS NULL`，不是索引问题。
+         *
+         * 列类型 `TEXT` 与实体 `String?` 对齐（Room schema 校验按亲和类型比较）。
+         */
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN debtId TEXT")
             }
         }
     }

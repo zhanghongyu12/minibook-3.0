@@ -140,6 +140,8 @@ def transaction_payload(
         "counterparty": None,
         "paymentMethod": None,
         "source": "manual",
+        # 账单转债务关联（DEC-056）：未转债务时为 null（客户端 explicitNulls=false 时可能整个省略）。
+        "debtId": None,
     }
     payload.update(overrides)
     return payload

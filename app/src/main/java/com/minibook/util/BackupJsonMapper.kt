@@ -89,6 +89,7 @@ object BackupJsonMapper {
         counterparty = counterparty,
         paymentMethod = paymentMethod,
         source = source.value,
+        debtId = debtId,
     )
 
     fun Debt.toDto(): DebtDto = DebtDto(
@@ -160,6 +161,8 @@ object BackupJsonMapper {
         paymentMethod = paymentMethod,
         // 旧备份缺 source 键（null）或值非法 → 兜底 MANUAL（P1-1 向后兼容）。
         source = source?.let { TransactionSource.fromValue(it) } ?: TransactionSource.MANUAL,
+        // 旧备份无 debtId 键 → 未转债务（DEC-056 向后兼容）。
+        debtId = debtId,
     )
 
     fun DebtDto.toDomain(): Debt = Debt(

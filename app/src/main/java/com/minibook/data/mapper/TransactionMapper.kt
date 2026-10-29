@@ -17,6 +17,7 @@ import com.minibook.domain.model.TransactionType
  *   未知值以 `requireNotNull` 硬失败，杜绝静默错配（DAO SQL 保证只会写入合法枚举串）。
  * - F-12 新字段（externalId/counterparty/paymentMethod）为可空 String，原样透传；
  *   `source` 与 type/syncStatus 同径互转（DEC-018）。
+ * - `debtId`（DEC-056）为可空 String，原样透传（NULL=未转债务）。
  */
 object TransactionMapper {
 
@@ -42,6 +43,7 @@ object TransactionMapper {
         source = requireNotNull(TransactionSource.fromValue(entity.source)) {
             "未知交易来源: ${entity.source}"
         },
+        debtId = entity.debtId,
     )
 
     /** Domain → Entity；枚举落盘为其 `value` 常量串。 */
@@ -60,5 +62,6 @@ object TransactionMapper {
         counterparty = domain.counterparty,
         paymentMethod = domain.paymentMethod,
         source = domain.source.value,
+        debtId = domain.debtId,
     )
 }

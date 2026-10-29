@@ -195,6 +195,9 @@ class Transaction(Base):
     counterparty: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payment_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 账单转债务关联（DEC-056）：指向 debts.id；NULL=未转。**不建外键**——
+    #: 债务可能先被删（客户端随即把该列清回 NULL），外键会引入跨设备删除顺序依赖。
+    debt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at_raw: Mapped[str] = mapped_column(String(RAW_CREATED_LEN), nullable=False)
     updated_at_raw: Mapped[str] = mapped_column(String(RAW_TIME_LEN), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)

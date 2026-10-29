@@ -230,6 +230,30 @@ class RoomDataSourceImpl @Inject constructor(
         }
     }
 
+    /**
+     * 账单转债务关联（DEC-056）：置位 `debtId` 并刷新 `updatedAt`（同步上行据此判定变更）。
+     * 返回受影响行数，0 表示账单已不存在。
+     */
+    override suspend fun setDebtId(ledgerId: String, id: String, debtId: String): Int =
+        transactionRunner.runInTransaction {
+            transactionDao().setDebtId(id, ledgerId, debtId, TimeFormatter.nowIso())
+        }
+
+    /**
+     * 债务被删 → 解除关联（DEC-056）：账本内该债务对应的账单 `debtId` 清回 NULL，
+     * 统计随即把账单重新计入。
+     */
+    override suspend fun clearDebtIdByDebt(ledgerId: String, debtId: String): Int =
+        transactionRunner.runInTransaction {
+            transactionDao().clearDebtIdByDebt(debtId, ledgerId, TimeFormatter.nowIso())
+        }
+
+    /** 账本内已转债务的债务 id 集合流（债务列表「账单转入」标记，DEC-056）。 */
+    override fun observeLinkedDebtIds(ledgerId: String): Flow<Set<String>> =
+        gated { db ->
+            db.transactionDao().observeLinkedDebtIds(ledgerId).map { it.toSet() }
+        }
+
     override fun observeByLedger(ledgerId: String, filter: TransactionFilter): Flow<List<Transaction>> =
         gated { db ->
             db.transactionDao().observeFiltered(
@@ -503,6 +527,7 @@ class RoomDataSourceImpl @Inject constructor(
         val externalIdIndex = getColumnIndexOrThrow("externalId")
         val counterpartyIndex = getColumnIndexOrThrow("counterparty")
         val paymentMethodIndex = getColumnIndexOrThrow("paymentMethod")
+        val debtIdIndex = getColumnIndexOrThrow("debtId")
         return TransactionEntity(
             id = getString(getColumnIndexOrThrow("id")),
             ledgerId = getString(getColumnIndexOrThrow("ledgerId")),
@@ -518,6 +543,7 @@ class RoomDataSourceImpl @Inject constructor(
             counterparty = if (isNull(counterpartyIndex)) null else getString(counterpartyIndex),
             paymentMethod = if (isNull(paymentMethodIndex)) null else getString(paymentMethodIndex),
             source = getString(getColumnIndexOrThrow("source")),
+            debtId = if (isNull(debtIdIndex)) null else getString(debtIdIndex),
         )
     }
 }

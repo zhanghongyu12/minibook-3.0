@@ -71,6 +71,27 @@ interface TransactionDataSource {
     suspend fun deleteByLedger(ledgerId: String)
 
     /**
+     * 把一条账单标记为「已转债务」（DEC-056）：`debtId` 置为 [debtId]，`updatedAt` 由实现方刷新。
+     *
+     * @return 受影响行数（0=账单已不存在）。
+     */
+    suspend fun setDebtId(ledgerId: String, id: String, debtId: String): Int
+
+    /**
+     * 债务被删后解除关联（DEC-056）：把该账本内 `debtId = debtId` 的账单清回 NULL，
+     * 使统计重新计入该账单。
+     *
+     * @return 受影响行数（正常 0 或 1）。
+     */
+    suspend fun clearDebtIdByDebt(ledgerId: String, debtId: String): Int
+
+    /**
+     * 账本内「已转债务」的债务 id 集合流（供债务列表渲染「账单转入」标记，DEC-056）。
+     * 冷流，仅订阅时执行。
+     */
+    fun observeLinkedDebtIds(ledgerId: String): Flow<Set<String>>
+
+    /**
      * 账本内按时间倒序返回交易流；[filter] 为全部/支出/收入 + 分类 + 日期区间
      * （API §3）。冷流，仅订阅时执行。Phase 2 搜索复用同一参数化查询。
      */

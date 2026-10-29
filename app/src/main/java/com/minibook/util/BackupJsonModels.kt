@@ -87,6 +87,8 @@ data class TransactionDto(
     val counterparty: String? = null,
     val paymentMethod: String? = null,
     val source: String? = null,
+    /** 账单转债务关联（DEC-056）；旧备份无该键 → null（未转）。 */
+    val debtId: String? = null,
 )
 
 /** 债务条目（API §11.2 Debt）：`kind` ∈ `lend`/`repay`，`direction` ∈ `owe_me`/`i_owe`。 */

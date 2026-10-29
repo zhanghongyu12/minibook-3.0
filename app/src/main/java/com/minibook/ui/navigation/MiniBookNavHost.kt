@@ -20,6 +20,7 @@ import androidx.navigation.navArgument
 import com.minibook.AutoSyncEffect
 import com.minibook.data.local.security.AppLockController
 import com.minibook.domain.model.DebtDirection
+import com.minibook.domain.model.Transaction
 import com.minibook.ui.budgets.BudgetsScreen
 import com.minibook.ui.debts.DebtDetailScreen
 import com.minibook.ui.home.HomeNavigation
@@ -89,7 +90,8 @@ private val transactionDetailArguments = listOf(
     },
 )
 
-/** 债务详情页查询参数：`id`（债务 id）+ `party`（还款预填对方，URL 编码）+ `direction`（枚举 name）+ `edit`。 */
+/** 债务详情页查询参数：`id`（债务 id）+ `party`（还款预填对方，URL 编码）+ `direction`（枚举 name）+ `edit`
+ *  + 账单转债务的 `amount`（分）/`date`/`fromTx`（DEC-056）。 */
 private val debtDetailArguments = listOf(
     navArgument("id") {
         type = NavType.StringType
@@ -107,6 +109,21 @@ private val debtDetailArguments = listOf(
         defaultValue = null
     },
     navArgument("edit") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("amount") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("date") {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    },
+    navArgument("fromTx") {
         type = NavType.StringType
         nullable = true
         defaultValue = null
@@ -215,6 +232,17 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                             onOpenDebtEdit = { debtId ->
                                 rootController.navigate(Destination.DebtDetail.createRoute(debtId, edit = true))
                             },
+                            // 账单长按「转为债务」（DEC-056）：跳记一笔债务页并带入金额/日期，
+                            // 其余字段用户手填；保存成功后由债务页回写该账单的 debtId。
+                            onConvertToDebt = { tx ->
+                                rootController.navigate(
+                                    Destination.DebtDetail.createRoute(
+                                        amountFen = tx.amount,
+                                        date = tx.date,
+                                        fromTransactionId = tx.id,
+                                    ),
+                                )
+                            },
                         )
                     }
                 }
@@ -254,6 +282,16 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         onOpenTransactionEdit = { txId ->
                             rootController.navigate(Destination.TransactionDetail.createRoute(txId, edit = true))
                         },
+                        // 账单转债务（DEC-056）：同底部 Tab 入口口径。
+                        onConvertToDebt = { tx ->
+                            rootController.navigate(
+                                Destination.DebtDetail.createRoute(
+                                    amountFen = tx.amount,
+                                    date = tx.date,
+                                    fromTransactionId = tx.id,
+                                ),
+                            )
+                        },
                     )
                 }
                 // 交易详情全屏页（新增/查看/编辑三合一，P-07）：`?id={id}` 可选（null=新增）、`edit=1` 直接进编辑态。
@@ -278,6 +316,10 @@ fun MiniBookNavHost(viewModel: NavRootViewModel = hiltViewModel()) {
                         prefillDirection = entry.arguments?.getString("direction")
                             ?.let { runCatching { DebtDirection.valueOf(it) }.getOrNull() },
                         initialEdit = entry.arguments?.getString("edit") == "1",
+                        // 账单转债务（DEC-056）：金额/日期带入 + 来源账单 id（保存后回写关联）。
+                        prefillAmountFen = entry.arguments?.getString("amount")?.toLongOrNull(),
+                        prefillDate = entry.arguments?.getString("date")?.let { Uri.decode(it) },
+                        sourceTransactionId = entry.arguments?.getString("fromTx")?.let { Uri.decode(it) },
                         onBack = { rootController.popBackStack() },
                     )
                 }

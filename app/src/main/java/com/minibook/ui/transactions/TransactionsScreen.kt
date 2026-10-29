@@ -98,6 +98,8 @@ import kotlinx.coroutines.launch
  *   点击触发 [onBack]；为空时（嵌套 Tab 态，底部导航「记账」入口）保持现状无返回按钮。
  * @param onOpenTransaction 打开交易详情页回调（null=新增 / 非空=查看该 id）；由 MainScreen 注入根图导航。
  * @param onOpenTransactionEdit 打开交易详情页并直接进编辑态（列表长按菜单「编辑」）；由 MainScreen 注入根图导航。
+ * @param onConvertToDebt 账单转债务（DEC-056，长按菜单「转为债务」）；由 MainScreen 注入根图导航，
+ *   目标页为记一笔债务（金额/日期带入，保存后回写本账单的 `debtId`）。
  * @param viewModel 页面 ViewModel；默认经 Hilt 注入。
  */
 @Composable
@@ -105,6 +107,7 @@ fun TransactionsScreen(
     onBack: (() -> Unit)? = null,
     onOpenTransaction: (String?) -> Unit = {},
     onOpenTransactionEdit: (String) -> Unit = {},
+    onConvertToDebt: (Transaction) -> Unit = {},
     viewModel: TransactionsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -245,6 +248,7 @@ fun TransactionsScreen(
                     },
                     onItemClick = { tx -> onOpenTransaction(tx.id) },
                     onEditClick = { tx -> onOpenTransactionEdit(tx.id) },
+                    onConvertClick = onConvertToDebt,
                     onDeleteClick = { tx -> deleteTarget = tx },
                     onBatchManage = {
                         batchMode = true
@@ -754,6 +758,7 @@ private fun CategoryDropdownSection(
  * @param onToggleSelect 切换某条选中态回调。
  * @param onItemClick 行点击回调（普通态跳查看态；批量态不触达）。
  * @param onEditClick 长按菜单「编辑」回调（跳详情页编辑态）。
+ * @param onConvertClick 长按菜单「转为债务」回调（DEC-056；已转债务的账单不触发）。
  * @param onDeleteClick 长按菜单「删除」/ 左滑「删除」回调（触发单条删除强确认）。
  * @param onBatchManage 长按菜单「批量管理」回调（进入批量管理模式）。
  */
@@ -766,6 +771,7 @@ private fun TransactionList(
     onToggleSelect: (String) -> Unit,
     onItemClick: (Transaction) -> Unit,
     onEditClick: (Transaction) -> Unit,
+    onConvertClick: (Transaction) -> Unit,
     onDeleteClick: (Transaction) -> Unit,
     onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -810,6 +816,7 @@ private fun TransactionList(
                         category = category,
                         onClick = { onItemClick(tx) },
                         onEdit = { onEditClick(tx) },
+                        onConvertToDebt = { onConvertClick(tx) },
                         onDelete = { onDeleteClick(tx) },
                         onBatchManage = onBatchManage,
                         expanded = expandedId == tx.id,
@@ -823,12 +830,15 @@ private fun TransactionList(
 }
 
 /**
- * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/删除/批量管理」菜单。
+ * 普通态交易行：左滑露出「删除」+ 长按弹「编辑/转为债务/删除/批量管理」菜单。
  *
  * 长按与点击分离：onClick 仍打开查看态，onLongClick 弹屏幕居中 [Dialog] 菜单。左滑删除按钮
  * 点击后只触发外层强确认弹窗（[onDelete]），确认后才真正删除（删除不可恢复）。「批量管理」
  * 进入批量模式（对齐原顶部「管理」按钮行为）。批量模式下 [TransactionList] 走 Checkbox 分支，
  * 不经此行，避免与批量勾选手势冲突。
+ *
+ * 「转为债务」（DEC-056）：`debtId == null` 时可点，跳记一笔债务页（金额/日期带入）；
+ * 已转债务的账单该菜单项置灰为「已转债务」，不支持重复转换（一条账单只对应一条债务）。
  */
 @Composable
 private fun TransactionRow(
@@ -836,6 +846,7 @@ private fun TransactionRow(
     category: Category?,
     onClick: () -> Unit,
     onEdit: () -> Unit,
+    onConvertToDebt: () -> Unit,
     onDelete: () -> Unit,
     onBatchManage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -873,6 +884,11 @@ private fun TransactionRow(
                         onClick = { showMenu = false; onEdit() },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("编辑") }
+                    TextButton(
+                        onClick = { showMenu = false; onConvertToDebt() },
+                        enabled = tx.debtId == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (tx.debtId == null) "转为债务" else "已转债务") }
                     TextButton(
                         onClick = { showMenu = false; onDelete() },
                         modifier = Modifier.fillMaxWidth(),
